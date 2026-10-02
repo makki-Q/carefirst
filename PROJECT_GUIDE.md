@@ -2,7 +2,7 @@
 
 Healthcare platform (Pakistan, PKR) connecting patients, doctors, labs, lawyers and an admin. Core idea: lab tests paid in **installments**, with a 3-step receipt verification flow and automatic **legal escalation** of defaulters. Also a **community support** (charity) track for needy patients.
 
-Two independent apps, no git, no tests, no monorepo tooling:
+Two independent apps in one git repo (GitHub: `makki-Q/carefirst`, branch `main`), no automated test suite in the repo, no monorepo tooling:
 
 | Dir | Stack | Run |
 |---|---|---|
@@ -10,7 +10,8 @@ Two independent apps, no git, no tests, no monorepo tooling:
 | `carefirst-web-modified/` | React 19, Vite 8, Tailwind 4 (auth pages only), mix of `.jsx` and `.tsx` | `npm run dev` → :5173, proxies `/api` and `/socket.io` to :5000 |
 
 Env (`carefirst-backend/.env.example`): `PORT, MONGO_URI, JWT_SECRET, JWT_EXPIRES_IN, ADMIN_USERNAME, ADMIN_PASSWORD, CLIENT_URL, BASE_URL`.
-Note: files live in OneDrive — some reads via shell can hang on cloud-only placeholders; use the Read tool.
+Project lives at `C:\dev\carefirst` (Windows). Do **not** work in the old OneDrive copy (`OneDrive\Desktop\carefirst2`) — it is obsolete, and OneDrive placeholders made Node fail with `UNKNOWN: unknown error, read`.
+In Git Bash, `node`/`npm` are not on PATH — use `"/c/Program Files/nodejs/node.exe"` or `export PATH="/c/Program Files/nodejs:$PATH"`. MongoDB runs locally on `localhost:27017` (dev database `carefirst`).
 
 ## Backend (`carefirst-backend/`)
 
@@ -62,3 +63,79 @@ Controller convention: one async function per endpoint, `try { ... } catch (err)
 - Doctors have no endpoint to look up patients for `createPrescription` (needs a raw `patientId`).
 - `adminController.js` imports `{ v4 }` from `crypto` (doesn't exist; unused).
 - `db.js` logs the default admin password.
+
+---
+
+# Project status & roadmap (handoff, 2026-10-02)
+
+## Context
+Final Year Project, FAST-NUCES Chiniot, 2026. Team: **M. Makki** (repo owner, `makki-Q`), **Ali Anjum**, **Umar Maqbool**. Supervisor Muhammad Haseeb Arshad, co-supervisor Hamza Yousaf.
+Requirements live in the repo root: `SRS-carefirst.pdf` (21 use cases, UC-01…UC-21) and `FYP Proposal makki.docx` (features 1.4.1–1.4.10). Proposal title: *"CareFirst: A web-based Smart Healthcare Appointment & Diagnostic Installment Management Platform"*.
+
+Principles from the proposal that every feature must respect:
+- The platform **never handles or transfers money**. Patients pay labs directly; CareFirst only records payment proofs. It is a facilitator and record keeper — not a bank, medical authority or charity.
+- A **separate fixed platform service fee** is charged for installment tracking.
+- **CNIC** identifies users; installment use requires accepting a **digital legal agreement**.
+- No online consultation — appointments are **physical clinic visits**.
+
+## How to work with Makki
+- Ask before making product decisions that aren't settled below; he answers quickly.
+- Keep new code in the existing directories and follow the existing patterns (see Controller convention above).
+- Verify end to end before calling something done (build the frontend + run an API test against a throwaway DB — see "Testing").
+
+## Decisions already made
+1. **Patients are `active` immediately on signup.** They give a **CNIC number only** (no CNIC photos at signup). An admin verifies the CNIC later (Admin → Manage Users → Verify/Reject CNIC).
+2. A **verified CNIC is required** for community support applications, and must also gate installment plans (Step 2). A rejected CNIC can be corrected from the patient's Profile page, which sends it back to `unverified`. A verified CNIC is locked.
+3. **Receipts are uploaded by the patient** (proposal 1.4.8). Chain: patient uploads → lab confirms it received the cash → admin verifies → installment `paid`. A receipt can be replaced until the lab confirms.
+4. **Donations are not collected by the platform** (proposal 1.4.10); admin only shows partner labs' donation channels.
+5. **Defaulter escalation is automatic** (nightly cron, 3-day grace period, assigned to the least-loaded lawyer).
+
+## Open questions — settle with the supervisor
+The SRS and proposal disagree; the code currently follows the proposal:
+- **Who uploads the receipt?** SRS UC-17 says Doctor (high-level table) and Lab (expanded table); proposal and code say Patient.
+- **Donations through the platform?** SRS UC-21 has users donating with "payment failure → retry"; proposal says the platform never collects money.
+- **Admin review before a defaulter reaches the lawyer?** SRS UC-11 has an admin review step; code escalates automatically.
+
+## Done
+- **Step 0 — repo hygiene:** git + GitHub (`makki-Q/carefirst`), root `.gitignore`/`.gitattributes`, project moved to `C:\dev\carefirst`, web `package-lock.json` synced so `npm ci` works.
+- **Step 1 — patient account (verified):** patient signup with CNIC, admin CNIC review, all `/api/patient` endpoints, `GET /api/public/doctors`, public tests limited to active labs, JSON error handler, patient dashboard fully on real data (incl. new Community Support and Profile pages), admin CNIC column/filter, CNIC shown to lab (needy patients) and lawyer (defaulter cases), live refresh of lab receipts / admin community apps on socket events. Frontend build passes; end-to-end API test passed **57/57**.
+
+## Roadmap (do in this order)
+
+### Step 2 — Installment plan, end to end (highest priority: the project's core feature)
+Today wallets can only be created by hand in the DB. Build the application flow:
+1. Patient picks an installment-enabled lab test (`LabProfile.tests[].installmentEnabled / installmentCount / installmentTenureDays`). Block unless CNIC is `verified`.
+2. Patient enters **guarantor** details (`Wallet.guarantor`: name, cnic, phone, relation, address).
+3. System generates the **legal agreement** (reuse/extend `utils/legalAgreementTemplate.js`); patient must accept it. Store the agreement text + acceptance time.
+4. Patient pays the **down payment** and the **platform service fee** directly and uploads both receipts (`Wallet.downPayment`, `Wallet.serviceFee`).
+5. **Admin approves or rejects the plan** (`planApprovedAt/By` exist) and verifies the down payment and service fee (nothing sets their `adminVerified` today, so no wallet can reach `completed`).
+6. On approval, generate the **installment schedule** (count × tenure days, amounts summing to `totalAmount − downPayment`).
+7. Enforce the SRS limit of **max 2 active wallets** per patient.
+8. **Reminders before due dates** (notification type `installment_overdue` exists but is never sent; add a "due soon" reminder in the cron job).
+9. Wire the patient's Book Tests page to start the application; the My Wallet page already displays wallets/installments and handles receipt upload.
+
+**Ask Makki first:** the service-fee amount (fixed? percent?), the down-payment rule (percentage of price?), and whether a lab must accept the plan too.
+
+### Step 3 — Doctor appointments + lab test booking (appointment is in the project title and is 0% built)
+- New `Appointment` model; patient books a slot from `DoctorProfile.availability` (`slots[].isBooked` exists but is unused). Double-booking must be impossible.
+- Find Doctors page (`GET /api/public/doctors` already exists) has a disabled "Booking coming soon" button → wire it.
+- Doctor sees their appointments and patient list; prescriptions attach to an appointment. This also fixes "doctor can only prescribe with a raw patientId".
+- Lab test booking: Book Tests page has a disabled "Booking coming soon" button per lab.
+
+### Step 4 — Signature features
+- **True Cost Analysis:** store lab latitude/longitude; get the patient's location with browser geolocation; distance via Haversine × a PKR-per-km rate, added to test price; sort labs by true cost. The current "True Cost Analysis" toggle on Book Tests only shows a banner with **wrong text** ("collection charges and taxes") — replace it.
+- **Urdu text-to-speech:** browser Web Speech API (`speechSynthesis`, `ur-PK` voice where available) for the legal agreement and report summaries. Reports are uploaded as PDF/images, so TTS needs text — add a text summary field the lab fills when uploading a report.
+
+### Step 5 — Polish before evaluation
+- Lawyer actions: mark legal notice sent, resolve case (`DefaulterCase.status = resolved` is never set); "payment received later → case closed".
+- Admin analytics from real data (Platform Reports page, dashboard hero stats, activity log and `DONATION_LABS` are hardcoded).
+- Remove `DUMMY_*` fallbacks (DoctorDashboard) and hardcoded demo cases (LawyerDashboard).
+- Security: authenticate socket `join` (currently trusts any userId), stop logging the admin password in `config/db.js`, upgrade **multer 1.x → 2.x** (known vulnerabilities), consider protecting `/uploads`.
+- Email notifications via nodemailer (SMS deferred unless the supervisor insists); real forgot-password flow.
+
+### Suggested team split
+- **A:** Step 2 (critical path). **B:** Step 3. **C:** Step 4, then Step 5.
+
+## Testing
+- Frontend: `npm run build` in `carefirst-web-modified` must pass.
+- API: Step 1 was verified with an end-to-end script that spawns `server.js` on port 5099 against a throwaway DB `mongodb://127.0.0.1:27017/carefirst_e2e_test` (env vars override `.env`), registers users through the API, inserts wallets/cases directly with mongoose where no endpoint exists yet, asserts every response, then drops the DB and deletes uploaded test files. That script is **not in the repo yet** — recreate it as e.g. `carefirst-backend/tests/e2e.js` with an `npm run test:e2e` script when extending tests. Never point tests at the real `carefirst` database.
