@@ -7,6 +7,7 @@ const User                 = require('../models/User');
 const { sendNotification } = require('../socket/notificationSocket');
 const { fileUrl }          = require('../utils/fileUrl');
 const { withPatientDetails } = require('../utils/patientProfiles');
+const { findLabPayment }     = require('../utils/installmentPlan');
 
 // ─── GET /api/lab/profile ─────────────────────────────────────────────────────
 const getProfile = async (req, res) => {
@@ -157,21 +158,23 @@ const getReports = async (req, res) => {
 };
 
 // ─── GET /api/lab/receipts ───────────────────────────────────────────────────
-// Returns installments that have a patient-uploaded receipt awaiting lab approval
+// Returns down payments and installments with a patient-uploaded receipt awaiting lab approval
 const getReceiptsPendingApproval = async (req, res) => {
   try {
     const wallets = await Wallet.find({ lab: req.user._id, status: 'active' })
       .populate('patient', 'name email phone')
       .sort({ updatedAt: -1 });
 
+    const awaitingLab = (p) => Boolean(p?.receiptUrl && !p.labApproved);
     const pending = wallets.map(w => ({
       walletId:  w._id,
       patient:   w.patient,
       testName:  w.testName,
+      pendingDownPayment: awaitingLab(w.downPayment) ? w.toObject().downPayment : null,
       pendingInstallments: w.installments
         .map((inst, idx) => ({ ...inst.toObject(), index: idx }))
-        .filter(inst => inst.receiptUrl && !inst.labApproved),
-    })).filter(w => w.pendingInstallments.length > 0);
+        .filter(awaitingLab),
+    })).filter(w => w.pendingDownPayment || w.pendingInstallments.length > 0);
 
     res.json(pending);
   } catch (err) {
@@ -180,28 +183,30 @@ const getReceiptsPendingApproval = async (req, res) => {
 };
 
 // ─── PUT /api/lab/receipts/:walletId/installments/:instIndex/approve ──────────
+// ─── PUT /api/lab/receipts/:walletId/down-payment/approve ─────────────────────
 const approveReceipt = async (req, res) => {
   try {
     const wallet = await Wallet.findOne({ _id: req.params.walletId, lab: req.user._id })
       .populate('patient', 'name email');
     if (!wallet) return res.status(404).json({ message: 'Wallet not found or not linked to your lab' });
 
-    const inst = wallet.installments[Number(req.params.instIndex)];
-    if (!inst)              return res.status(404).json({ message: 'Installment index out of range' });
-    if (!inst.receiptUrl)   return res.status(400).json({ message: 'Patient has not uploaded a receipt' });
-    if (inst.labApproved)   return res.status(400).json({ message: 'Receipt already approved by lab' });
+    const target = findLabPayment(wallet, req.params.instIndex);
+    if (!target) return res.status(404).json({ message: 'Installment index out of range' });
+    const { payment, label, meta } = target;
+    if (!payment.receiptUrl)   return res.status(400).json({ message: 'Patient has not uploaded a receipt' });
+    if (payment.labApproved)   return res.status(400).json({ message: 'Receipt already approved by lab' });
 
-    inst.labApproved   = true;
-    inst.labApprovedAt = new Date();
+    payment.labApproved   = true;
+    payment.labApprovedAt = new Date();
     await wallet.save();
 
     // Notify patient
     const patientNotif = await Notification.create({
       recipient: wallet.patient._id,
       title:     'Receipt Confirmed by Lab',
-      message:   `Your payment receipt for installment #${inst.number} has been confirmed by ${req.user.name}. Awaiting admin final verification.`,
+      message:   `Your payment receipt for the ${label} has been confirmed by ${req.user.name}. Awaiting admin final verification.`,
       type:      'receipt_lab_approved',
-      meta:      { walletId: wallet._id, installmentNumber: inst.number },
+      meta,
     });
     sendNotification(wallet.patient._id.toString(), patientNotif);
 
@@ -211,9 +216,9 @@ const approveReceipt = async (req, res) => {
       const adminNotif = await Notification.create({
         recipient: admin._id,
         title:     'Receipt Ready for Verification',
-        message:   `Lab confirmed receipt for ${wallet.patient.name} — installment #${inst.number} (PKR ${inst.amount.toLocaleString()}). Please verify.`,
+        message:   `Lab confirmed receipt for ${wallet.patient.name} — ${label} (PKR ${payment.amount.toLocaleString()}). Please verify.`,
         type:      'receipt_lab_approved',
-        meta:      { walletId: wallet._id, installmentNumber: inst.number },
+        meta,
       });
       sendNotification(admin._id.toString(), adminNotif);
     }

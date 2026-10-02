@@ -577,6 +577,49 @@ const testPlanReview = async () => {
   check('invalid wallet id returns 404', badId.status === 404, badId);
 };
 
+const testDownPaymentAndCompletion = async () => {
+  section('Down payment & plan completion');
+  const up = await post(`/api/patient/wallets/${ids.plan}/down-payment/receipt`, { token: tokens.patient, files: { receipt: ['down.png'] } });
+  check('patient uploads the down payment receipt', up.status === 200 && up.data.wallet.downPayment.receiptUrl, up);
+
+  const labNotifs = await get('/api/lab/notifications', { token: tokens.lab });
+  check('lab is asked to confirm the down payment',
+    labNotifs.data.some(n => n.type === 'receipt_uploaded' && n.meta?.payment === 'down_payment' && n.message.includes('PKR 5,000')), labNotifs.data);
+
+  const queue = await get('/api/lab/receipts', { token: tokens.lab });
+  const queued = queue.data.find?.(w => w.walletId === ids.plan);
+  check('lab receipt queue shows the down payment', queued?.pendingDownPayment?.amount === 5000 && queued.pendingInstallments.length === 0, queue.data);
+
+  const early = await put(`/api/admin/wallets/${ids.plan}/down-payment/verify`, { token: tokens.admin });
+  check('admin cannot verify the down payment before the lab (400)', early.status === 400, early);
+
+  const labOk = await put(`/api/lab/receipts/${ids.plan}/down-payment/approve`, { token: tokens.lab });
+  check('lab confirms the down payment', labOk.status === 200 && labOk.data.wallet.downPayment.labApproved, labOk);
+
+  const replace = await post(`/api/patient/wallets/${ids.plan}/down-payment/receipt`, { token: tokens.patient, files: { receipt: ['down2.png'] } });
+  check('down payment receipt cannot be replaced after lab confirms (400)', replace.status === 400, replace);
+
+  const verify = await put(`/api/admin/wallets/${ids.plan}/down-payment/verify`, { token: tokens.admin });
+  check('admin verifies the down payment → balance drops by 5,000',
+    verify.status === 200 && verify.data.wallet.downPayment.adminVerified && verify.data.wallet.remainingBalance === 20000 &&
+    verify.data.wallet.status === 'active', verify);
+
+  for (let i = 0; i < 3; i++) {
+    await post(`/api/patient/wallets/${ids.plan}/installments/${i}/receipt`, { token: tokens.patient, files: { receipt: [`inst${i}.png`] } });
+    await put(`/api/lab/receipts/${ids.plan}/installments/${i}/approve`, { token: tokens.lab });
+    const r = await put(`/api/admin/wallets/${ids.plan}/installments/${i}/verify`, { token: tokens.admin });
+    if (i < 2) check(`installment #${i + 1} paid, plan still active`, r.status === 200 && r.data.wallet.status === 'active', r);
+    else check('last installment paid → plan completed with zero balance',
+      r.status === 200 && r.data.wallet.status === 'completed' && r.data.wallet.remainingBalance === 0, r);
+  }
+
+  const pNotifs = await get('/api/patient/notifications', { token: tokens.patient });
+  check('patient is told the plan is fully paid', pNotifs.data.some(n => n.message.includes('fully paid')), pNotifs.data);
+
+  const config = await get('/api/patient/installment-plans/config', { token: tokens.patient });
+  check('completed plan no longer counts toward the limit', config.data.openPlans === 1, config.data);
+};
+
 const testDefaulterEscalation = async () => {
   section('Defaulter escalation (nightly job)');
   const Wallet = require('../models/Wallet');
@@ -651,6 +694,7 @@ const main = async () => {
     await testInstallmentReceipts();
     await testPlanApplication();
     await testPlanReview();
+    await testDownPaymentAndCompletion();
     await testDefaulterEscalation();
     await testMisc();
   } catch (err) {

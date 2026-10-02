@@ -12,7 +12,7 @@ const generateToken         = require('../utils/generateToken');
 const { sendNotification }  = require('../socket/notificationSocket');
 const { v4: uuid }          = require('crypto');
 const { getPatientProfileMap, withPatientDetails } = require('../utils/patientProfiles');
-const { splitInstallments, buildSchedule } = require('../utils/installmentPlan');
+const { splitInstallments, buildSchedule, findLabPayment } = require('../utils/installmentPlan');
 
 const notify = async (recipient, { title, message, type, meta }) => {
   const notif = await Notification.create({ recipient, title, message, type, meta });
@@ -344,6 +344,11 @@ const verifyServiceFee = async (req, res) => {
     const amounts = splitInstallments(wallet.totalAmount - wallet.downPayment.amount, wallet.installmentCount);
     wallet.installments = buildSchedule(amounts, wallet.installmentTenureDays, now);
     wallet.activatedAt  = now;
+    if (wallet.downPayment.amount === 0) {
+      // DOWN_PAYMENT_PERCENT=0 — nothing to collect
+      wallet.downPayment.adminVerified   = true;
+      wallet.downPayment.adminVerifiedAt = now;
+    }
     wallet.status       = 'active';
     await wallet.save();
 
@@ -351,7 +356,9 @@ const verifyServiceFee = async (req, res) => {
     const firstDue = first.dueDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Karachi' });
     await notify(wallet.patient._id, {
       title:   'Installment Plan Active',
-      message: `Your service fee is verified and your plan for ${wallet.testName} is now active. Pay the ${pkr(wallet.downPayment.amount)} down payment to the lab and upload the receipt. Installment #1 (${pkr(first.amount)}) is due on ${firstDue}.`,
+      message: `Your service fee is verified and your plan for ${wallet.testName} is now active. ` +
+               (wallet.downPayment.adminVerified ? '' : `Pay the ${pkr(wallet.downPayment.amount)} down payment to the lab and upload the receipt. `) +
+               `Installment #1 (${pkr(first.amount)}) is due on ${firstDue}.`,
       type:    'plan_activated',
       meta:    { walletId: wallet._id },
     });
@@ -401,22 +408,23 @@ const rejectServiceFee = async (req, res) => {
 };
 
 // ─── PUT /api/admin/wallets/:walletId/installments/:instIndex/verify ─────────
+// ─── PUT /api/admin/wallets/:walletId/down-payment/verify ─────────────────────
 const verifyInstallment = async (req, res) => {
   try {
-    const wallet = await Wallet.findById(req.params.walletId)
-      .populate('patient', 'name email');
+    const wallet = await findWallet(req.params.walletId);
     if (!wallet) return res.status(404).json({ message: 'Wallet not found' });
 
-    const inst = wallet.installments[Number(req.params.instIndex)];
-    if (!inst)           return res.status(404).json({ message: 'Installment index out of range' });
-    if (!inst.receiptUrl) return res.status(400).json({ message: 'Patient has not uploaded a receipt yet' });
-    if (!inst.labApproved) return res.status(400).json({ message: 'Lab has not approved the receipt yet' });
-    if (inst.adminVerified) return res.status(400).json({ message: 'Installment already verified' });
+    const target = findLabPayment(wallet, req.params.instIndex);
+    if (!target) return res.status(404).json({ message: 'Installment index out of range' });
+    const { payment, isInstallment, label, meta } = target;
+    if (!payment.receiptUrl)   return res.status(400).json({ message: 'Patient has not uploaded a receipt yet' });
+    if (!payment.labApproved)  return res.status(400).json({ message: 'Lab has not approved the receipt yet' });
+    if (payment.adminVerified) return res.status(400).json({ message: 'Payment already verified' });
 
-    inst.adminVerified   = true;
-    inst.adminVerifiedAt = new Date();
-    inst.adminVerifiedBy = req.user._id;
-    inst.status          = 'paid';
+    payment.adminVerified   = true;
+    payment.adminVerifiedAt = new Date();
+    payment.adminVerifiedBy = req.user._id;
+    if (isInstallment) payment.status = 'paid';
 
     if (wallet.isFullyPaid()) wallet.status = 'completed';
 
@@ -424,14 +432,15 @@ const verifyInstallment = async (req, res) => {
 
     const notif = await Notification.create({
       recipient: wallet.patient._id,
-      title:     'Installment Payment Verified',
-      message:   `Installment #${inst.number} of PKR ${inst.amount.toLocaleString()} has been verified by admin and marked as paid.`,
+      title:     'Payment Verified',
+      message:   `Your ${label} of PKR ${payment.amount.toLocaleString()} has been verified by admin and marked as paid.` +
+                 (wallet.status === 'completed' ? ' Your installment plan is now fully paid.' : ''),
       type:      'receipt_admin_verified',
-      meta:      { walletId: wallet._id, installmentNumber: inst.number },
+      meta,
     });
     sendNotification(wallet.patient._id.toString(), notif);
 
-    res.json({ message: 'Installment verified and marked paid', wallet });
+    res.json({ message: `${isInstallment ? 'Installment' : 'Down payment'} verified and marked paid`, wallet });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

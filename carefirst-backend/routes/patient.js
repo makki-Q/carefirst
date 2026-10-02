@@ -4,7 +4,7 @@ const {
   getProfile, updateProfile,
   getPrescriptions,
   getReports, markReportRead,
-  getWallets, uploadInstallmentReceipt, uploadServiceFeeReceipt,
+  getWallets, uploadPaymentReceipt, uploadServiceFeeReceipt,
   getInstallmentConfig, previewInstallmentPlan, applyForInstallmentPlan,
   getCommunityApplications, createCommunityApplication,
   getNotifications, markRead, markAllRead,
@@ -28,7 +28,9 @@ router.put('/reports/:id/read',  ...guard, markReportRead);
 // Digital wallet (installment ledger)
 router.get('/wallets', ...guard, getWallets);
 router.post('/wallets/:walletId/installments/:instIndex/receipt',
-  ...guard, uploadReceipt.single('receipt'), uploadInstallmentReceipt);
+  ...guard, uploadReceipt.single('receipt'), uploadPaymentReceipt);
+router.post('/wallets/:walletId/down-payment/receipt',
+  ...guard, uploadReceipt.single('receipt'), uploadPaymentReceipt);
 router.post('/wallets/:walletId/service-fee/receipt',
   ...guard, uploadReceipt.single('receipt'), uploadServiceFeeReceipt);
 

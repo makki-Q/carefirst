@@ -36,6 +36,7 @@ router.put('/patients/:userId/cnic/reject', ...guard, rejectPatientCnic);
 router.get('/wallets',                                              ...guard, getWallets);
 router.get('/wallets/:walletId',                                    ...guard, getWalletById);
 router.put('/wallets/:walletId/installments/:instIndex/verify',    ...guard, verifyInstallment);
+router.put('/wallets/:walletId/down-payment/verify',               ...guard, verifyInstallment);
 
 // Installment plan applications
 router.put('/wallets/:walletId/approve',             ...guard, approvePlan);

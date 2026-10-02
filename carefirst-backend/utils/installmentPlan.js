@@ -44,8 +44,32 @@ const buildSchedule = (amounts, tenureDays, activatedAt) =>
     dueDate: new Date(activatedAt.getTime() + tenureDays * (i + 1) * DAY_MS),
   }));
 
+// A payment made to the lab that goes through the receipt chain
+// (patient uploads → lab confirms → admin verifies): installment `instIndex`,
+// or the down payment when the route has no :instIndex. Null if out of range.
+const findLabPayment = (wallet, instIndex) => {
+  if (instIndex === undefined) {
+    return {
+      payment: wallet.downPayment,
+      isInstallment: false,
+      label: 'down payment',
+      meta:  { walletId: wallet._id, payment: 'down_payment' },
+    };
+  }
+  const index = Number(instIndex);
+  const inst  = Number.isInteger(index) ? wallet.installments[index] : null;
+  if (!inst) return null;
+  return {
+    payment: inst,
+    isInstallment: true,
+    label: `installment #${inst.number}`,
+    meta:  { walletId: wallet._id, installmentNumber: inst.number },
+  };
+};
+
 module.exports = {
   OPEN_PLAN_STATUSES, pktDay,
   labPaymentDetails, hasPaymentDetails,
   splitInstallments, planAmounts, buildSchedule,
+  findLabPayment,
 };

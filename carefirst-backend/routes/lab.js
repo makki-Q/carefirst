@@ -31,6 +31,7 @@ router.get('/reports',          ...guard, getReports);
 // Receipt approval (lab confirms patient's payment)
 router.get('/receipts',                                                   ...guard, getReceiptsPendingApproval);
 router.put('/receipts/:walletId/installments/:instIndex/approve',         ...guard, approveReceipt);
+router.put('/receipts/:walletId/down-payment/approve',                    ...guard, approveReceipt);
 
 // Needy patients (community support)
 router.get('/needy-patients',                      ...guard, getNeedyPatients);

@@ -13,7 +13,7 @@ const { normalizeCnic }    = require('../utils/cnic');
 const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
 const { generateInstallmentAgreement } = require('../utils/legalAgreementTemplate');
 const {
-  OPEN_PLAN_STATUSES, labPaymentDetails, hasPaymentDetails, planAmounts,
+  OPEN_PLAN_STATUSES, labPaymentDetails, hasPaymentDetails, planAmounts, findLabPayment,
 } = require('../utils/installmentPlan');
 const {
   SERVICE_FEE, DOWN_PAYMENT_PERCENT, MAX_OPEN_PLANS, GRACE_DAYS, CAREFIRST_ACCOUNT,
@@ -338,9 +338,10 @@ const applyForInstallmentPlan = async (req, res) => {
 };
 
 // ─── POST /api/patient/wallets/:walletId/installments/:instIndex/receipt ──────
+// ─── POST /api/patient/wallets/:walletId/down-payment/receipt ─────────────────
 // Multipart field: receipt (pdf/jpg/png). Patient paid the lab directly and
 // uploads proof; the lab confirms it next, then admin gives final verification.
-const uploadInstallmentReceipt = async (req, res) => {
+const uploadPaymentReceipt = async (req, res) => {
   const reject = (status, message) => {
     removeUploadedFiles(req);
     return res.status(status).json({ message });
@@ -358,22 +359,22 @@ const uploadInstallmentReceipt = async (req, res) => {
     if (wallet.status === 'completed') return reject(400, 'This plan is already fully paid');
     if (wallet.status !== 'active')    return reject(400, 'This plan is not active yet');
 
-    const instIndex = Number(req.params.instIndex);
-    const inst      = Number.isInteger(instIndex) ? wallet.installments[instIndex] : null;
-    if (!inst)                                       return reject(404, 'Installment not found');
-    if (inst.status === 'paid' || inst.adminVerified) return reject(400, 'This installment is already paid');
-    if (inst.labApproved)                            return reject(400, 'The lab has already confirmed this receipt');
+    const target = findLabPayment(wallet, req.params.instIndex);
+    if (!target) return reject(404, 'Installment not found');
+    const { payment, label, meta } = target;
+    if (payment.status === 'paid' || payment.adminVerified) return reject(400, `This ${label} is already paid`);
+    if (payment.labApproved) return reject(400, 'The lab has already confirmed this receipt');
 
-    const isReplacement    = Boolean(inst.receiptUrl);
-    inst.receiptUrl        = fileUrl('receipts', req.file.filename);
-    inst.receiptUploadedAt = new Date();
+    const isReplacement       = Boolean(payment.receiptUrl);
+    payment.receiptUrl        = fileUrl('receipts', req.file.filename);
+    payment.receiptUploadedAt = new Date();
     await wallet.save();
 
     await notifyUser(wallet.lab, {
       title:   isReplacement ? 'Receipt Re-uploaded' : 'New Payment Receipt',
-      message: `${req.user.name} uploaded a receipt for installment #${inst.number} (PKR ${inst.amount.toLocaleString()}) — ${wallet.testName}. Please confirm you received the payment.`,
+      message: `${req.user.name} uploaded a receipt for the ${label} (PKR ${payment.amount.toLocaleString()}) — ${wallet.testName}. Please confirm you received the payment.`,
       type:    'receipt_uploaded',
-      meta:    { walletId: wallet._id, installmentNumber: inst.number },
+      meta,
     });
 
     await wallet.populate('lab', 'name');
@@ -519,7 +520,7 @@ module.exports = {
   getProfile, updateProfile,
   getPrescriptions,
   getReports, markReportRead,
-  getWallets, uploadInstallmentReceipt, uploadServiceFeeReceipt,
+  getWallets, uploadPaymentReceipt, uploadServiceFeeReceipt,
   getInstallmentConfig, previewInstallmentPlan, applyForInstallmentPlan,
   getCommunityApplications, createCommunityApplication,
   getNotifications, markRead, markAllRead,
