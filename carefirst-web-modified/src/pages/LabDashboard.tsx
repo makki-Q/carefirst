@@ -5,6 +5,17 @@ import { getSocket } from '../lib/socket';
 
 const TENURE_OPTIONS = [15, 20, 25, 30];
 
+// ── Bookings (patients' lab visits) ───────────────────────────────────────────
+const pktToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date()); // YYYY-MM-DD
+const dayLabel = (date: string) =>
+  new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+const BOOKING_STATUS: Record<string, { label: string; cls: string }> = {
+  confirmed:        { label: 'Confirmed',        cls: 'dash-blue'  },
+  sample_collected: { label: 'Sample collected', cls: 'dash-amber' },
+  completed:        { label: 'Completed',        cls: 'dash-green' },
+  cancelled:        { label: 'Cancelled',        cls: 'dash-gray'  },
+};
+
 const LabDashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -20,6 +31,14 @@ const LabDashboard = () => {
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
   const [labPatients, setLabPatients] = useState<any[]>([]);
   const [receipts, setReceipts]       = useState<any[]>([]);
+  const [bookings, setBookings]       = useState<any[]>([]);
+  const [bookingsLoaded, setBookingsLoaded] = useState(false);
+  const [bookingFilter, setBookingFilter]   = useState<'open' | 'today' | 'upcoming' | 'all'>('open');
+  const [bookingMsg, setBookingMsg]   = useState<{ ok: boolean; text: string } | null>(null);
+  const [uploadBookingId, setUploadBookingId] = useState('');
+
+  const loadBookings = () =>
+    api.get('/lab/bookings').then((d: any) => setBookings(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => setBookingsLoaded(true));
 
   // Payment details — patients pay the down payment and installments here
   const [payForm, setPayForm]     = useState({ bankName: '', accountNumber: '', jazzCash: '', easyPaisa: '' });
@@ -68,6 +87,7 @@ const LabDashboard = () => {
     api.get('/lab/reports').then((d: any) => setReports(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/lab/needy-patients').then((d: any) => setNeedyPats(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
+    loadBookings();
     api.get('/lab/patients').then((d: any) => setLabPatients(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/lab/notifications').then((d: any) => {
       const arr = Array.isArray(d) ? d : [];
@@ -87,9 +107,10 @@ const LabDashboard = () => {
       if (n.type === 'receipt_uploaded') {
         api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
       }
-      if (n.type === 'plan_activated') {
+      if (n.type === 'plan_activated' || n.type === 'lab_booking_created') {
         api.get('/lab/patients').then((d: any) => setLabPatients(Array.isArray(d) ? d : [])).catch(() => {});
       }
+      if (n.type?.startsWith('lab_booking_')) loadBookings();
     });
     return () => { socket.off('notification:new'); };
   }, []);
@@ -168,20 +189,39 @@ const LabDashboard = () => {
   };
 
   const submitReport = async () => {
-    if (!uploadPatientId || !uploadTestName || !uploadFile) return;
+    if (!uploadFile || (!uploadBookingId && (!uploadPatientId || !uploadTestName))) return;
     setUploadLoading(true); setUploadMsg('');
     try {
       const fd = new FormData();
-      fd.append('patientId', uploadPatientId);
-      fd.append('testName',  uploadTestName);
-      fd.append('notes',     uploadNotes);
-      fd.append('file',      uploadFile);
+      if (uploadBookingId) {
+        fd.append('bookingId', uploadBookingId); // patient + test come from the booking
+      } else {
+        fd.append('patientId', uploadPatientId);
+        fd.append('testName',  uploadTestName);
+      }
+      fd.append('notes',  uploadNotes);
+      fd.append('report', uploadFile); // field name expected by POST /api/lab/reports/upload
       await api.upload('/lab/reports/upload', fd);
-      setUploadPatientId(''); setUploadTestName(''); setUploadNotes(''); setUploadFile(null);
+      setUploadPatientId(''); setUploadTestName(''); setUploadNotes(''); setUploadFile(null); setUploadBookingId('');
       setUploadMsg('Report uploaded successfully.');
       api.get('/lab/reports').then((d: any) => setReports(Array.isArray(d) ? d : [])).catch(() => {});
+      loadBookings();
     } catch (err: any) { setUploadMsg(err.message || 'Upload failed.'); }
     finally { setUploadLoading(false); }
+  };
+
+  // action: 'sample-collected' | 'complete'
+  const advanceBooking = async (b: any, action: 'sample-collected' | 'complete') => {
+    setBookingMsg(null);
+    try {
+      const d: any = await api.put(`/lab/bookings/${b._id}/${action}`, {});
+      setBookings(prev => prev.map(x => x._id === b._id ? d.booking : x));
+    } catch (err: any) { setBookingMsg({ ok: false, text: err.message || 'Update failed' }); }
+  };
+
+  const uploadForBooking = (b: any) => {
+    setUploadBookingId(b._id); setUploadFile(null); setUploadNotes(''); setUploadMsg('');
+    navigate('upload');
   };
 
   // path: `installments/<index>` or `down-payment`
@@ -236,9 +276,21 @@ const LabDashboard = () => {
     </div>
   );
 
+  const today = pktToday();
+  const openBookings   = bookings.filter((b: any) => ['confirmed', 'sample_collected'].includes(b.status));
+  const visitsToday    = bookings.filter((b: any) => b.visitDate === today && b.status !== 'cancelled');
+  const awaitingReport = bookings.filter((b: any) => b.status === 'sample_collected' && !b.report);
+  const filteredBookings = bookings.filter((b: any) =>
+    bookingFilter === 'all'      ? true
+    : bookingFilter === 'today'  ? b.visitDate === today
+    : bookingFilter === 'upcoming' ? b.visitDate > today && b.status === 'confirmed'
+    : ['confirmed', 'sample_collected'].includes(b.status)
+  );
+  const uploadBooking = bookings.find((b: any) => b._id === uploadBookingId);
+
   const breadcrumbs: Record<string, string> = {
     dashboard:    'Dashboard',
-    requests:     'Test Requests',
+    requests:     'Bookings',
     upload:       'Upload Reports',
     catalog:      'Test Catalog',
     revenue:      'Revenue',
@@ -279,8 +331,8 @@ const LabDashboard = () => {
 
             <button className={`dash-nav-item ${currentPage === 'requests' ? 'active' : ''}`} onClick={() => navigate('requests')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-              Test Requests
-              <span className="dash-nav-badge">7</span>
+              Bookings
+              {openBookings.length > 0 && <span className="dash-nav-badge">{openBookings.length}</span>}
             </button>
 
             <button className={`dash-nav-item ${currentPage === 'upload' ? 'active' : ''}`} onClick={() => navigate('upload')}>
@@ -412,8 +464,8 @@ const LabDashboard = () => {
 
               <div className="dash-stats-grid dash-fu dash-fu-2">
                 {[
-                  { label: 'Tests Today', value: '34', icon: <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>, trend: '+6 from yesterday' },
-                  { label: 'Pending Upload', value: '7', icon: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>, trend: '3 urgent' },
+                  { label: 'Visits Today', value: String(visitsToday.length), icon: <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>, trend: `${openBookings.length} open booking${openBookings.length === 1 ? '' : 's'}` },
+                  { label: 'Pending Upload', value: String(awaitingReport.length), icon: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>, trend: 'Samples collected, no report yet' },
                   { label: 'Revenue Today', value: 'PKR 48k', icon: <><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></>, trend: '+12% from avg' },
                   { label: 'Avg Time up', value: '3.2 hrs', icon: <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>, trend: '-0.4 hrs improved' },
                 ].map((s, i) => (
@@ -437,22 +489,19 @@ const LabDashboard = () => {
                   <div className="dash-card-header">
                     <div className="dash-card-title">
                       <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
-                      Recent Requests
+                      Upcoming Visits
                     </div>
                     <div className="dash-card-action" onClick={() => navigate('requests')} style={{ cursor: 'pointer' }}>View all <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
                   </div>
-                  {[
-                    { patient: 'Ayesha Raza', test: 'CBC + Lipid Panel', doctor: 'Dr. Sarah Malik', status: 'dash-green', label: 'New' },
-                    { patient: 'Bilal Ahmed', test: 'Thyroid Profile', doctor: 'Dr. Julian Haider', status: 'dash-amber', label: 'Processing' },
-                    { patient: 'Zara Khan', test: 'HbA1c', doctor: 'Dr. Raza Khan', status: 'dash-green', label: 'New' },
-                    { patient: 'Omar Farooq', test: 'Urinalysis', doctor: 'Dr. Nadia Farooq', status: 'dash-amber', label: 'Processing' },
-                  ].map((r, i) => (
-                    <div className="dash-list-item" key={i}>
+                  {openBookings.filter((b: any) => b.status === 'confirmed').length === 0 ? (
+                    <div style={{ padding: '16px 20px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>No upcoming visits.</div>
+                  ) : openBookings.filter((b: any) => b.status === 'confirmed').slice(0, 4).map((b: any) => (
+                    <div className="dash-list-item" key={b._id}>
                       <div className="dash-list-row1">
-                        <div className="dash-list-name">{r.patient}</div>
-                        <span className={`dash-badge ${r.status}`}><span className="dash-badge-dot"></span>{r.label}</span>
+                        <div className="dash-list-name">{b.patient?.name || '—'}</div>
+                        <span className={`dash-badge ${b.visitDate === today ? 'dash-amber' : 'dash-blue'}`}><span className="dash-badge-dot"></span>{b.visitDate === today ? 'Today' : dayLabel(b.visitDate)}</span>
                       </div>
-                      <div className="dash-list-sub">{r.test} · {r.doctor}</div>
+                      <div className="dash-list-sub">{b.testName} · {b.paymentMethod === 'installment' ? 'installment plan' : `PKR ${Number(b.price).toLocaleString()} at the lab`}</div>
                     </div>
                   ))}
                 </div>
@@ -469,18 +518,16 @@ const LabDashboard = () => {
                     <table>
                       <thead><tr><th>Patient</th><th>Test</th><th>Collected</th><th></th></tr></thead>
                       <tbody>
-                        {[
-                          { p: 'Ayesha Raza', t: 'CBC', d: '8:30 AM' },
-                          { p: 'Bilal Ahmed', t: 'Thyroid', d: '9:00 AM' },
-                          { p: 'Sara Imran', t: 'Lipid', d: '9:45 AM' },
-                          { p: 'Zara Khan', t: 'HbA1c', d: '10:15 AM' },
-                        ].map((row, i) => (
-                          <tr key={i}>
-                            <td style={{ fontWeight: 600, color: 'var(--text)' }}>{row.p}</td>
-                            <td>{row.t}</td>
-                            <td>{row.d}</td>
+                        {awaitingReport.length === 0 && (
+                          <tr><td colSpan={4} style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-muted)', fontSize: '0.82rem' }}>No samples waiting for a report.</td></tr>
+                        )}
+                        {awaitingReport.slice(0, 4).map((b: any) => (
+                          <tr key={b._id}>
+                            <td style={{ fontWeight: 600, color: 'var(--text)' }}>{b.patient?.name || '—'}</td>
+                            <td>{b.testName}</td>
+                            <td>{b.sampleCollectedAt ? new Date(b.sampleCollectedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
                             <td style={{ textAlign: 'right' }}>
-                              <button className="dash-action-btn" onClick={() => navigate('upload')}>
+                              <button className="dash-action-btn" title="Upload report" onClick={() => uploadForBooking(b)}>
                                 <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                               </button>
                             </td>
@@ -493,53 +540,79 @@ const LabDashboard = () => {
               </div>
             </section>
 
-            {/* ══ TEST REQUESTS ═════════════════════════════════ */}
+            {/* ══ BOOKINGS (patients' lab visits) ═══════════════ */}
             <section className={`dash-page-section ${currentPage === 'requests' ? 'active' : ''}`}>
               <div className="dash-page-header dash-fu" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                 <div>
-                  <div className="dash-page-title">Test Requests</div>
+                  <div className="dash-page-title">Bookings</div>
                   <div className="dash-page-rule"></div>
-                  <div className="dash-page-subtitle">Incoming prescriptions awaiting sample collection and processing</div>
+                  <div className="dash-page-subtitle">Patients' lab visits — collect the sample, then upload the report to complete the booking</div>
                 </div>
                 <div className="dash-filter-row dash-fu-1">
-                  <select className="dash-filter-select">
-                    <option>All Requests</option>
-                    <option>New</option>
-                    <option>Processing</option>
-                    <option>Ready to Upload</option>
+                  <select className="dash-filter-select" value={bookingFilter} onChange={e => setBookingFilter(e.target.value as any)}>
+                    <option value="open">Open</option>
+                    <option value="today">Visiting today</option>
+                    <option value="upcoming">Upcoming</option>
+                    <option value="all">All bookings</option>
                   </select>
                 </div>
               </div>
+
+              {bookingMsg && (
+                <div style={{ padding: '10px 14px', borderRadius: 8, marginBottom: 14, fontSize: '0.82rem', background: bookingMsg.ok ? '#dcfce7' : '#fee2e2', color: bookingMsg.ok ? '#166534' : '#991b1b' }}>
+                  {bookingMsg.text}
+                </div>
+              )}
 
               <div className="dash-card dash-fu dash-fu-2">
                 <div className="dash-table-wrap">
                   <table>
                     <thead>
-                      <tr><th>Request ID</th><th>Patient</th><th>Prescribed By</th><th>Tests Ordered</th><th>Received</th><th style={{ textAlign: 'right' }}>Action</th></tr>
+                      <tr><th>Visit</th><th>Patient</th><th>Test</th><th>Payment</th><th>Status</th><th style={{ textAlign: 'right' }}>Action</th></tr>
                     </thead>
                     <tbody>
-                      {[
-                        { id: 'REQ-081', patient: 'Ayesha Raza', doctor: 'Dr. Sarah Malik', tests: 'CBC, Lipid Panel', date: 'Today 8:00 AM', st: 'dash-red', sl: 'Urgent' },
-                        { id: 'REQ-082', patient: 'Bilal Ahmed', doctor: 'Dr. Julian Haider', tests: 'Thyroid Profile', date: 'Today 8:30 AM', st: 'dash-amber', sl: 'Processing' },
-                        { id: 'REQ-083', patient: 'Zara Khan', doctor: 'Dr. Raza Khan', tests: 'HbA1c', date: 'Today 9:00 AM', st: 'dash-green', sl: 'New' },
-                        { id: 'REQ-084', patient: 'Omar Farooq', doctor: 'Dr. Nadia Farooq', tests: 'Urinalysis', date: 'Today 9:30 AM', st: 'dash-green', sl: 'New' },
-                        { id: 'REQ-085', patient: 'Sara Imran', doctor: 'Dr. Ahmed Siddiqui', tests: 'Lipid Panel, Glucose', date: 'Today 10:00 AM', st: 'dash-amber', sl: 'Processing' },
-                        { id: 'REQ-086', patient: 'Hamza Tariq', doctor: 'Dr. Julian Haider', tests: 'ECG', date: 'Today 10:15 AM', st: 'dash-green', sl: 'New' },
-                        { id: 'REQ-087', patient: 'Noor Fatima', doctor: 'Dr. Maha Qureshi', tests: 'Vitamin D, B12', date: 'Today 10:45 AM', st: 'dash-green', sl: 'New' },
-                      ].map((r, i) => (
-                        <tr key={i}>
-                          <td className="dash-mono">{r.id}</td>
-                          <td style={{ fontWeight: 600, color: 'var(--text)' }}>{r.patient}</td>
-                          <td>{r.doctor}</td>
-                          <td>{r.tests}</td>
-                          <td>{r.date}</td>
-                          <td style={{ textAlign: 'right' }}>
-                            <button className="dash-btn-primary accent" style={{ padding: '5px 12px', fontSize: '0.76rem' }} onClick={() => navigate('upload')}>
-                              Upload
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {!bookingsLoaded ? (
+                        <tr><td colSpan={6} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                      ) : filteredBookings.length === 0 ? (
+                        <tr><td colSpan={6} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                          {bookings.length === 0 ? 'No bookings yet. Patients book visits from Book Tests.' : 'No bookings in this view.'}
+                        </td></tr>
+                      ) : filteredBookings.map((b: any) => {
+                        const st = BOOKING_STATUS[b.status] || { label: b.status, cls: 'dash-gray' };
+                        return (
+                          <tr key={b._id}>
+                            <td style={{ fontWeight: 600, color: 'var(--text)' }}>{b.visitDate === today ? 'Today' : dayLabel(b.visitDate)}</td>
+                            <td>
+                              <div style={{ fontWeight: 600, color: 'var(--text)' }}>{b.patient?.name || '—'}</div>
+                              <div className="dash-mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{[b.patient?.cnic, b.patient?.phone].filter(Boolean).join(' · ')}</div>
+                            </td>
+                            <td>{b.testName}</td>
+                            <td style={{ fontSize: '0.8rem' }}>
+                              {b.paymentMethod === 'installment'
+                                ? <span style={{ color: '#1d4ed8', fontWeight: 600 }}>Installment plan</span>
+                                : <>PKR {Number(b.price).toLocaleString()}<div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>collect at the lab</div></>}
+                            </td>
+                            <td>
+                              <span className={`dash-badge ${st.cls}`}><span className="dash-badge-dot"></span>{st.label}</span>
+                              {b.report?.reportUrl && <div><a href={b.report.reportUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.72rem', color: '#166534', fontWeight: 600 }}>Report ↗</a></div>}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                {b.status === 'confirmed' && (
+                                  <button className="adm-approve-btn" onClick={() => advanceBooking(b, 'sample-collected')}>Sample collected</button>
+                                )}
+                                {b.status === 'sample_collected' && !b.report && (
+                                  <button className="dash-btn-primary accent" style={{ padding: '5px 12px', fontSize: '0.76rem' }} onClick={() => uploadForBooking(b)}>Upload report</button>
+                                )}
+                                {b.status === 'sample_collected' && (
+                                  <button className="dash-btn-ghost" style={{ padding: '5px 10px', fontSize: '0.74rem' }} onClick={() => advanceBooking(b, 'complete')}>Mark completed</button>
+                                )}
+                                {['completed', 'cancelled'].includes(b.status) && <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>—</span>}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -555,12 +628,31 @@ const LabDashboard = () => {
               </div>
 
               <div className="dash-card dash-fu dash-fu-1" style={{ padding: '32px' }}>
+                <div className="dash-form-group">
+                  <label className="dash-form-label">Booking</label>
+                  <select className="dash-form-input" style={{ height: 42 }} value={uploadBookingId} onChange={e => { setUploadBookingId(e.target.value); setUploadMsg(''); }}>
+                    <option value="">No booking — choose the patient and test below</option>
+                    {awaitingReport.map((b: any) => (
+                      <option key={b._id} value={b._id}>{b.patient?.name} — {b.testName} (visit {dayLabel(b.visitDate)})</option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 6 }}>
+                    Bookings whose sample is collected are listed here; uploading the report completes the booking.
+                  </div>
+                </div>
+
+                {uploadBooking ? (
+                  <div style={{ padding: '12px 16px', borderRadius: 10, background: 'var(--accent-light, #eff6ff)', fontSize: '0.84rem', marginBottom: 8 }}>
+                    <strong>{uploadBooking.patient?.name}</strong> · {uploadBooking.testName} · visit {dayLabel(uploadBooking.visitDate)}
+                    {uploadBooking.patient?.cnic && <span style={{ color: 'var(--text-muted)' }}> · CNIC {uploadBooking.patient.cnic}</span>}
+                  </div>
+                ) : (
                 <div className="dash-form-row">
                   <div className="dash-form-group">
                     <label className="dash-form-label">Patient <span style={{ color: '#ef4444' }}>*</span></label>
                     {labPatients.length === 0 ? (
                       <div style={{ padding: '10px 14px', borderRadius: 8, background: '#fef9c3', color: '#854d0e', fontSize: '0.82rem' }}>
-                        No patients linked to your lab yet. Patients appear here once they have wallets or community support cases assigned to your lab.
+                        No patients linked to your lab yet. Patients appear here once they book a visit, have an installment plan with your lab, or a community support case is assigned to you.
                       </div>
                     ) : (
                       <select className="dash-form-input" style={{ height: 42 }} value={uploadPatientId} onChange={e => setUploadPatientId(e.target.value)}>
@@ -579,6 +671,7 @@ const LabDashboard = () => {
                     </select>
                   </div>
                 </div>
+                )}
 
                 <hr className="dash-form-divider" />
 
@@ -608,8 +701,8 @@ const LabDashboard = () => {
                 )}
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                  <button className="dash-btn-ghost" onClick={() => { setUploadPatientId(''); setUploadTestName(''); setUploadFile(null); setUploadNotes(''); setUploadMsg(''); }}>Clear</button>
-                  <button className="dash-btn-primary accent" disabled={uploadLoading || !uploadPatientId || !uploadTestName || !uploadFile} onClick={submitReport}>
+                  <button className="dash-btn-ghost" onClick={() => { setUploadPatientId(''); setUploadTestName(''); setUploadFile(null); setUploadNotes(''); setUploadMsg(''); setUploadBookingId(''); }}>Clear</button>
+                  <button className="dash-btn-primary accent" disabled={uploadLoading || !uploadFile || (!uploadBooking && (!uploadPatientId || !uploadTestName))} onClick={submitReport}>
                     <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
                     {uploadLoading ? 'Uploading…' : 'Submit Report'}
                   </button>
