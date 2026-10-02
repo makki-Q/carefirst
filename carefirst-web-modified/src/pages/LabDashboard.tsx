@@ -909,7 +909,7 @@ const LabDashboard = () => {
                         <tr>
                           <th>Patient</th>
                           <th>Test</th>
-                          <th>Installment</th>
+                          <th>Payment</th>
                           <th>Amount</th>
                           <th>Due Date</th>
                           <th>Status</th>
