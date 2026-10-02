@@ -1,0 +1,295 @@
+@import './DashboardBase.css';
+
+/* ─── Lab Dashboard ─────────────────────────────────────────── */
+.lab-dashboard-wrapper {
+  --bg: #f5f5f0;
+  --bg-alt: #fafaf8;
+  --surface: #ffffff;
+  --border: rgba(0,0,0,0.06);
+  --border-md: rgba(0,0,0,0.10);
+  --text: #0d0d0d;
+  --text-sub: rgba(13,13,13,0.65);
+  --text-muted: rgba(13,13,13,0.38);
+  --accent: #1a56db;
+  --accent-light: rgba(26,86,219,0.08);
+  --accent-mid: rgba(26,86,219,0.15);
+  --shadow:
+    0 1px 2px rgba(0,0,0,0.04),
+    0 4px 12px rgba(0,0,0,0.06),
+    0 8px 24px rgba(0,0,0,0.04);
+  --radius: 22px;
+  --radius-sm: 14px;
+  --radius-xs: 10px;
+  --sidebar-w: 260px;
+  --glass-bg: rgba(255,255,255,0.60);
+  --glass-bg-strong: rgba(255,255,255,0.75);
+  --glass-border: rgba(255,255,255,0.55);
+  --glass-blur: blur(20px) saturate(180%);
+  --glass-blur-lg: blur(32px) saturate(200%);
+  --glass-shadow:
+    0 2px 8px rgba(0,0,0,0.04),
+    0 8px 32px rgba(0,0,0,0.08),
+    inset 0 1px 0 rgba(255,255,255,0.80);
+  --hero-glow: rgba(26,86,219,0.22);
+  --hero-pill-bg: rgba(26,86,219,0.20);
+  --hero-pill-border: rgba(26,86,219,0.35);
+  --hero-pill-text: #93c5fd;
+
+  min-height: 100vh;
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse 60% 50% at 10% 20%, rgba(26,86,219,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 60% at 90% 10%, rgba(26,86,219,0.04) 0%, transparent 55%),
+    radial-gradient(ellipse 40% 40% at 60% 90%, rgba(201,55,44,0.03) 0%, transparent 60%);
+  background-attachment: fixed;
+  font-family: 'DM Sans', sans-serif;
+}
+
+/* ── Lab-specific: Test catalog grid ────────────────────────── */
+.lab-test-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.lab-test-card {
+  background: var(--glass-bg-strong);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: 20px;
+  box-shadow: var(--glass-shadow);
+  transition: transform 0.18s, box-shadow 0.18s;
+}
+
+.lab-test-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.lab-test-icon {
+  width: 40px; height: 40px;
+  border-radius: var(--radius-xs);
+  background: var(--accent-light);
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  margin-bottom: 14px;
+}
+
+.lab-test-name  { font-size: 0.875rem; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.lab-test-cat   { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 12px; }
+
+.lab-test-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lab-test-price {
+  font-family: 'DM Serif Display', serif;
+  font-size: 1.15rem;
+  color: var(--text);
+}
+
+/* ── Toggle switch ───────────────────────────────────────────── */
+.lab-toggle {
+  width: 36px; height: 20px;
+  border-radius: 20px;
+  background: var(--border-md);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s;
+  border: none;
+  flex-shrink: 0;
+}
+
+.lab-toggle::after {
+  content: '';
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+}
+
+.lab-toggle.on {
+  background: var(--accent);
+}
+
+.lab-toggle.on::after {
+  transform: translateX(16px);
+}
+
+/* ── Revenue summary card ────────────────────────────────────── */
+.lab-revenue-hero {
+  background: #0d0d0d;
+  border-radius: var(--radius);
+  padding: 32px 36px;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.lab-revenue-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 55% 70% at 85% 50%, rgba(26,86,219,0.18) 0%, transparent 65%);
+  pointer-events: none;
+}
+
+.lab-revenue-inner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.lab-revenue-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.40);
+  margin-bottom: 8px;
+}
+
+.lab-revenue-amount {
+  font-family: 'DM Serif Display', serif;
+  font-size: 2.5rem;
+  color: #fff;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.lab-revenue-currency { font-size: 1.2rem; margin-right: 4px; opacity: 0.6; }
+
+.lab-revenue-stats {
+  display: flex;
+  gap: 32px;
+}
+
+.lab-rev-stat .rv { font-family: 'DM Serif Display', serif; font-size: 1.5rem; color: #fff; line-height: 1; margin-bottom: 4px; }
+.lab-rev-stat .rl { font-size: 0.72rem; color: rgba(255,255,255,0.40); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* ── Needy Patient cards ─────────────────────────────────────── */
+.lab-needy-card {
+  background: var(--glass-bg-strong);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--glass-shadow);
+  padding: 22px 22px 18px;
+}
+
+.lab-needy-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.lab-needy-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.lab-needy-meta {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.lab-needy-test {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-sub);
+  margin-bottom: 16px;
+}
+
+.lab-needy-slip-row {
+  background: rgba(0,0,0,0.025);
+  border: 1px dashed var(--border-md);
+  border-radius: var(--radius-xs);
+  padding: 12px 14px;
+}
+
+.lab-needy-slip-id {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.lab-needy-stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
+}
+
+.lab-needy-approved {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.adm-approve-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 0.72rem; font-weight: 600;
+  border: none; cursor: pointer;
+  background: #dcfce7; color: #166534;
+  transition: background 0.15s;
+}
+
+.adm-reject-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 0.72rem; font-weight: 600;
+  border: none; cursor: pointer;
+  background: #fee2e2; color: #991b1b;
+  transition: background 0.15s;
+}
+
+.adm-reject-reason-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.adm-reject-reason-input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid #fca5a5;
+  background: #fff1f2;
+  color: var(--text);
+  font-size: 0.8rem;
+  outline: none;
+  transition: border 0.15s;
+}
+.adm-reject-reason-input:focus { border-color: #ef4444; }

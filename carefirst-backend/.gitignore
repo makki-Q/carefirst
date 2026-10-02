@@ -1,0 +1,8 @@
+node_modules/
+.env
+uploads/reports/*
+uploads/receipts/*
+uploads/community-docs/*
+!uploads/reports/.gitkeep
+!uploads/receipts/.gitkeep
+!uploads/community-docs/.gitkeep

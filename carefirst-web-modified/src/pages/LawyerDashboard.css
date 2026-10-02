@@ -1,0 +1,192 @@
+@import './DashboardBase.css';
+
+/* ─── Lawyer Dashboard ──────────────────────────────────────── */
+.lawyer-dashboard-wrapper {
+  --bg: #f5f5f0;
+  --bg-alt: #fafaf8;
+  --surface: #ffffff;
+  --border: rgba(0,0,0,0.06);
+  --border-md: rgba(0,0,0,0.10);
+  --text: #0d0d0d;
+  --text-sub: rgba(13,13,13,0.65);
+  --text-muted: rgba(13,13,13,0.38);
+  --accent: #0f766e;
+  --accent-light: rgba(15,118,110,0.08);
+  --accent-mid: rgba(15,118,110,0.15);
+  --shadow:
+    0 1px 2px rgba(0,0,0,0.04),
+    0 4px 12px rgba(0,0,0,0.06),
+    0 8px 24px rgba(0,0,0,0.04);
+  --radius: 22px;
+  --radius-sm: 14px;
+  --radius-xs: 10px;
+  --sidebar-w: 260px;
+  --glass-bg: rgba(255,255,255,0.60);
+  --glass-bg-strong: rgba(255,255,255,0.75);
+  --glass-border: rgba(255,255,255,0.55);
+  --glass-blur: blur(20px) saturate(180%);
+  --glass-blur-lg: blur(32px) saturate(200%);
+  --glass-shadow:
+    0 2px 8px rgba(0,0,0,0.04),
+    0 8px 32px rgba(0,0,0,0.08),
+    inset 0 1px 0 rgba(255,255,255,0.80);
+  --hero-glow: rgba(15,118,110,0.22);
+  --hero-pill-bg: rgba(15,118,110,0.20);
+  --hero-pill-border: rgba(15,118,110,0.35);
+  --hero-pill-text: #5eead4;
+
+  min-height: 100vh;
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse 60% 50% at 10% 20%, rgba(15,118,110,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 60% at 90% 10%, rgba(201,55,44,0.04) 0%, transparent 55%),
+    radial-gradient(ellipse 40% 40% at 60% 90%, rgba(15,118,110,0.03) 0%, transparent 60%);
+  background-attachment: fixed;
+  font-family: 'DM Sans', sans-serif;
+}
+
+/* ── Defaulter case card ─────────────────────────────────────── */
+.law-defaulter-card {
+  background: var(--glass-bg-strong);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--glass-shadow);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.law-defaulter-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.law-def-left { flex: 1; }
+
+.law-def-id {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+
+.law-def-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.law-def-meta {
+  font-size: 0.78rem;
+  color: var(--text-sub);
+}
+
+.law-def-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.law-def-overdue {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #c9372c;
+}
+
+/* ── Wallet summary strip inside defaulter card ──────────────── */
+.law-def-wallet-strip {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0,0,0,0.015);
+}
+
+.law-def-wallet-item {
+  flex: 1;
+  padding-right: 24px;
+}
+
+.law-def-wallet-item:not(:last-child) {
+  border-right: 1px solid var(--border);
+  margin-right: 24px;
+}
+
+.law-def-wallet-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.law-def-wallet-val {
+  font-family: 'DM Serif Display', serif;
+  font-size: 1.15rem;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.law-def-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+}
+
+/* ── Legal agreement viewer ──────────────────────────────────── */
+.law-agreement-body {
+  padding: 28px 28px 24px;
+}
+
+.law-agreement-title {
+  font-family: 'DM Serif Display', serif;
+  font-size: 1.05rem;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+  text-align: center;
+}
+
+.law-agreement-subtitle {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px dashed var(--border-md);
+}
+
+.law-agreement-text {
+  font-size: 0.82rem;
+  color: var(--text-sub);
+  line-height: 1.8;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.law-agreement-text p { margin: 0; }
+
+.law-agreement-text strong { color: var(--text); }
+
+.law-agreement-signatures {
+  display: flex;
+  gap: 32px;
+  flex-wrap: wrap;
+  padding-top: 18px;
+  margin-top: 8px;
+  border-top: 1px dashed var(--border-md);
+  font-size: 0.78rem;
+  color: var(--text-sub);
+}
