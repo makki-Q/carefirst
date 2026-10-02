@@ -663,6 +663,46 @@ const testDefaulterEscalation = async () => {
     readAll.status === 200 && lawyerNotifs.data.length > 0 && lawyerNotifs.data.every(n => n.read), lawyerNotifs.data);
 };
 
+const testDueReminders = async () => {
+  section('Due-soon reminders (nightly job)');
+  const Wallet = require('../models/Wallet');
+  const { runDueReminders } = require('../jobs/defaulterJob');
+  const due = (days) => new Date(Date.now() + days * 86400000);
+
+  const wallet = await Wallet.create({
+    patient: ids.patient2, lab: ids.lab, testName: 'Reminder Plan', totalAmount: 4000, status: 'active',
+    installments: [
+      { number: 1, dueDate: due(3),  amount: 1000 },
+      { number: 2, dueDate: due(1),  amount: 1000 },
+      { number: 3, dueDate: due(10), amount: 1000 },
+      { number: 4, dueDate: due(2),  amount: 1000, receiptUrl: 'http://x/receipt.png' },
+    ],
+  });
+  // Plans that are not active get no reminders
+  await Wallet.create({
+    patient: ids.patient2, lab: ids.lab, testName: 'Pending Plan', totalAmount: 1000, status: 'pending_approval',
+    installments: [{ number: 1, dueDate: due(1), amount: 1000 }],
+  });
+
+  const reminders = async () => (await get('/api/patient/notifications', { token: tokens.patient2 }))
+    .data.filter(n => n.type === 'installment_due_soon');
+
+  await runDueReminders();
+  let sent = await reminders();
+  check('reminders sent 3 days and 1 day before due, not for later or already-receipted ones',
+    sent.length === 2 &&
+    sent.some(n => n.meta.installmentNumber === 1 && n.message.includes('in 3 days')) &&
+    sent.some(n => n.meta.installmentNumber === 2 && n.message.includes('tomorrow')), sent);
+
+  await runDueReminders();
+  check('re-running the job does not repeat reminders', (await reminders()).length === 2);
+
+  await Wallet.updateOne({ _id: wallet._id }, { $set: { 'installments.0.dueDate': due(1) } });
+  await runDueReminders();
+  sent = await reminders();
+  check('the 1-day reminder follows the 3-day one', sent.length === 3 && sent.filter(n => n.meta.installmentNumber === 1).length === 2, sent);
+};
+
 const testMisc = async () => {
   section('Notifications & error handling');
   const readAll = await put('/api/patient/notifications/read-all', { token: tokens.patient });
@@ -696,6 +736,7 @@ const main = async () => {
     await testPlanReview();
     await testDownPaymentAndCompletion();
     await testDefaulterEscalation();
+    await testDueReminders();
     await testMisc();
   } catch (err) {
     failures.push(`crashed: ${err.message}`);

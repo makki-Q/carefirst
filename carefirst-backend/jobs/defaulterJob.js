@@ -5,8 +5,8 @@ const Notification  = require('../models/Notification');
 const User          = require('../models/User');
 const { sendNotification }       = require('../socket/notificationSocket');
 const { generateLegalAgreement } = require('../utils/legalAgreementTemplate');
-
-const GRACE_DAYS = 3; // days after due date before escalation
+const { pktDay }                 = require('../utils/installmentPlan');
+const { GRACE_DAYS, REMINDER_DAYS } = require('../config/installments');
 
 const runDefaulterCheck = async () => {
   const timestamp = new Date().toISOString();
@@ -126,10 +126,55 @@ const runDefaulterCheck = async () => {
   }
 };
 
-const startDefaulterJob = () => {
-  // Runs every day at 00:05 PKT
-  cron.schedule('5 0 * * *', runDefaulterCheck, { timezone: 'Asia/Karachi' });
-  console.log('[DefaulterJob] Scheduled — runs daily at 00:05 PKT');
+// "Due soon" reminders REMINDER_DAYS (3 and 1) days before each due date, once
+// each. Counted in Pakistan calendar days; skipped once a receipt is uploaded.
+const runDueReminders = async () => {
+  try {
+    const today   = pktDay(new Date());
+    const windows = [...REMINDER_DAYS].sort((a, b) => a - b);
+    const wallets = await Wallet.find({ status: 'active' });
+
+    for (const wallet of wallets) {
+      let changed = false;
+
+      for (const inst of wallet.installments) {
+        if (inst.status !== 'pending' || inst.receiptUrl) continue;
+
+        const daysLeft = pktDay(inst.dueDate) - today;
+        // Smallest reminder window the installment is inside of (2 days left → the 3-day reminder)
+        const window = windows.find(d => daysLeft >= 0 && daysLeft <= d);
+        if (window === undefined || inst.remindersSent.includes(window)) continue;
+
+        // Also mark wider windows, so a missed 3-day reminder isn't sent after the 1-day one
+        windows.filter(d => d >= window && !inst.remindersSent.includes(d)).forEach(d => inst.remindersSent.push(d));
+        changed = true;
+
+        const when = daysLeft === 0 ? 'today' : daysLeft === 1 ? 'tomorrow' : `in ${daysLeft} days`;
+        const date = inst.dueDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Karachi' });
+        const notif = await Notification.create({
+          recipient: wallet.patient,
+          title:     'Installment Due Soon',
+          message:   `Installment #${inst.number} of PKR ${inst.amount.toLocaleString()} for ${wallet.testName} is due ${when} (${date}). Pay the lab directly and upload the receipt from My Wallet.`,
+          type:      'installment_due_soon',
+          meta:      { walletId: wallet._id, installmentNumber: inst.number },
+        });
+        sendNotification(wallet.patient.toString(), notif);
+      }
+
+      if (changed) await wallet.save();
+    }
+  } catch (err) {
+    console.error(`[ReminderJob] Error: ${err.message}`);
+  }
 };
 
-module.exports = { startDefaulterJob, runDefaulterCheck };
+const startDefaulterJob = () => {
+  // Runs every day at 00:05 PKT
+  cron.schedule('5 0 * * *', async () => {
+    await runDefaulterCheck();
+    await runDueReminders();
+  }, { timezone: 'Asia/Karachi' });
+  console.log('[DefaulterJob] Scheduled — defaulter check + due reminders daily at 00:05 PKT');
+};
+
+module.exports = { startDefaulterJob, runDefaulterCheck, runDueReminders };
