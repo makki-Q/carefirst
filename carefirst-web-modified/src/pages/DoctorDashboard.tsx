@@ -3,7 +3,7 @@ import './DoctorDashboard.css';
 import { api, getSession, clearSession } from '../lib/api';
 import { getSocket } from '../lib/socket';
 
-// ── Reference test list (Prescribe Test page) ─────────────────────────────────
+// ── Common tests, suggested on Prescribe Test along with what labs offer ──────
 const TESTS = [
   'Complete Blood Count (CBC)',
   'Lipid Panel',
@@ -53,6 +53,41 @@ const DUMMY_NOTIFICATIONS = [
   { _id: 'dn3', title: 'Schedule Reminder',     message: "You have consultations tomorrow from 09:00 AM – 01:00 PM. Please confirm availability.",                             read: true,  createdAt: mkDate(1) },
 ];
 
+// ── Appointments (mirror carefirst-backend/utils/schedule.js) ─────────────────
+const DURATION_OPTIONS = [10, 15, 20, 30, 45, 60];
+const pktToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date()); // YYYY-MM-DD
+const dayLabel = (date: string) =>
+  new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+const time12 = (hhmm: string) => {
+  const [h, m] = (hhmm || '0:0').split(':').map(Number);
+  return `${String(h % 12 || 12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+};
+const toMinutes = (t: string) => {
+  const m = String(t).trim().match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])?$/);
+  if (!m) return null;
+  let h = Number(m[1]);
+  if (m[3]) h = (h % 12) + (m[3].toUpperCase() === 'PM' ? 12 : 0);
+  return h * 60 + Number(m[2]);
+};
+// How many appointments fit in a range like "09:00 AM – 01:00 PM"
+const slotsInRange = (range: string, duration: number) => {
+  const [a, b] = range.split(/\s*(?:–|—|-)\s*/);
+  const start = toMinutes(a), end = b ? toMinutes(b) : null;
+  if (start === null) return 0;
+  if (end === null) return 1;
+  return end > start ? Math.floor((end - start) / duration) : 0;
+};
+const APPT_STATUS: Record<string, { label: string; bg: string; fg: string }> = {
+  confirmed: { label: 'Confirmed', bg: '#dbeafe', fg: '#1d4ed8' },
+  completed: { label: 'Completed', bg: '#dcfce7', fg: '#166534' },
+  cancelled: { label: 'Cancelled', bg: '#f3f4f6', fg: '#6b7280' },
+  no_show:   { label: 'No-show',   bg: '#fee2e2', fg: '#991b1b' },
+};
+const statusPill = (s: string) => {
+  const st = APPT_STATUS[s] || { label: s, bg: '#f3f4f6', fg: '#6b7280' };
+  return <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 20, fontSize: '0.7rem', fontWeight: 600, background: st.bg, color: st.fg }}>{st.label}</span>;
+};
+
 const DoctorDashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -95,6 +130,27 @@ const DoctorDashboard = () => {
 
   const [availSaving, setAvailSaving] = useState(false);
   const [availMsg, setAvailMsg]       = useState('');
+  const [consultationDuration, setConsultationDuration] = useState(20);
+
+  // ── Appointments, patients, prescriptions ───────────────────────────────────
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [apptsLoaded, setApptsLoaded]   = useState(false);
+  const [myPatients, setMyPatients]     = useState<any[]>([]);
+  const [apptFilter, setApptFilter]     = useState<'upcoming' | 'today' | 'past' | 'all'>('upcoming');
+  const [cancelId, setCancelId]         = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [apptMsg, setApptMsg]           = useState<{ ok: boolean; text: string } | null>(null);
+  const [labTestNames, setLabTestNames] = useState<string[]>([]);
+  const [rxAppointmentId, setRxAppointmentId] = useState('');
+  const [rxTests, setRxTests]   = useState([{ testName: '', notes: '' }]);
+  const [rxNotes, setRxNotes]   = useState('');
+  const [rxBusy, setRxBusy]     = useState(false);
+  const [rxMsg, setRxMsg]       = useState<{ ok: boolean; text: string } | null>(null);
+
+  const loadAppointments = () =>
+    api.get('/doctor/appointments').then((d: any) => setAppointments(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => setApptsLoaded(true));
+  const loadPatients = () =>
+    api.get('/doctor/patients').then((d: any) => setMyPatients(Array.isArray(d) ? d : [])).catch(() => {});
 
   // ── Effects ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -117,6 +173,7 @@ const DoctorDashboard = () => {
         setConsultationFee(d.consultationFee);
         setFeeInput(String(d.consultationFee));
       }
+      if (d.consultationDuration) setConsultationDuration(d.consultationDuration);
       if (Array.isArray(d.availability) && d.availability.length) {
         setAvailability(prev => prev.map(entry => {
           const backend = d.availability.find((av: any) => av.day === entry.day);
@@ -127,6 +184,13 @@ const DoctorDashboard = () => {
     }).catch(() => {});
 
     api.get('/doctor/prescriptions').then((d: any) => setPrescriptions(Array.isArray(d) ? d : [])).catch(() => {});
+    loadAppointments();
+    loadPatients();
+    // Test names labs actually offer — suggestions when prescribing, so "Find labs" matches
+    api.get('/public/tests').then((d: any) => {
+      const names = (Array.isArray(d) ? d : []).flatMap((lab: any) => (lab.tests || []).map((t: any) => t.name));
+      setLabTestNames([...new Set([...names, ...TESTS])].sort() as string[]);
+    }).catch(() => setLabTestNames(TESTS));
     api.get('/doctor/reports').then((d: any) => setReports(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/doctor/notifications').then((d: any) => {
       const arr = Array.isArray(d) ? d : [];
@@ -143,6 +207,7 @@ const DoctorDashboard = () => {
     socket.on('notification:new', (n: any) => {
       setNotifications(prev => [n, ...prev]);
       setNotifBadge(prev => prev + 1);
+      if (n.type?.startsWith('appointment_')) { loadAppointments(); loadPatients(); }
     });
     return () => { socket.off('notification:new'); };
   }, []);
@@ -185,6 +250,7 @@ const DoctorDashboard = () => {
         availability: availability.map(d => ({
           day: d.day, slots: d.active ? d.slots.map(time => ({ time })) : [],
         })),
+        consultationDuration,
       });
       setAvailMsg('Availability saved.');
       setTimeout(() => setAvailMsg(''), 3000);
@@ -226,6 +292,55 @@ const DoctorDashboard = () => {
     finally { setProfileSaving(false); }
   };
 
+  const replaceAppt = (a: any) => setAppointments(prev => prev.map(x => x._id === a._id ? { ...a, prescription: x.prescription } : x));
+
+  // action: 'complete' | 'no-show'
+  const closeAppt = async (a: any, action: 'complete' | 'no-show') => {
+    setApptMsg(null);
+    try {
+      const d: any = await api.put(`/doctor/appointments/${a._id}/${action}`, {});
+      replaceAppt(d.appointment);
+      loadPatients();
+    } catch (err: any) { setApptMsg({ ok: false, text: err.message || 'Update failed' }); }
+  };
+
+  const cancelAppt = async () => {
+    if (!cancelId) return;
+    if (!cancelReason.trim()) { setApptMsg({ ok: false, text: 'Please give a reason — it is sent to the patient.' }); return; }
+    setApptMsg(null);
+    try {
+      const d: any = await api.put(`/doctor/appointments/${cancelId}/cancel`, { reason: cancelReason.trim() });
+      replaceAppt(d.appointment);
+      setCancelId(null); setCancelReason('');
+      setApptMsg({ ok: true, text: 'Appointment cancelled — the patient has been notified.' });
+      loadPatients();
+    } catch (err: any) { setApptMsg({ ok: false, text: err.message || 'Cancel failed' }); }
+  };
+
+  const openPrescribe = (a: any) => {
+    setRxAppointmentId(a._id); setRxTests([{ testName: '', notes: '' }]); setRxNotes(''); setRxMsg(null);
+    navigate('prescribe');
+  };
+
+  const submitPrescription = async () => {
+    setRxMsg(null);
+    const tests = rxTests.map(t => ({ testName: t.testName.trim(), notes: t.notes.trim() })).filter(t => t.testName);
+    if (!rxAppointmentId) { setRxMsg({ ok: false, text: 'Choose the appointment this prescription is for.' }); return; }
+    if (!tests.length)    { setRxMsg({ ok: false, text: 'Add at least one test.' }); return; }
+    setRxBusy(true);
+    try {
+      const rx: any = await api.post('/doctor/prescriptions', { appointmentId: rxAppointmentId, tests, generalNotes: rxNotes.trim() });
+      setAppointments(prev => prev.map(a => a._id === rxAppointmentId ? { ...a, prescription: rx } : a));
+      setPrescriptions(prev => [{ ...rx, patient: appointments.find(a => a._id === rxAppointmentId)?.patient }, ...prev]);
+      setRxAppointmentId(''); setRxTests([{ testName: '', notes: '' }]); setRxNotes('');
+      setRxMsg({ ok: true, text: 'Prescription sent to the patient. They can find labs for each test from their dashboard.' });
+    } catch (err: any) {
+      setRxMsg({ ok: false, text: err.message || 'Could not save the prescription' });
+    } finally {
+      setRxBusy(false);
+    }
+  };
+
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
   const toggleDay = (id: number) => setAvailability(prev => prev.map(d => d.id === id ? { ...d, active: !d.active } : d));
   const navigate  = (page: string) => { setCurrentPage(page); setShowNotifDropdown(false); };
@@ -242,13 +357,25 @@ const DoctorDashboard = () => {
   const displayNotifications = notifications.length > 0 ? notifications  : DUMMY_NOTIFICATIONS;
   const displayNotifBadge    = notifications.length > 0 ? notifBadge    : DUMMY_NOTIFICATIONS.filter(n => !n.read).length;
 
-  const uniquePatientCount = new Set(
-    displayPrescriptions.filter((p: any) => p.patient?._id).map((p: any) => p.patient._id?.toString())
-  ).size;
+  // Patients come from appointments
+  const uniquePatientCount = myPatients.length;
 
-  const todayName  = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-  const todaySlots = availability.find(d => d.day === todayName && d.active)?.slots ?? [];
-  const displayTodaySlots = todaySlots.length > 0 ? todaySlots : ['09:00 AM – 01:00 PM', '02:00 PM – 05:00 PM'];
+  const nowMs = Date.now();
+  const today = pktToday();
+  const started = (a: any) => new Date(a.startsAt).getTime() <= nowMs;
+  const todaysAppts = appointments.filter(a => a.date === today && a.status !== 'cancelled');
+  const upcomingCount = appointments.filter(a => a.status === 'confirmed' && !started(a)).length;
+  const filteredAppts = appointments.filter(a =>
+    apptFilter === 'all'      ? true
+    : apptFilter === 'today'  ? a.date === today
+    : apptFilter === 'upcoming' ? a.status === 'confirmed' && !started(a)
+    : started(a) || a.status !== 'confirmed'
+  );
+  if (apptFilter === 'past' || apptFilter === 'all') filteredAppts.reverse(); // newest first
+  // Appointments a prescription can be written for
+  const rxEligible = appointments.filter(a => ['confirmed', 'completed'].includes(a.status) && started(a) && !a.prescription)
+    .sort((a, b) => new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime());
+  const fmtVisit = (d?: string) => d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Karachi' }) : '—';
 
   const filteredReports = displayReports.filter((r: any) => {
     const q = searchQuery.toLowerCase();
@@ -264,6 +391,8 @@ const DoctorDashboard = () => {
 
   const pageBreadcrumbs: Record<string, string> = {
     dashboard:    'Dashboard',
+    appointments: 'Appointments',
+    patients:     'My Patients',
     availability: 'Manage Availability',
     prescribe:    'Prescribe Test',
     reports:      'Patient Reports',
@@ -299,6 +428,15 @@ const DoctorDashboard = () => {
             <button className={`doc-nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => navigate('dashboard')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
               Dashboard
+            </button>
+            <button className={`doc-nav-item ${currentPage === 'appointments' ? 'active' : ''}`} onClick={() => navigate('appointments')}>
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Appointments
+              {upcomingCount > 0 && <span className="doc-nav-badge">{upcomingCount}</span>}
+            </button>
+            <button className={`doc-nav-item ${currentPage === 'patients' ? 'active' : ''}`} onClick={() => navigate('patients')}>
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              My Patients
             </button>
             <button className={`doc-nav-item ${currentPage === 'availability' ? 'active' : ''}`} onClick={() => navigate('availability')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
@@ -459,7 +597,7 @@ const DoctorDashboard = () => {
                     </div>
                   </div>
                   <div className="doc-stat-trend" style={{ color: 'var(--text-muted)' }}>
-                    Distinct patients prescribed for
+                    Patients who booked with you
                   </div>
                 </div>
 
@@ -528,10 +666,10 @@ const DoctorDashboard = () => {
                   <div className="doc-card-header">
                     <div className="doc-card-title">
                       <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                      Today's Slots ({todayName})
+                      Today's Appointments
                     </div>
-                    <div className="doc-card-action" onClick={() => navigate('availability')} style={{ cursor: 'pointer' }}>
-                      Manage
+                    <div className="doc-card-action" onClick={() => { setApptFilter('today'); navigate('appointments'); }} style={{ cursor: 'pointer' }}>
+                      View all
                       <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
                     </div>
                   </div>
@@ -539,15 +677,19 @@ const DoctorDashboard = () => {
                     <table>
                       <thead>
                         <tr>
-                          <th>Time Slot</th>
+                          <th>Time</th>
+                          <th>Patient</th>
                           <th style={{ textAlign: 'right' }}>Status</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {displayTodaySlots.map((slot: string, idx: number) => (
-                          <tr key={idx}>
-                            <td style={{ fontWeight: 600, color: 'var(--text)' }}>{slot}</td>
-                            <td style={{ textAlign: 'right' }}><span className="doc-type-tag doc-type-consultation">Available</span></td>
+                        {todaysAppts.length === 0 ? (
+                          <tr><td colSpan={3} style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: '0.82rem' }}>No appointments today.</td></tr>
+                        ) : todaysAppts.map((a: any) => (
+                          <tr key={a._id}>
+                            <td style={{ fontWeight: 600, color: 'var(--text)' }}>{time12(a.time)}</td>
+                            <td>{a.patient?.name || '—'}</td>
+                            <td style={{ textAlign: 'right' }}>{statusPill(a.status)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -571,6 +713,18 @@ const DoctorDashboard = () => {
                 </button>
               </div>
 
+              <div className="doc-card doc-fade-up doc-fade-up-1" style={{ padding: '16px 22px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text)' }}>Consultation duration</div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    Each time range is split into appointments of this length. Patients book them up to 14 days ahead.
+                  </div>
+                </div>
+                <select className="doc-filter-select" value={consultationDuration} onChange={e => setConsultationDuration(Number(e.target.value))}>
+                  {[...new Set([...DURATION_OPTIONS, consultationDuration])].sort((a, b) => a - b).map(m => <option key={m} value={m}>{m} minutes</option>)}
+                </select>
+              </div>
+
               <div className="doc-avail-grid doc-fade-up doc-fade-up-2">
                 {availability.map((day) => (
                   <div className={`doc-avail-row ${!day.active ? 'inactive' : ''}`} key={day.id}>
@@ -589,6 +743,7 @@ const DoctorDashboard = () => {
                           <div className="doc-slot-pill" key={sIdx} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                             {slot}
+                            <span style={{ fontSize: '0.7rem', opacity: 0.65 }}>· {slotsInRange(slot, consultationDuration)} appts</span>
                             <button onClick={() => removeSlot(day.id, sIdx)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: 'var(--text-muted)', lineHeight: 1 }} title="Remove slot">
                               <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                             </button>
@@ -654,39 +809,196 @@ const DoctorDashboard = () => {
               </div>
             </section>
 
-            {/* ══ PRESCRIBE TEST ═════════════════════════════════════════════ */}
-            <section className={`doc-page-section ${currentPage === 'prescribe' ? 'active' : ''}`}>
-              <div className="doc-page-header doc-fade-up" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            {/* ══ APPOINTMENTS ═══════════════════════════════════════════════ */}
+            <section className={`doc-page-section ${currentPage === 'appointments' ? 'active' : ''}`}>
+              <div className="doc-page-header doc-fade-up" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                 <div>
-                  <div className="doc-page-title">Prescribe Test</div>
+                  <div className="doc-page-title">Appointments</div>
                   <div className="doc-page-title-rule"></div>
-                  <div className="doc-page-subtitle">Select tests and generate a patient prescription</div>
+                  <div className="doc-page-subtitle">Clinic visits booked by patients — confirmed automatically</div>
+                </div>
+                <div className="doc-filter-row doc-fade-up doc-fade-up-1">
+                  <select className="doc-filter-select" value={apptFilter} onChange={e => setApptFilter(e.target.value as any)}>
+                    <option value="upcoming">Upcoming</option>
+                    <option value="today">Today</option>
+                    <option value="past">Past & closed</option>
+                    <option value="all">All</option>
+                  </select>
                 </div>
               </div>
 
-              <div className="doc-card doc-fade-up doc-fade-up-1" style={{ padding: 32 }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: '16px 20px', borderRadius: 10, background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', marginBottom: 28 }}>
-                  <svg width="18" height="18" fill="none" stroke="#3b82f6" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#1d4ed8', marginBottom: 4 }}>How Prescriptions Work in CareFirst</div>
-                    <div style={{ fontSize: '0.82rem', color: '#1e40af', lineHeight: 1.65 }}>
-                      After consulting with a patient, contact the admin team with the required tests. The admin will create the prescription and assign the patient to an approved lab. The patient will be notified automatically to get their tests done.
-                    </div>
+              {apptMsg && (
+                <div style={{ padding: '10px 14px', borderRadius: 8, marginBottom: 14, fontSize: '0.82rem', background: apptMsg.ok ? '#dcfce7' : '#fee2e2', color: apptMsg.ok ? '#166534' : '#991b1b' }}>
+                  {apptMsg.text}
+                </div>
+              )}
+
+              <div className="doc-card doc-fade-up doc-fade-up-2">
+                <div className="doc-table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>When</th><th>Patient</th><th>Status</th><th>Prescription</th><th style={{ textAlign: 'right' }}>Actions</th></tr>
+                    </thead>
+                    <tbody>
+                      {!apptsLoaded ? (
+                        <tr><td colSpan={5} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                      ) : filteredAppts.length === 0 ? (
+                        <tr><td colSpan={5} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                          {appointments.length === 0 ? 'No appointments yet. Patients book the free times from your availability.' : 'No appointments in this view.'}
+                        </td></tr>
+                      ) : filteredAppts.map((a: any) => (
+                        <React.Fragment key={a._id}>
+                          <tr>
+                            <td>
+                              <div style={{ fontWeight: 600, color: 'var(--text)' }}>{a.date === today ? 'Today' : dayLabel(a.date)}</div>
+                              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{time12(a.time)} · {a.durationMinutes} min</div>
+                            </td>
+                            <td>
+                              <div style={{ fontWeight: 600, color: 'var(--text)' }}>{a.patient?.name || '—'}</div>
+                              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{[a.patient?.cnic, a.patient?.phone].filter(Boolean).join(' · ') || a.patient?.email}</div>
+                            </td>
+                            <td>
+                              {statusPill(a.status)}
+                              {a.status === 'cancelled' && (
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 3, maxWidth: 200 }}>
+                                  {a.cancelledBy === 'doctor' ? `By you: ${a.cancellationReason}` : 'By the patient'}
+                                </div>
+                              )}
+                            </td>
+                            <td style={{ fontSize: '0.78rem' }}>
+                              {a.prescription
+                                ? (a.prescription.tests || []).map((t: any) => t.testName).join(', ')
+                                : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                {a.status === 'confirmed' && started(a) && <>
+                                  <button className="doc-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.72rem', color: '#166534' }} onClick={() => closeAppt(a, 'complete')}>Completed</button>
+                                  <button className="doc-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.72rem' }} onClick={() => closeAppt(a, 'no-show')}>No-show</button>
+                                </>}
+                                {['confirmed', 'completed'].includes(a.status) && started(a) && !a.prescription && (
+                                  <button className="doc-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.72rem', color: 'var(--red)' }} onClick={() => openPrescribe(a)}>Prescribe</button>
+                                )}
+                                {a.status === 'confirmed' && (
+                                  <button className="doc-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.72rem' }} onClick={() => { setCancelId(a._id); setCancelReason(''); setApptMsg(null); }}>Cancel</button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                          {cancelId === a._id && (
+                            <tr>
+                              <td colSpan={5} style={{ background: 'rgba(220,38,38,0.04)', padding: '10px 16px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#991b1b' }}>Reason for cancelling (sent to {a.patient?.name}):</span>
+                                  <input className="doc-form-input" style={{ flex: 1, minWidth: 220, height: 34 }} autoFocus value={cancelReason}
+                                    onChange={e => setCancelReason(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') cancelAppt(); if (e.key === 'Escape') setCancelId(null); }}
+                                    placeholder="e.g. Called into emergency surgery" />
+                                  <button className="doc-btn-primary doc-red" style={{ padding: '6px 14px', fontSize: '0.78rem' }} onClick={cancelAppt}>Cancel appointment</button>
+                                  <button className="doc-btn-ghost" style={{ padding: '6px 12px', fontSize: '0.78rem' }} onClick={() => setCancelId(null)}>Keep</button>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            {/* ══ MY PATIENTS ════════════════════════════════════════════════ */}
+            <section className={`doc-page-section ${currentPage === 'patients' ? 'active' : ''}`}>
+              <div className="doc-page-header doc-fade-up">
+                <div className="doc-page-title">My Patients</div>
+                <div className="doc-page-title-rule"></div>
+                <div className="doc-page-subtitle">Everyone who has booked an appointment with you</div>
+              </div>
+              <div className="doc-card doc-fade-up doc-fade-up-1">
+                <div className="doc-table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>Patient</th><th>CNIC</th><th>Contact</th><th>Appointments</th><th>Last visit</th><th>Next visit</th></tr>
+                    </thead>
+                    <tbody>
+                      {myPatients.length === 0 ? (
+                        <tr><td colSpan={6} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>No patients yet — they appear here once they book with you.</td></tr>
+                      ) : myPatients.map((p: any) => (
+                        <tr key={p.patient._id}>
+                          <td style={{ fontWeight: 600, color: 'var(--text)' }}>{p.patient.name}</td>
+                          <td className="doc-report-id">{p.patient.cnic || '—'}</td>
+                          <td style={{ fontSize: '0.78rem' }}>{p.patient.phone || p.patient.email}</td>
+                          <td>{p.appointments}</td>
+                          <td style={{ fontSize: '0.8rem' }}>{fmtVisit(p.lastVisit)}</td>
+                          <td style={{ fontSize: '0.8rem' }}>{fmtVisit(p.nextVisit)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            {/* ══ PRESCRIBE TEST ═════════════════════════════════════════════ */}
+            <section className={`doc-page-section ${currentPage === 'prescribe' ? 'active' : ''}`}>
+              <div className="doc-page-header doc-fade-up">
+                <div className="doc-page-title">Prescribe Test</div>
+                <div className="doc-page-title-rule"></div>
+                <div className="doc-page-subtitle">Write a prescription for a consultation — the patient can then find labs for each test</div>
+              </div>
+
+              <div className="doc-card doc-fade-up doc-fade-up-1" style={{ padding: 28 }}>
+                {rxMsg && (
+                  <div style={{ padding: '10px 14px', borderRadius: 8, marginBottom: 18, fontSize: '0.82rem', background: rxMsg.ok ? '#dcfce7' : '#fee2e2', color: rxMsg.ok ? '#166534' : '#991b1b' }}>
+                    {rxMsg.text}
                   </div>
+                )}
+
+                <div className="doc-form-section">
+                  <label className="doc-form-label">Appointment</label>
+                  {rxEligible.length === 0 ? (
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                      No appointments waiting for a prescription. A prescription can be written once an appointment has started (and isn't cancelled or a no-show).
+                    </div>
+                  ) : (
+                    <select className="doc-form-input" value={rxAppointmentId} onChange={e => setRxAppointmentId(e.target.value)}>
+                      <option value="">Choose an appointment…</option>
+                      {rxEligible.map((a: any) => (
+                        <option key={a._id} value={a._id}>{a.patient?.name} — {dayLabel(a.date)}, {time12(a.time)} ({APPT_STATUS[a.status]?.label})</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 <div className="doc-form-section">
-                  <label className="doc-form-label">Available Tests in the System</label>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 12 }}>These are the test types currently supported. Use this as a reference when communicating with the admin.</div>
-                  <div className="doc-tests-grid">
-                    {TESTS.map((t, i) => (
-                      <div key={i} className="doc-test-chip" style={{ cursor: 'default', opacity: 0.85 }}>
-                        <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-                        {t}
-                      </div>
-                    ))}
-                  </div>
+                  <label className="doc-form-label">Tests</label>
+                  <datalist id="doc-test-names">{labTestNames.map(n => <option key={n} value={n} />)}</datalist>
+                  {rxTests.map((t, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+                      <input className="doc-form-input" style={{ flex: '2 1 220px' }} list="doc-test-names" placeholder="Test name (pick a lab test so the patient can book it)"
+                        value={t.testName} onChange={e => setRxTests(prev => prev.map((x, j) => j === i ? { ...x, testName: e.target.value } : x))} />
+                      <input className="doc-form-input" style={{ flex: '3 1 220px' }} placeholder="Notes for this test (optional)"
+                        value={t.notes} onChange={e => setRxTests(prev => prev.map((x, j) => j === i ? { ...x, notes: e.target.value } : x))} />
+                      {rxTests.length > 1 && (
+                        <button className="doc-btn-ghost" style={{ padding: '4px 10px' }} title="Remove" onClick={() => setRxTests(prev => prev.filter((_, j) => j !== i))}>✕</button>
+                      )}
+                    </div>
+                  ))}
+                  <button className="doc-add-slot" onClick={() => setRxTests(prev => [...prev, { testName: '', notes: '' }])}>
+                    <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add another test
+                  </button>
                 </div>
+
+                <div className="doc-form-section">
+                  <label className="doc-form-label">General notes</label>
+                  <textarea className="doc-form-input doc-form-textarea" placeholder="Instructions for the patient (optional)" value={rxNotes} onChange={e => setRxNotes(e.target.value)}></textarea>
+                </div>
+
+                <button className="doc-btn-primary doc-red" disabled={rxBusy || rxEligible.length === 0} onClick={submitPrescription}
+                  style={rxBusy || rxEligible.length === 0 ? { opacity: 0.55 } : {}}>
+                  {rxBusy ? 'Sending…' : 'Send Prescription'}
+                </button>
               </div>
             </section>
 
