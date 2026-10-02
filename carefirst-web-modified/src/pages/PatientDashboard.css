@@ -1039,6 +1039,12 @@
   border-color: var(--text);
 }
 
+.pat-spec-chip:disabled:hover {
+  background: var(--surface);
+  color: var(--text-sub);
+  border-color: var(--border-md);
+}
+
 /* ─── Lab Cards ──────────────────────────────────────────────── */
 .pat-labs-grid {
   display: grid;

@@ -57,6 +57,34 @@ const PLAN_STATUS: Record<string, { label: string; cls: string }> = {
   defaulter:        { label: 'Escalated',       cls: 'pat-badge-red'   },
 };
 
+// ── Appointments & lab visits (mirror carefirst-backend/utils/schedule.js) ─────
+const BOOKING_WINDOW_DAYS  = 14;
+const PATIENT_CANCEL_HOURS = 2;
+const pktToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date()); // YYYY-MM-DD
+const addDaysTo = (date: string, days: number) => {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+const dayLabel = (date: string, opts: Intl.DateTimeFormatOptions = { weekday: 'short', day: 'numeric', month: 'short' }) =>
+  new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { ...opts, timeZone: 'UTC' });
+const time12 = (hhmm: string) => {
+  const [h, m] = (hhmm || '0:0').split(':').map(Number);
+  return `${String(h % 12 || 12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+};
+const APPT_STATUS: Record<string, { label: string; cls: string }> = {
+  confirmed: { label: 'Confirmed', cls: 'pat-badge-green' },
+  completed: { label: 'Completed', cls: 'pat-badge-green' },
+  cancelled: { label: 'Cancelled', cls: 'pat-badge-red'   },
+  no_show:   { label: 'Missed',    cls: 'pat-badge-red'   },
+};
+const LAB_STATUS: Record<string, { label: string; cls: string }> = {
+  confirmed:        { label: 'Confirmed',        cls: 'pat-badge-green' },
+  sample_collected: { label: 'Sample collected', cls: 'pat-badge-amber' },
+  completed:        { label: 'Completed',        cls: 'pat-badge-green' },
+  cancelled:        { label: 'Cancelled',        cls: 'pat-badge-red'   },
+};
+
 // Down payment and the (first) installment amount for a test, in whole rupees
 const planEstimate = (price: number, count: number, downPct: number) => {
   const down = Math.round(price * downPct / 100);
@@ -109,6 +137,20 @@ const PatientDashboard = () => {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [doctors, setDoctors]             = useState<any[]>([]);
   const [allLabTests, setAllLabTests]     = useState<any[]>([]);
+  const [appointments, setAppointments]   = useState<any[]>([]);
+  const [labBookings, setLabBookings]     = useState<any[]>([]);
+
+  // ── Booking flows ───────────────────────────────────────────────────────────
+  const [apptDoctor, setApptDoctor]   = useState<any>(null);   // doctor being booked
+  const [apptSlots, setApptSlots]     = useState<any>(null);   // GET /public/doctors/:id/slots
+  const [apptDate, setApptDate]       = useState('');
+  const [apptTime, setApptTime]       = useState('');
+  const [labTarget, setLabTarget]     = useState<{ lab: any; test: any } | null>(null);
+  const [visitDate, setVisitDate]     = useState('');
+  const [payWallet, setPayWallet]     = useState('');           // '' = pay at the lab
+  const [bookingBusy, setBookingBusy] = useState(false);
+  const [bookingMsg, setBookingMsg]   = useState<{ ok: boolean; text: string } | null>(null);
+  const [visitsMsg, setVisitsMsg]     = useState<{ ok: boolean; text: string } | null>(null);
   const [loaded, setLoaded]               = useState<Record<string, boolean>>({});
 
   // ── Wallet state ────────────────────────────────────────────────────────────
@@ -170,6 +212,10 @@ const PatientDashboard = () => {
     api.get('/patient/community-applications').then((d: any) => setCommunityApps(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => markLoaded('community')), []);
   const loadNotifications = useCallback(() =>
     api.get('/patient/notifications').then((d: any) => setNotifications(Array.isArray(d) ? d : [])).catch(() => {}), []);
+  const loadAppointments = useCallback(() =>
+    api.get('/patient/appointments').then((d: any) => setAppointments(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => markLoaded('appointments')), []);
+  const loadLabBookings = useCallback(() =>
+    api.get('/patient/lab-bookings').then((d: any) => setLabBookings(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => markLoaded('labBookings')), []);
   const loadPlanConfig = useCallback(() =>
     api.get('/patient/installment-plans/config').then((d: any) => setPlanConfig(d)).catch(() => {}), []);
 
@@ -186,6 +232,8 @@ const PatientDashboard = () => {
     loadCommunity();
     loadNotifications();
     loadPlanConfig();
+    loadAppointments();
+    loadLabBookings();
     api.get('/public/doctors').then((d: any) => setDoctors(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => markLoaded('doctors'));
     api.get('/public/tests').then((d: any) => setAllLabTests(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => markLoaded('tests'));
   }, []);
@@ -199,7 +247,9 @@ const PatientDashboard = () => {
     socket.on('notification:new', (n: any) => {
       setNotifications(prev => [n, ...prev]);
       if (n.type === 'test_report_uploaded') { loadReports(); loadCommunity(); }
-      if (n.type === 'prescription_issued')  loadPrescriptions();
+      if (n.type === 'prescription_issued')  { loadPrescriptions(); loadAppointments(); }
+      if (n.type?.startsWith('appointment_')) loadAppointments();
+      if (n.type?.startsWith('lab_booking_') || n.type === 'test_report_uploaded') loadLabBookings();
       if ([
         'receipt_lab_approved', 'receipt_admin_verified', 'installment_overdue', 'installment_due_soon', 'defaulter_escalated',
         'plan_approved', 'plan_rejected', 'plan_activated', 'service_fee_rejected',
@@ -260,6 +310,85 @@ const PatientDashboard = () => {
       setUploadingKey('');
     }
   };
+
+  // ── Doctor appointments ─────────────────────────────────────────────────────
+  const loadSlots = async (doctorId: string, keepDate = '') => {
+    const s: any = await api.get(`/public/doctors/${doctorId}/slots`);
+    setApptSlots(s);
+    const firstOpen = s.days?.find((d: any) => d.times.length)?.date || '';
+    setApptDate(keepDate && s.days?.some((d: any) => d.date === keepDate && d.times.length) ? keepDate : firstOpen);
+    setApptTime('');
+  };
+
+  const startAppointment = async (doc: any) => {
+    setApptDoctor(doc); setApptSlots(null); setApptDate(''); setApptTime(''); setBookingMsg(null);
+    navigate('bookAppointment');
+    try { await loadSlots(doc.doctorId); }
+    catch (err: any) { setBookingMsg({ ok: false, text: err.message || 'Could not load the schedule' }); }
+  };
+
+  const confirmAppointment = async () => {
+    if (!apptDoctor || !apptDate || !apptTime) return;
+    setBookingMsg(null); setBookingBusy(true);
+    try {
+      const appt: any = await api.post('/patient/appointments', { doctorId: apptDoctor.doctorId, date: apptDate, time: apptTime });
+      setAppointments(prev => [appt, ...prev]);
+      setVisitsMsg({ ok: true, text: `Appointment confirmed with ${drName(apptDoctor.name)} on ${dayLabel(apptDate)} at ${time12(apptTime)}. Pay the fee at the clinic.` });
+      setApptDoctor(null);
+      navigate('appointments');
+    } catch (err: any) {
+      setBookingMsg({ ok: false, text: err.message || 'Booking failed. Please try again.' });
+      if (err.status === 409) loadSlots(apptDoctor.doctorId, apptDate).catch(() => {}); // slot just taken
+    } finally {
+      setBookingBusy(false);
+    }
+  };
+
+  const cancelMyAppointment = async (a: any) => {
+    if (!window.confirm(`Cancel your appointment with ${drName(a.doctor?.name)} on ${dayLabel(a.date)} at ${time12(a.time)}?`)) return;
+    setVisitsMsg(null);
+    try {
+      const d: any = await api.put(`/patient/appointments/${a._id}/cancel`, {});
+      setAppointments(prev => prev.map(x => x._id === a._id ? d.appointment : x));
+      setVisitsMsg({ ok: true, text: 'Appointment cancelled.' });
+    } catch (err: any) { setVisitsMsg({ ok: false, text: err.message || 'Could not cancel' }); }
+  };
+
+  // ── Lab visits ──────────────────────────────────────────────────────────────
+  const startLabBooking = (lab: any, test: any) => {
+    setLabTarget({ lab, test }); setVisitDate(pktToday()); setPayWallet(''); setBookingMsg(null);
+    navigate('bookLabTest');
+  };
+
+  const confirmLabBooking = async () => {
+    if (!labTarget || !visitDate) return;
+    setBookingMsg(null); setBookingBusy(true);
+    try {
+      const b: any = await api.post('/patient/lab-bookings', {
+        labId: labTarget.lab.labId, testId: labTarget.test._id, visitDate, ...(payWallet ? { walletId: payWallet } : {}),
+      });
+      setLabBookings(prev => [b, ...prev]);
+      setVisitsMsg({ ok: true, text: `${labTarget.test.name} booked at ${labTarget.lab.labName} for ${dayLabel(visitDate)}.` });
+      setLabTarget(null);
+      navigate('appointments');
+    } catch (err: any) {
+      setBookingMsg({ ok: false, text: err.message || 'Booking failed. Please try again.' });
+    } finally {
+      setBookingBusy(false);
+    }
+  };
+
+  const cancelLabVisit = async (b: any) => {
+    if (!window.confirm(`Cancel your ${b.testName} visit on ${dayLabel(b.visitDate)}?`)) return;
+    setVisitsMsg(null);
+    try {
+      const d: any = await api.put(`/patient/lab-bookings/${b._id}/cancel`, {});
+      setLabBookings(prev => prev.map(x => x._id === b._id ? d.booking : x));
+      setVisitsMsg({ ok: true, text: 'Lab visit cancelled.' });
+    } catch (err: any) { setVisitsMsg({ ok: false, text: err.message || 'Could not cancel' }); }
+  };
+
+  const findLabsFor = (testName: string) => { setTestSearch(testName); navigate('bookTests'); };
 
   const startPlanApplication = (lab: any, test: any) => {
     setPlanTarget({ lab, test });
@@ -453,6 +582,24 @@ const PatientDashboard = () => {
         .sort((a: any, b: any) => new Date(b.receiptUploadedAt).getTime() - new Date(a.receiptUploadedAt).getTime())
     : [];
 
+  // Appointments: upcoming soonest first, then past newest first
+  const nowMs = Date.now();
+  const upcomingAppts = appointments.filter(a => a.status === 'confirmed' && new Date(a.startsAt).getTime() > nowMs)
+    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+  const pastAppts = appointments.filter(a => !upcomingAppts.includes(a))
+    .sort((a, b) => new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime());
+  const canCancelAppt = (a: any) => a.status === 'confirmed' && nowMs < new Date(a.startsAt).getTime() - PATIENT_CANCEL_HOURS * 3600000;
+  const openLabVisits = labBookings.filter(b => ['confirmed', 'sample_collected'].includes(b.status)).length;
+
+  // Installment plans that can pay for the lab test being booked (one booking per plan)
+  const usedWallets = new Set(labBookings.filter(b => b.status !== 'cancelled' && b.wallet).map(b => String(b.wallet)));
+  const payablePlans = labTarget ? wallets.filter(w =>
+    String(w.lab?._id) === String(labTarget.lab.labId) &&
+    (w.labTest ? String(w.labTest) === String(labTarget.test._id) : w.testName === labTarget.test.name) &&
+    ['active', 'completed'].includes(w.status) && !usedWallets.has(String(w._id))
+  ) : [];
+  const visitDates = Array.from({ length: BOOKING_WINDOW_DAYS }, (_, i) => addDaysTo(pktToday(), i));
+
   // Why a test can't be applied for right now (null = can apply)
   const planBlocker = (lab: any) =>
     !cnicVerified                  ? 'Your CNIC must be verified first'
@@ -467,6 +614,9 @@ const PatientDashboard = () => {
     myReports:     'My Reports',
     myWallet:      'My Wallet',
     applyPlan:     'Apply for Installments',
+    appointments:  'Appointments',
+    bookAppointment: 'Book Appointment',
+    bookLabTest:   'Book Lab Visit',
     community:     'Community Support',
     notifications: 'Notifications',
     profile:       'Profile',
@@ -521,6 +671,21 @@ const PatientDashboard = () => {
       <input type="file" accept=".pdf,.jpg,.jpeg,.png" hidden disabled={Boolean(uploadingKey)}
         onChange={e => { onFile(e.target.files?.[0]); e.target.value = ''; }} />
     </label>
+  );
+
+  // Selectable chip for dates and times in the booking pages
+  const pickChip = (key: string, active: boolean, disabled: boolean, onClick: () => void, children: React.ReactNode) => (
+    <button key={key} type="button" className={`pat-spec-chip ${active ? 'active' : ''}`} disabled={disabled} onClick={onClick}
+      style={{ ...(disabled ? { opacity: 0.4, cursor: 'not-allowed' } : {}), display: 'inline-flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.25 }}>
+      {children}
+    </button>
+  );
+
+  const smallBtn = (label: string, onClick: () => void, opts: { danger?: boolean; title?: string } = {}) => (
+    <button type="button" className="pat-upload-receipt-btn" title={opts.title} onClick={onClick}
+      style={opts.danger ? {} : { color: 'var(--text)' }}>
+      {label}
+    </button>
   );
 
   const cnicNotice = !cnicVerified && profile && (
@@ -588,6 +753,15 @@ const PatientDashboard = () => {
               </svg>
               Book Tests
               {prescribedTests.length > 0 && <span className="pat-nav-badge">{prescribedTests.length}</span>}
+            </button>
+
+            <button className={`pat-nav-item ${['appointments', 'bookAppointment', 'bookLabTest'].includes(currentPage) ? 'active' : ''}`} onClick={() => navigate('appointments')}>
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
+                <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/>
+                <line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/>
+              </svg>
+              Appointments
+              {upcomingAppts.length + openLabVisits > 0 && <span className="pat-nav-badge">{upcomingAppts.length + openLabVisits}</span>}
             </button>
 
             <button className={`pat-nav-item ${currentPage === 'myReports' ? 'active' : ''}`} onClick={() => navigate('myReports')}>
@@ -711,6 +885,11 @@ const PatientDashboard = () => {
                     <div className="pat-hero-pills">
                       <div className={`pat-hero-pill ${CNIC_STATUS[cnicStatus].pill}`}>{CNIC_STATUS[cnicStatus].label}</div>
                       {unreadReports > 0 && <div className="pat-hero-pill pat-green">{unreadReports} New Report{unreadReports > 1 ? 's' : ''}</div>}
+                      {upcomingAppts[0] && (
+                        <div className="pat-hero-pill pat-green" style={{ cursor: 'pointer' }} onClick={() => navigate('appointments')}>
+                          Next: {drName(upcomingAppts[0].doctor?.name)} · {dayLabel(upcomingAppts[0].date)} {time12(upcomingAppts[0].time)}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="pat-hero-stats">
@@ -941,15 +1120,16 @@ const PatientDashboard = () => {
                     </div>
                     <button
                       className="pat-btn-primary pat-red"
-                      style={{ width: '100%', justifyContent: 'center', opacity: 0.55, cursor: 'not-allowed' }}
-                      disabled
-                      title="Appointment booking is coming soon"
+                      style={{ width: '100%', justifyContent: 'center', ...(doc.availableDays.length ? {} : { opacity: 0.55, cursor: 'not-allowed' }) }}
+                      disabled={!doc.availableDays.length}
+                      title={doc.availableDays.length ? 'See free times and book a clinic visit' : 'This doctor has not published a schedule yet'}
+                      onClick={() => startAppointment(doc)}
                     >
                       <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                         <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/>
                         <line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/>
                       </svg>
-                      Booking coming soon
+                      Book Appointment
                     </button>
                   </div>
                 ))}
@@ -1068,20 +1248,26 @@ const PatientDashboard = () => {
                               );
                             })()}
                           </div>
-                          {t.installmentEnabled && (() => {
-                            const blocker = planBlocker(lab);
+                          {(() => {
+                            const blocker = t.installmentEnabled ? planBlocker(lab) : null;
                             return (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                                <button
-                                  type="button"
-                                  className="pat-upload-receipt-btn"
-                                  disabled={Boolean(blocker)}
-                                  title={blocker || 'Pay for this test in installments'}
-                                  style={blocker ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
-                                  onClick={() => startPlanApplication(lab, t)}
-                                >
-                                  Apply for installments
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
+                                <button type="button" className="pat-upload-receipt-btn" style={{ color: 'var(--blue)' }}
+                                  title="Pick a visit date — pay at the lab or with an installment plan" onClick={() => startLabBooking(lab, t)}>
+                                  Book visit
                                 </button>
+                                {t.installmentEnabled && (
+                                  <button
+                                    type="button"
+                                    className="pat-upload-receipt-btn"
+                                    disabled={Boolean(blocker)}
+                                    title={blocker || 'Pay for this test in installments'}
+                                    style={blocker ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
+                                    onClick={() => startPlanApplication(lab, t)}
+                                  >
+                                    Apply for installments
+                                  </button>
+                                )}
                                 {blocker && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{blocker}</span>}
                               </div>
                             );
@@ -1089,22 +1275,269 @@ const PatientDashboard = () => {
                         </div>
                       ))}
                     </div>
-
-                    <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                      <button
-                        className="pat-btn-primary pat-blue"
-                        style={{ flex: 1, justifyContent: 'center', opacity: 0.55, cursor: 'not-allowed' }}
-                        disabled
-                        title="Lab test booking is coming soon"
-                      >
-                        <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/>
-                        </svg>
-                        Booking coming soon
-                      </button>
-                    </div>
                   </div>
                 ))}
+              </div>
+            </section>
+
+            {/* ══ BOOK APPOINTMENT (opened from Find Doctors) ═════ */}
+            <section className={`pat-page-section ${currentPage === 'bookAppointment' ? 'active' : ''}`}>
+              <div className="pat-page-header pat-fade-up">
+                <div className="pat-page-title">Book Appointment</div>
+                <div className="pat-page-title-rule"></div>
+                <div className="pat-page-subtitle">Pick a day and a free time — your booking is confirmed straight away</div>
+              </div>
+
+              {!apptDoctor ? (
+                <div className="pat-card" style={{ padding: '32px 28px', textAlign: 'center', fontSize: '0.86rem', color: 'var(--text-muted)' }}>
+                  Choose a doctor in <a style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => navigate('findDoctors')}>Find Doctors</a>.
+                </div>
+              ) : (() => {
+                const day = apptSlots?.days?.find((d: any) => d.date === apptDate);
+                return (
+                  <>
+                    <div className="pat-card pat-fade-up pat-fade-up-1" style={{ padding: '20px 24px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                        <div className="pat-doc-avatar">{(apptDoctor.name || 'D').replace(/^dr\.?\s*/i, '')[0]?.toUpperCase()}</div>
+                        <div style={{ flex: 1, minWidth: 180 }}>
+                          <div style={{ fontWeight: 700, color: 'var(--text)' }}>{drName(apptDoctor.name)}</div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{apptDoctor.specialization} · {apptSlots?.consultationDuration || apptDoctor.consultationDuration || 20}-minute consultations</div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontWeight: 700, color: 'var(--text)' }}>{apptDoctor.consultationFee > 0 ? pkr(apptDoctor.consultationFee) : 'Fee not set'}</div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Paid at the clinic</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pat-card pat-fade-up pat-fade-up-2" style={{ padding: '20px 24px' }}>
+                      {banner(bookingMsg)}
+                      {!apptSlots ? (
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{bookingMsg ? '' : 'Loading free times…'}</div>
+                      ) : !apptSlots.days.some((d: any) => d.times.length) ? (
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No free times in the next {apptSlots.windowDays} days. Please check back later or choose another doctor.</div>
+                      ) : (
+                        <>
+                          <div className="pat-form-label" style={{ marginBottom: 8 }}>Day</div>
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+                            {apptSlots.days.map((d: any) => pickChip(d.date, d.date === apptDate, !d.times.length, () => { setApptDate(d.date); setApptTime(''); }, <>
+                              <span style={{ fontWeight: 700 }}>{dayLabel(d.date, { weekday: 'short' })}</span>
+                              <span>{dayLabel(d.date, { day: 'numeric', month: 'short' })}</span>
+                              <span style={{ fontSize: '0.66rem', opacity: 0.75 }}>{d.times.length ? `${d.times.length} free` : 'Full / off'}</span>
+                            </>))}
+                          </div>
+                          <div className="pat-form-label" style={{ marginBottom: 8 }}>Time {day && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {dayLabel(day.date, { weekday: 'long', day: 'numeric', month: 'long' })}</span>}</div>
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+                            {(day?.times || []).map((t: any) => pickChip(t.time, t.time === apptTime, false, () => setApptTime(t.time), t.label))}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                            <div style={{ flex: 1, fontSize: '0.84rem', color: 'var(--text-sub)', minWidth: 220 }}>
+                              {apptTime
+                                ? <><strong style={{ color: 'var(--text)' }}>{dayLabel(apptDate, { weekday: 'long', day: 'numeric', month: 'long' })} at {time12(apptTime)}</strong> · pay {apptDoctor.consultationFee > 0 ? pkr(apptDoctor.consultationFee) : 'the fee'} at the clinic. You can cancel up to {PATIENT_CANCEL_HOURS} hours before.</>
+                                : 'Choose a time to continue.'}
+                            </div>
+                            <button type="button" className="pat-btn-primary pat-red" disabled={!apptTime || bookingBusy} onClick={confirmAppointment}
+                              style={!apptTime || bookingBusy ? { opacity: 0.5, cursor: bookingBusy ? 'wait' : 'not-allowed' } : {}}>
+                              {bookingBusy ? 'Booking…' : 'Confirm Appointment'}
+                            </button>
+                            <button type="button" className="pat-btn-ghost" onClick={() => navigate('findDoctors')} disabled={bookingBusy}>Cancel</button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+            </section>
+
+            {/* ══ BOOK LAB VISIT (opened from Book Tests) ═════════ */}
+            <section className={`pat-page-section ${currentPage === 'bookLabTest' ? 'active' : ''}`}>
+              <div className="pat-page-header pat-fade-up">
+                <div className="pat-page-title">Book Lab Visit</div>
+                <div className="pat-page-title-rule"></div>
+                <div className="pat-page-subtitle">Choose the day you'll visit the lab — no appointment time needed</div>
+              </div>
+
+              {!labTarget ? (
+                <div className="pat-card" style={{ padding: '32px 28px', textAlign: 'center', fontSize: '0.86rem', color: 'var(--text-muted)' }}>
+                  Choose a test in <a style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => navigate('bookTests')}>Book Tests</a>.
+                </div>
+              ) : (
+                <div className="pat-card pat-fade-up pat-fade-up-1" style={{ padding: '22px 24px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap', marginBottom: 18 }}>
+                    <div>
+                      <div style={{ fontWeight: 700, color: 'var(--text)', fontSize: '1rem' }}>{labTarget.test.name}</div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{labTarget.lab.labName} · {labTarget.lab.location}</div>
+                    </div>
+                    <div style={{ fontWeight: 700, color: 'var(--text)', fontSize: '1rem' }}>{pkr(labTarget.test.price)}</div>
+                  </div>
+
+                  {banner(bookingMsg)}
+
+                  <div className="pat-form-label" style={{ marginBottom: 8 }}>Visit date</div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+                    {visitDates.map(d => pickChip(d, d === visitDate, false, () => setVisitDate(d), <>
+                      <span style={{ fontWeight: 700 }}>{d === pktToday() ? 'Today' : dayLabel(d, { weekday: 'short' })}</span>
+                      <span>{dayLabel(d, { day: 'numeric', month: 'short' })}</span>
+                    </>))}
+                  </div>
+
+                  <div className="pat-form-label" style={{ marginBottom: 8 }}>Payment</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20, fontSize: '0.84rem' }}>
+                    <label style={{ display: 'flex', gap: 10, alignItems: 'center', cursor: 'pointer' }}>
+                      <input type="radio" name="labPay" checked={!payWallet} onChange={() => setPayWallet('')} />
+                      <span>Pay <strong>{pkr(labTarget.test.price)}</strong> at the lab</span>
+                    </label>
+                    {payablePlans.map(w => (
+                      <label key={w._id} style={{ display: 'flex', gap: 10, alignItems: 'center', cursor: 'pointer' }}>
+                        <input type="radio" name="labPay" checked={payWallet === w._id} onChange={() => setPayWallet(w._id)} />
+                        <span>Use my installment plan — {w.testName} ({PLAN_STATUS[w.status]?.label.toLowerCase()}, {pkr(w.totalAmount)})</span>
+                      </label>
+                    ))}
+                    {payablePlans.length === 0 && labTarget.test.installmentEnabled && (
+                      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                        Want to pay in installments? <a style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => startPlanApplication(labTarget.lab, labTarget.test)}>Apply for a plan</a> first — once it's active you can book with it.
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                    <div style={{ flex: 1, fontSize: '0.84rem', color: 'var(--text-sub)', minWidth: 220 }}>
+                      <strong style={{ color: 'var(--text)' }}>{visitDate && dayLabel(visitDate, { weekday: 'long', day: 'numeric', month: 'long' })}</strong>
+                      {' · '}{payWallet ? 'covered by your installment plan' : 'pay at the lab'}. You can cancel until the day before.
+                    </div>
+                    <button type="button" className="pat-btn-primary pat-red" disabled={!visitDate || bookingBusy} onClick={confirmLabBooking}
+                      style={bookingBusy ? { opacity: 0.6, cursor: 'wait' } : {}}>
+                      {bookingBusy ? 'Booking…' : 'Confirm Visit'}
+                    </button>
+                    <button type="button" className="pat-btn-ghost" onClick={() => navigate('bookTests')} disabled={bookingBusy}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* ══ APPOINTMENTS (doctor visits + lab visits) ════════ */}
+            <section className={`pat-page-section ${currentPage === 'appointments' ? 'active' : ''}`}>
+              <div className="pat-page-header pat-fade-up" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <div className="pat-page-title">Appointments</div>
+                  <div className="pat-page-title-rule"></div>
+                  <div className="pat-page-subtitle">Your clinic visits and lab visits — fees are paid at the clinic or lab</div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="pat-btn-ghost" onClick={() => navigate('findDoctors')}>Book a doctor</button>
+                  <button className="pat-btn-ghost" onClick={() => navigate('bookTests')}>Book a test</button>
+                </div>
+              </div>
+
+              {banner(visitsMsg)}
+
+              <div className="pat-card pat-fade-up pat-fade-up-1">
+                <div className="pat-card-header">
+                  <div className="pat-card-title">
+                    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                    Doctor Appointments
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Cancel up to {PATIENT_CANCEL_HOURS} hours before</div>
+                </div>
+                <div className="pat-table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>When</th><th>Doctor</th><th>Fee</th><th>Status</th><th>Prescription</th><th style={{ textAlign: 'right' }}>Action</th></tr>
+                    </thead>
+                    <tbody>
+                      {!loaded.appointments ? emptyRow(6, 'Loading appointments…')
+                        : appointments.length === 0 ? emptyRow(6, 'No appointments yet — book one from Find Doctors.')
+                        : [...upcomingAppts, ...pastAppts].map((a: any) => {
+                          const st = APPT_STATUS[a.status] || { label: a.status, cls: 'pat-badge-amber' };
+                          const upcoming = upcomingAppts.includes(a);
+                          return (
+                            <tr key={a._id} style={upcoming ? {} : { opacity: 0.8 }}>
+                              <td>
+                                <div style={{ fontWeight: 600, color: 'var(--text)' }}>{dayLabel(a.date)}</div>
+                                <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{time12(a.time)} · {a.durationMinutes} min</div>
+                              </td>
+                              <td>
+                                <div style={{ fontWeight: 600, color: 'var(--text)' }}>{drName(a.doctor?.name)}</div>
+                                {a.doctorSpecialization && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{a.doctorSpecialization}</div>}
+                              </td>
+                              <td>{pkr(a.fee)}<div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>at the clinic</div></td>
+                              <td>
+                                <span className={`pat-badge ${st.cls}`}><span className="pat-badge-dot"></span>{st.label}</span>
+                                {a.status === 'cancelled' && (
+                                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 3, maxWidth: 220 }}>
+                                    {a.cancelledBy === 'doctor' ? `By the doctor: ${a.cancellationReason}` : 'By you'}
+                                  </div>
+                                )}
+                              </td>
+                              <td style={{ fontSize: '0.78rem' }}>
+                                {a.prescription
+                                  ? (a.prescription.tests || []).map((t: any, i: number) => (
+                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                                      <span style={{ fontWeight: 600, color: 'var(--text)' }}>{t.testName}</span>
+                                      {smallBtn('Find labs', () => findLabsFor(t.testName))}
+                                    </div>
+                                  ))
+                                  : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                {canCancelAppt(a)
+                                  ? smallBtn('Cancel', () => cancelMyAppointment(a), { danger: true })
+                                  : upcoming
+                                    ? <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Within {PATIENT_CANCEL_HOURS} h — call the clinic</span>
+                                    : <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>—</span>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="pat-card pat-fade-up pat-fade-up-2">
+                <div className="pat-card-header">
+                  <div className="pat-card-title">
+                    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                    Lab Visits
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Cancel until the day before the visit</div>
+                </div>
+                <div className="pat-table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>Visit Date</th><th>Test</th><th>Payment</th><th>Status</th><th>Report</th><th style={{ textAlign: 'right' }}>Action</th></tr>
+                    </thead>
+                    <tbody>
+                      {!loaded.labBookings ? emptyRow(6, 'Loading lab visits…')
+                        : labBookings.length === 0 ? emptyRow(6, 'No lab visits yet — book one from Book Tests.')
+                        : labBookings.map((b: any) => {
+                          const st = LAB_STATUS[b.status] || { label: b.status, cls: 'pat-badge-amber' };
+                          return (
+                            <tr key={b._id}>
+                              <td style={{ fontWeight: 600, color: 'var(--text)' }}>{b.visitDate === pktToday() ? 'Today' : dayLabel(b.visitDate)}</td>
+                              <td>
+                                <div style={{ fontWeight: 600, color: 'var(--text)' }}>{b.testName}</div>
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{b.labName}{b.labLocation ? ` · ${b.labLocation}` : ''}</div>
+                              </td>
+                              <td style={{ fontSize: '0.8rem' }}>{b.paymentMethod === 'installment' ? 'Installment plan' : <>{pkr(b.price)}<div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>at the lab</div></>}</td>
+                              <td><span className={`pat-badge ${st.cls}`}><span className="pat-badge-dot"></span>{st.label}</span></td>
+                              <td>
+                                {b.report?.reportUrl
+                                  ? <a href={b.report.reportUrl} target="_blank" rel="noreferrer" style={{ color: '#166534', fontWeight: 600, fontSize: '0.78rem' }}>View report</a>
+                                  : <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>—</span>}
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                {b.status === 'confirmed' && b.visitDate > pktToday()
+                                  ? smallBtn('Cancel', () => cancelLabVisit(b), { danger: true })
+                                  : <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>—</span>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </section>
 
@@ -1328,9 +1761,12 @@ const PatientDashboard = () => {
                           <td>{fmtDate(p.createdAt)}</td>
                           <td>
                             {(p.tests || []).map((t: any, i: number) => (
-                              <div key={i} style={{ marginBottom: 2 }}>
-                                <span style={{ fontWeight: 600, color: 'var(--text)' }}>{t.testName}</span>
-                                {t.notes && <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}> — {t.notes}</span>}
+                              <div key={i} style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <span>
+                                  <span style={{ fontWeight: 600, color: 'var(--text)' }}>{t.testName}</span>
+                                  {t.notes && <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}> — {t.notes}</span>}
+                                </span>
+                                {smallBtn('Find labs', () => findLabsFor(t.testName), { title: `Labs offering ${t.testName}` })}
                               </div>
                             ))}
                           </td>
