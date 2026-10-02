@@ -26,6 +26,7 @@ interface Defaulter {
   overdueBy: string;
   defaultedOn: string;
   agreementDate: string;
+  agreementText?: string; // exact text the patient accepted (plans created through the app)
   installments: Installment[];
 }
 
@@ -155,7 +156,8 @@ const LawyerDashboard = () => {
       remainingAmount: rem,
       overdueBy:      c.missedInstallments?.length ? `${c.missedInstallments.length} installments` : '—',
       defaultedOn:    c.escalatedAt ? new Date(c.escalatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—',
-      agreementDate:  '—',
+      agreementDate:  wallet.agreement?.acceptedAt ? new Date(wallet.agreement.acceptedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—',
+      agreementText:  wallet.agreement?.text,
       installments:   (wallet.installments || []).map((inst: any, i: number) => ({
         month:      `Month ${i + 1}`,
         due:        inst.dueDate ? new Date(inst.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—',
@@ -471,6 +473,13 @@ const LawyerDashboard = () => {
                         <span className="dash-badge dash-green"><span className="dash-badge-dot"></span>Signed {selectedCase.agreementDate}</span>
                       </div>
                     </div>
+                    {selectedCase.agreementText ? (
+                      <div className="law-agreement-body">
+                        <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '0.74rem', lineHeight: 1.55, margin: 0 }}>
+                          {selectedCase.agreementText}
+                        </pre>
+                      </div>
+                    ) : (
                     <div className="law-agreement-body">
                       <div className="law-agreement-title">INSTALLMENT PAYMENT AGREEMENT</div>
                       <div className="law-agreement-subtitle">CareFirst Healthcare Platform — Legal Agreement</div>
@@ -489,6 +498,7 @@ const LawyerDashboard = () => {
                         </p>
                       </div>
                     </div>
+                    )}
                   </div>
 
                   {/* Wallet Breakdown */}
