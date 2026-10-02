@@ -46,7 +46,24 @@ const APP_STATUS: Record<string, string> = {
   pending: 'pat-badge-amber', approved: 'pat-badge-green', rejected: 'pat-badge-red',
 };
 
-// Where an installment is in the patient → lab → admin verification chain
+// Installment plans (mirror carefirst-backend/utils/installmentPlan.js)
+const OPEN_PLAN_STATUSES = ['pending_approval', 'awaiting_fee', 'active', 'defaulter'];
+const PLAN_STATUS: Record<string, { label: string; cls: string }> = {
+  pending_approval: { label: 'Under review',    cls: 'pat-badge-amber' },
+  rejected:         { label: 'Not approved',    cls: 'pat-badge-red'   },
+  awaiting_fee:     { label: 'Service fee due', cls: 'pat-badge-amber' },
+  active:           { label: 'Active',          cls: 'pat-badge-green' },
+  completed:        { label: 'Completed',       cls: 'pat-badge-green' },
+  defaulter:        { label: 'Escalated',       cls: 'pat-badge-red'   },
+};
+
+// Down payment and the (first) installment amount for a test, in whole rupees
+const planEstimate = (price: number, count: number, downPct: number) => {
+  const down = Math.round(price * downPct / 100);
+  return { down, perInstallment: Math.floor((price - down) / count) };
+};
+
+// Where an installment (or the down payment) is in the patient → lab → admin verification chain
 const installmentStage = (inst: any) => {
   if (inst.status === 'paid' || inst.adminVerified) return { label: 'Paid',              cls: 'pat-badge-green', verification: 'Verified ✓' };
   if (inst.status === 'overdue')                    return { label: 'Overdue',           cls: 'pat-badge-red',   verification: '—' };
@@ -60,9 +77,9 @@ const installmentStage = (inst: any) => {
 const notifVisual = (type: string) => {
   if (type?.startsWith('test_report')) return { color: 'green', icon: <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/> };
   if (type === 'prescription_issued')  return { color: 'red',   icon: <path d="M22 12h-4l-3 9L9 3l-3 9H2"/> };
-  if (type?.startsWith('receipt') || type === 'installment_overdue')
+  if (type?.startsWith('receipt') || ['installment_overdue', 'installment_due_soon', 'plan_approved'].includes(type))
     return { color: 'amber', icon: <><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></> };
-  if (['defaulter_escalated', 'cnic_rejected', 'community_rejected'].includes(type))
+  if (['defaulter_escalated', 'cnic_rejected', 'community_rejected', 'plan_rejected', 'service_fee_rejected'].includes(type))
     return { color: 'red', icon: <><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></> };
   return { color: 'blue', icon: <polyline points="20 6 9 17 4 12"/> };
 };
@@ -98,6 +115,16 @@ const PatientDashboard = () => {
   const [selectedWalletId, setSelectedWalletId] = useState('');
   const [uploadingKey, setUploadingKey]         = useState('');
   const [walletMsg, setWalletMsg]               = useState<{ ok: boolean; text: string } | null>(null);
+  const [showAgreement, setShowAgreement]       = useState(false);
+
+  // ── Installment plan application ────────────────────────────────────────────
+  const [planConfig, setPlanConfig]         = useState<any>(null); // fee, down-payment %, limit, CareFirst account
+  const [planTarget, setPlanTarget]         = useState<{ lab: any; test: any } | null>(null);
+  const [guarantorForm, setGuarantorForm]   = useState({ name: '', cnic: '', phone: '', relation: '', address: '' });
+  const [planPreview, setPlanPreview]       = useState<any>(null);  // terms + agreementText from the server
+  const [agreementAccepted, setAgreementAccepted] = useState(false);
+  const [planBusy, setPlanBusy]             = useState(false);
+  const [planMsg, setPlanMsg]               = useState<{ ok: boolean; text: string } | null>(null);
 
   // ── Community support form ──────────────────────────────────────────────────
   const [testRequired, setTestRequired]   = useState('');
@@ -143,6 +170,8 @@ const PatientDashboard = () => {
     api.get('/patient/community-applications').then((d: any) => setCommunityApps(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => markLoaded('community')), []);
   const loadNotifications = useCallback(() =>
     api.get('/patient/notifications').then((d: any) => setNotifications(Array.isArray(d) ? d : [])).catch(() => {}), []);
+  const loadPlanConfig = useCallback(() =>
+    api.get('/patient/installment-plans/config').then((d: any) => setPlanConfig(d)).catch(() => {}), []);
 
   useEffect(() => {
     if (!isPatient) { window.location.href = '/login'; return; }
@@ -156,6 +185,7 @@ const PatientDashboard = () => {
     loadWallets();
     loadCommunity();
     loadNotifications();
+    loadPlanConfig();
     api.get('/public/doctors').then((d: any) => setDoctors(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => markLoaded('doctors'));
     api.get('/public/tests').then((d: any) => setAllLabTests(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => markLoaded('tests'));
   }, []);
@@ -170,7 +200,10 @@ const PatientDashboard = () => {
       setNotifications(prev => [n, ...prev]);
       if (n.type === 'test_report_uploaded') { loadReports(); loadCommunity(); }
       if (n.type === 'prescription_issued')  loadPrescriptions();
-      if (['receipt_lab_approved', 'receipt_admin_verified', 'installment_overdue', 'defaulter_escalated'].includes(n.type)) loadWallets();
+      if ([
+        'receipt_lab_approved', 'receipt_admin_verified', 'installment_overdue', 'installment_due_soon', 'defaulter_escalated',
+        'plan_approved', 'plan_rejected', 'plan_activated', 'service_fee_rejected',
+      ].includes(n.type)) loadWallets();
       if (['community_approved', 'community_rejected'].includes(n.type)) loadCommunity();
       if (['cnic_verified', 'cnic_rejected'].includes(n.type)) loadProfile();
     });
@@ -206,7 +239,8 @@ const PatientDashboard = () => {
     api.put(`/patient/reports/${r._id}/read`, {}).catch(() => {});
   };
 
-  const uploadReceipt = async (walletId: string, instIndex: number, file?: File | null) => {
+  // target: installment index, or 'down-payment' / 'service-fee'
+  const uploadReceipt = async (walletId: string, target: number | 'down-payment' | 'service-fee', file?: File | null) => {
     if (!file) return;
     setWalletMsg(null);
     const invalid = validateFile(file);
@@ -214,15 +248,83 @@ const PatientDashboard = () => {
 
     const fd = new FormData();
     fd.append('receipt', file);
-    setUploadingKey(`${walletId}-${instIndex}`);
+    setUploadingKey(`${walletId}-${target}`);
+    const path = typeof target === 'number' ? `installments/${target}` : target;
     try {
-      const res: any = await api.upload(`/patient/wallets/${walletId}/installments/${instIndex}/receipt`, fd);
+      const res: any = await api.upload(`/patient/wallets/${walletId}/${path}/receipt`, fd);
       setWallets(prev => prev.map(w => w._id === walletId ? res.wallet : w));
       setWalletMsg({ ok: true, text: res.message || 'Receipt uploaded.' });
     } catch (err: any) {
       setWalletMsg({ ok: false, text: err.message || 'Upload failed. Please try again.' });
     } finally {
       setUploadingKey('');
+    }
+  };
+
+  const startPlanApplication = (lab: any, test: any) => {
+    setPlanTarget({ lab, test });
+    setGuarantorForm({ name: '', cnic: '', phone: '', relation: '', address: '' });
+    setPlanPreview(null);
+    setAgreementAccepted(false);
+    setPlanMsg(null);
+    navigate('applyPlan');
+  };
+
+  const updateGuarantor = (field: string, value: string) => {
+    setGuarantorForm(prev => ({ ...prev, [field]: value }));
+    // The agreement names the guarantor, so any change needs a fresh review
+    if (planPreview) { setPlanPreview(null); setAgreementAccepted(false); }
+  };
+
+  const planRequestBody = () => ({
+    labId:     planTarget?.lab.labId,
+    testId:    planTarget?.test._id,
+    guarantor: { ...guarantorForm, cnic: formatCnic(guarantorForm.cnic) || guarantorForm.cnic },
+  });
+
+  const reviewAgreement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPlanMsg(null);
+    const g = guarantorForm;
+    if (!g.name.trim())                 { setPlanMsg({ ok: false, text: "Enter the guarantor's full name" }); return; }
+    const gCnic = formatCnic(g.cnic);
+    if (!gCnic)                         { setPlanMsg({ ok: false, text: "Enter the guarantor's 13-digit CNIC (e.g. 35202-1234567-8)" }); return; }
+    if (gCnic === profile?.cnic)        { setPlanMsg({ ok: false, text: 'The guarantor must be someone other than you' }); return; }
+    if (!/^\+?\d{10,13}$/.test(g.phone.replace(/[\s-]/g, ''))) { setPlanMsg({ ok: false, text: "Enter the guarantor's phone number (e.g. 03001234567)" }); return; }
+    if (!g.relation.trim())             { setPlanMsg({ ok: false, text: 'Enter how the guarantor is related to you' }); return; }
+
+    setPlanBusy(true);
+    try {
+      setPlanPreview(await api.post('/patient/installment-plans/preview', planRequestBody()));
+      setAgreementAccepted(false);
+    } catch (err: any) {
+      setPlanMsg({ ok: false, text: err.message || 'Could not prepare the agreement. Please try again.' });
+    } finally {
+      setPlanBusy(false);
+    }
+  };
+
+  const submitPlanApplication = async () => {
+    if (!planPreview || !agreementAccepted) return;
+    setPlanMsg(null);
+    setPlanBusy(true);
+    try {
+      const created: any = await api.post('/patient/installment-plans', {
+        ...planRequestBody(), acceptAgreement: true, agreementText: planPreview.agreementText,
+      });
+      setWallets(prev => [created, ...prev]);
+      setSelectedWalletId(created._id);
+      setPlanTarget(null);
+      setPlanPreview(null);
+      loadPlanConfig();
+      setWalletMsg({ ok: true, text: 'Application submitted. CareFirst will review it and notify you.' });
+      navigate('myWallet');
+    } catch (err: any) {
+      // 409 from a changed price / plan: show the new terms for review
+      if (err.status === 409 && /terms have changed/.test(err.message)) { setPlanPreview(null); setAgreementAccepted(false); }
+      setPlanMsg({ ok: false, text: err.message || 'Could not submit the application. Please try again.' });
+    } finally {
+      setPlanBusy(false);
     }
   };
 
@@ -302,7 +404,11 @@ const PatientDashboard = () => {
   const unreadReports = reports.filter(r => !r.isRead).length;
 
   const prescribedTests = [...new Set(prescriptions.flatMap(p => (p.tests || []).map((t: any) => t.testName)))] as string[];
-  const openWallets     = wallets.filter(w => w.status !== 'completed');
+  // Plans with a running schedule; pending applications owe nothing yet
+  const openWallets     = wallets.filter(w => ['active', 'defaulter'].includes(w.status));
+  const openPlanCount   = wallets.filter(w => OPEN_PLAN_STATUSES.includes(w.status)).length;
+  const maxOpenPlans    = planConfig?.maxOpenPlans ?? 2;
+  const downPct         = planConfig?.downPaymentPercent ?? 20;
   const totalRemaining  = openWallets.reduce((s, w) => s + (w.remainingBalance ?? 0), 0);
   const nextDue = openWallets
     .flatMap(w => (w.installments || []).filter((i: any) => i.status !== 'paid' && !i.adminVerified).map((i: any) => i.dueDate))
@@ -338,11 +444,21 @@ const PatientDashboard = () => {
   const walletPaid   = wallet ? Math.max(0, (wallet.totalAmount || 0) - (wallet.remainingBalance ?? wallet.totalAmount ?? 0)) : 0;
   const walletPct    = wallet?.totalAmount ? Math.min(100, Math.round((walletPaid / wallet.totalAmount) * 100)) : 0;
   const receiptLog   = wallet
-    ? (wallet.installments || [])
-        .map((inst: any, idx: number) => ({ ...inst, idx }))
-        .filter((inst: any) => inst.receiptUrl)
+    ? [
+        { ...wallet.serviceFee,  key: 'fee',  label: 'CareFirst service fee', labStep: false },
+        { ...wallet.downPayment, key: 'down', label: 'Down payment',          labStep: true },
+        ...(wallet.installments || []).map((inst: any, idx: number) => ({ ...inst, key: `inst-${idx}`, label: `Installment #${inst.number}`, labStep: true })),
+      ]
+        .filter((r: any) => r.receiptUrl)
         .sort((a: any, b: any) => new Date(b.receiptUploadedAt).getTime() - new Date(a.receiptUploadedAt).getTime())
     : [];
+
+  // Why a test can't be applied for right now (null = can apply)
+  const planBlocker = (lab: any) =>
+    !cnicVerified                  ? 'Your CNIC must be verified first'
+    : !lab.acceptsInstallments     ? 'This lab has not added payment details yet'
+    : openPlanCount >= maxOpenPlans ? `You already have ${maxOpenPlans} open installment plans`
+    : null;
 
   const pageBreadcrumbs: Record<string, string> = {
     dashboard:     'Dashboard',
@@ -350,6 +466,7 @@ const PatientDashboard = () => {
     bookTests:     'Book Tests',
     myReports:     'My Reports',
     myWallet:      'My Wallet',
+    applyPlan:     'Apply for Installments',
     community:     'Community Support',
     notifications: 'Notifications',
     profile:       'Profile',
@@ -367,6 +484,43 @@ const PatientDashboard = () => {
 
   const emptyRow = (cols: number, text: string) => (
     <tr><td colSpan={cols} style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>{text}</td></tr>
+  );
+
+  // Where to send a payment — only the channels that are filled in
+  const paymentDetails = (title: string, rows: [string, string | undefined][]) => (
+    <div style={{ background: 'var(--bg-alt)', border: '1px solid var(--border-md)', borderRadius: 'var(--radius-xs)', padding: '12px 14px', fontSize: '0.8rem' }}>
+      <div style={{ fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>{title}</div>
+      {rows.filter(([, v]) => v).map(([k, v]) => (
+        <div key={k} style={{ display: 'flex', gap: 10, padding: '2px 0', flexWrap: 'wrap' }}>
+          <span style={{ color: 'var(--text-muted)', minWidth: 110 }}>{k}</span>
+          <span style={{ fontWeight: 600, color: 'var(--text)', fontFamily: 'ui-monospace, monospace', wordBreak: 'break-all' }}>{v}</span>
+        </div>
+      ))}
+    </div>
+  );
+  const careFirstRows = (a: any): [string, string][] => [
+    ['Bank', a?.bankName], ['Account title', a?.accountTitle], ['Account number', a?.accountNumber],
+    ['JazzCash', a?.jazzCash], ['EasyPaisa', a?.easyPaisa],
+  ];
+  const labRows = (p: any): [string, string][] => [
+    ['Bank', p?.bankName], ['Account number', p?.accountNumber], ['JazzCash', p?.jazzCash], ['EasyPaisa', p?.easyPaisa],
+  ];
+
+  const agreementBox = (text: string) => (
+    <pre style={{
+      whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '0.72rem', lineHeight: 1.55,
+      maxHeight: 380, overflow: 'auto', margin: 0, padding: '14px 16px', color: 'var(--text)',
+      background: 'var(--bg-alt)', border: '1px solid var(--border-md)', borderRadius: 'var(--radius-xs)',
+    }}>{text}</pre>
+  );
+
+  const uploadButton = (key: string, label: string, onFile: (f?: File | null) => void) => (
+    <label className="pat-upload-receipt-btn" style={{ cursor: uploadingKey ? 'wait' : 'pointer', opacity: uploadingKey && uploadingKey !== key ? 0.5 : 1 }}>
+      <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      {uploadingKey === key ? 'Uploading…' : label}
+      <input type="file" accept=".pdf,.jpg,.jpeg,.png" hidden disabled={Boolean(uploadingKey)}
+        onChange={e => { onFile(e.target.files?.[0]); e.target.value = ''; }} />
+    </label>
   );
 
   const cnicNotice = !cnicVerified && profile && (
@@ -905,12 +1059,33 @@ const PatientDashboard = () => {
                           </div>
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                             <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{t.category}</span>
-                            {t.installmentEnabled && (
-                              <span style={{ fontSize: '0.68rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: 10, padding: '1px 7px', fontWeight: 700 }}>
-                                {t.installmentCount} installments · every {t.installmentTenureDays} days · {pkr(Math.ceil(t.price / t.installmentCount))}/inst
-                              </span>
-                            )}
+                            {t.installmentEnabled && (() => {
+                              const est = planEstimate(t.price, t.installmentCount, downPct);
+                              return (
+                                <span style={{ fontSize: '0.68rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: 10, padding: '1px 7px', fontWeight: 700 }}>
+                                  {pkr(est.down)} down · {t.installmentCount} × ~{pkr(est.perInstallment)} every {t.installmentTenureDays} days
+                                </span>
+                              );
+                            })()}
                           </div>
+                          {t.installmentEnabled && (() => {
+                            const blocker = planBlocker(lab);
+                            return (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                                <button
+                                  type="button"
+                                  className="pat-upload-receipt-btn"
+                                  disabled={Boolean(blocker)}
+                                  title={blocker || 'Pay for this test in installments'}
+                                  style={blocker ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
+                                  onClick={() => startPlanApplication(lab, t)}
+                                >
+                                  Apply for installments
+                                </button>
+                                {blocker && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{blocker}</span>}
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>
@@ -931,6 +1106,116 @@ const PatientDashboard = () => {
                   </div>
                 ))}
               </div>
+            </section>
+
+            {/* ══ APPLY FOR INSTALLMENTS (opened from Book Tests) ═ */}
+            <section className={`pat-page-section ${currentPage === 'applyPlan' ? 'active' : ''}`}>
+              <div className="pat-page-header pat-fade-up">
+                <div className="pat-page-title">Apply for Installments</div>
+                <div className="pat-page-title-rule"></div>
+                <div className="pat-page-subtitle">Add a guarantor, read the agreement and submit — CareFirst reviews every application</div>
+              </div>
+
+              {!planTarget ? (
+                <div className="pat-card" style={{ padding: '32px 28px', textAlign: 'center', fontSize: '0.86rem', color: 'var(--text-muted)' }}>
+                  Choose a test with an installments tag in <a style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => navigate('bookTests')}>Book Tests</a>.
+                </div>
+              ) : (() => {
+                const { lab, test } = planTarget;
+                const est   = planEstimate(test.price, test.installmentCount, downPct);
+                const terms = planPreview;
+                const installments: number[] = terms?.installments || [];
+                const lastDiffers = installments.length > 1 && installments[installments.length - 1] !== installments[0];
+                return (
+                  <>
+                    {/* Plan summary */}
+                    <div className="pat-card pat-fade-up pat-fade-up-1" style={{ padding: '22px 24px' }}>
+                      <div className="pat-card-title" style={{ marginBottom: 14 }}>{test.name} · {lab.labName}</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14, fontSize: '0.82rem' }}>
+                        {[
+                          ['Test price', pkr(terms?.totalAmount ?? test.price), ''],
+                          [`Down payment (${downPct}%)`, pkr(terms?.downPayment ?? est.down), 'Paid to the lab'],
+                          ['Installments', terms
+                            ? `${installments.length} × ${pkr(installments[0])}`
+                            : `${test.installmentCount} × ~${pkr(est.perInstallment)}`,
+                            lastDiffers ? `Last one ${pkr(installments[installments.length - 1])} · paid to the lab` : `Every ${test.installmentTenureDays} days · paid to the lab`],
+                          ['Service fee', pkr(terms?.serviceFee ?? planConfig?.serviceFee ?? 0), 'Paid to CareFirst, once'],
+                        ].map(([label, value, sub]) => (
+                          <div key={label}>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 3 }}>{label}</div>
+                            <div style={{ fontWeight: 700, color: 'var(--text)', fontSize: '0.98rem' }}>{value}</div>
+                            {sub && <div style={{ color: 'var(--text-muted)', fontSize: '0.72rem', marginTop: 2 }}>{sub}</div>}
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ marginTop: 16, fontSize: '0.76rem', color: 'var(--text-sub)', lineHeight: 1.6 }}>
+                        <strong>How it works:</strong> CareFirst reviews your application → you pay the service fee to CareFirst and upload the screenshot →
+                        once it's verified the plan starts: pay the down payment to the lab, then one installment every {test.installmentTenureDays} days (the first is due {test.installmentTenureDays} days after the plan starts).
+                        Upload a receipt for every payment from My Wallet.
+                      </div>
+                    </div>
+
+                    {/* Guarantor */}
+                    <div className="pat-card pat-fade-up pat-fade-up-2" style={{ padding: '22px 24px' }}>
+                      <div className="pat-card-title" style={{ marginBottom: 6 }}>Guarantor</div>
+                      <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: 16 }}>
+                        Someone other than you who agrees to be jointly responsible for the payments. Their details go into the agreement.
+                      </div>
+                      {!terms && banner(planMsg)}
+                      <form onSubmit={reviewAgreement}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0 16px' }}>
+                          {[
+                            ['name',     'Full name',  'e.g. Kamran Khan',        'text'],
+                            ['cnic',     'CNIC',       '35202-1234567-8',         'text'],
+                            ['phone',    'Phone',      '03001234567',             'tel'],
+                            ['relation', 'Relation to you', 'e.g. Brother, Father', 'text'],
+                          ].map(([field, label, placeholder, type]) => (
+                            <div className="pat-form-section" key={field}>
+                              <label className="pat-form-label" htmlFor={`g-${field}`}>{label}</label>
+                              <input id={`g-${field}`} className="pat-form-input" type={type} placeholder={placeholder}
+                                value={(guarantorForm as any)[field]} onChange={e => updateGuarantor(field, e.target.value)} disabled={planBusy} />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="pat-form-section">
+                          <label className="pat-form-label" htmlFor="g-address">Address <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
+                          <input id="g-address" className="pat-form-input" type="text" placeholder="House, street, city"
+                            value={guarantorForm.address} onChange={e => updateGuarantor('address', e.target.value)} disabled={planBusy} />
+                        </div>
+                        {!terms && (
+                          <div style={{ display: 'flex', gap: 10 }}>
+                            <button type="submit" className="pat-btn-primary pat-red" disabled={planBusy} style={planBusy ? { opacity: 0.6, cursor: 'wait' } : {}}>
+                              {planBusy ? 'Preparing…' : 'Review Agreement'}
+                            </button>
+                            <button type="button" className="pat-btn-ghost" onClick={() => navigate('bookTests')} disabled={planBusy}>Cancel</button>
+                          </div>
+                        )}
+                      </form>
+                    </div>
+
+                    {/* Agreement */}
+                    {terms && (
+                      <div className="pat-card pat-fade-up" style={{ padding: '22px 24px' }}>
+                        <div className="pat-card-title" style={{ marginBottom: 14 }}>Installment Plan Agreement</div>
+                        {agreementBox(terms.agreementText)}
+                        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, margin: '16px 0', fontSize: '0.82rem', color: 'var(--text)', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={agreementAccepted} onChange={e => setAgreementAccepted(e.target.checked)} disabled={planBusy} style={{ marginTop: 3 }} />
+                          <span>I have read this agreement, my guarantor has agreed to it, and I accept its terms.</span>
+                        </label>
+                        {banner(planMsg)}
+                        <div style={{ display: 'flex', gap: 10 }}>
+                          <button type="button" className="pat-btn-primary pat-red" onClick={submitPlanApplication}
+                            disabled={!agreementAccepted || planBusy}
+                            style={!agreementAccepted || planBusy ? { opacity: 0.5, cursor: planBusy ? 'wait' : 'not-allowed' } : {}}>
+                            {planBusy ? 'Submitting…' : 'Accept & Submit Application'}
+                          </button>
+                          <button type="button" className="pat-btn-ghost" onClick={() => navigate('bookTests')} disabled={planBusy}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </section>
 
             {/* ══ MY REPORTS ══════════════════════════════════════ */}
@@ -1074,7 +1359,7 @@ const PatientDashboard = () => {
                 <div className="pat-card pat-fade-up pat-fade-up-1" style={{ padding: '36px 28px', textAlign: 'center' }}>
                   <div style={{ fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>No installment plans yet</div>
                   <div style={{ fontSize: '0.84rem', color: 'var(--text-muted)', maxWidth: 460, margin: '0 auto' }}>
-                    Labs that allow installments show an "installments" tag on their tests in <a style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => navigate('bookTests')}>Book Tests</a>.
+                    Tests you can pay for in installments have an "Apply for installments" button in <a style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => navigate('bookTests')}>Book Tests</a>.
                     {!cnicVerified && ' Your CNIC must be verified before you can use an installment plan.'}
                   </div>
                 </div>
@@ -1083,8 +1368,8 @@ const PatientDashboard = () => {
                   {wallets.length > 1 && (
                     <div className="pat-specialty-chips pat-fade-up" style={{ marginBottom: 16 }}>
                       {wallets.map(w => (
-                        <button key={w._id} className={`pat-spec-chip ${w._id === wallet._id ? 'active' : ''}`} onClick={() => { setSelectedWalletId(w._id); setWalletMsg(null); }}>
-                          {w.testName} · {w.labName}
+                        <button key={w._id} className={`pat-spec-chip ${w._id === wallet._id ? 'active' : ''}`} onClick={() => { setSelectedWalletId(w._id); setWalletMsg(null); setShowAgreement(false); }}>
+                          {w.testName} · {w.labName} · {PLAN_STATUS[w.status]?.label || w.status}
                         </button>
                       ))}
                     </div>
@@ -1098,6 +1383,92 @@ const PatientDashboard = () => {
                       </div>
                     </div>
                   )}
+
+                  {wallet.status === 'pending_approval' && (
+                    <div className="pat-true-cost-banner pat-fade-up" style={{ marginBottom: 20 }}>
+                      <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                      <div className="pat-true-cost-text">
+                        <strong>Application under review.</strong> Submitted {fmtDate(wallet.createdAt)}. You'll be notified when CareFirst approves it — then you pay the {pkr(wallet.serviceFee?.amount)} service fee to activate the plan.
+                      </div>
+                    </div>
+                  )}
+
+                  {wallet.status === 'rejected' && (
+                    <div className="pat-true-cost-banner pat-fade-up" style={{ marginBottom: 20, borderColor: '#fecaca', background: '#fef2f2' }}>
+                      <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                      <div className="pat-true-cost-text">
+                        <strong>This application was not approved.</strong> {wallet.rejectionReason} You can apply again from <a style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => navigate('bookTests')}>Book Tests</a>.
+                      </div>
+                    </div>
+                  )}
+
+                  {wallet.status === 'completed' && (
+                    <div className="pat-true-cost-banner pat-fade-up" style={{ marginBottom: 20, borderColor: '#bbf7d0', background: '#f0fdf4' }}>
+                      <svg width="16" height="16" fill="none" stroke="#166534" strokeWidth="1.75" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                      <div className="pat-true-cost-text"><strong>Fully paid.</strong> Every payment on this plan has been verified.</div>
+                    </div>
+                  )}
+
+                  {/* Service fee — paid to CareFirst once the application is approved */}
+                  {wallet.status === 'awaiting_fee' && (
+                    <div className="pat-card pat-fade-up" style={{ padding: '20px 22px' }}>
+                      <div className="pat-card-title" style={{ marginBottom: 6 }}>Approved — pay the CareFirst service fee</div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-sub)', marginBottom: 14 }}>
+                        Send <strong>{pkr(wallet.serviceFee?.amount)}</strong> to CareFirst and upload the screenshot. Your plan starts once CareFirst verifies it.
+                        This fee is separate from the test price, which you pay to the lab.
+                      </div>
+                      {wallet.serviceFee?.rejectionReason && (
+                        <div style={{ fontSize: '0.8rem', color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '8px 12px', marginBottom: 14 }}>
+                          Your last screenshot could not be verified: {wallet.serviceFee.rejectionReason}
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                        <div style={{ flex: '1 1 260px' }}>{paymentDetails('CareFirst account', careFirstRows(planConfig?.careFirstAccount))}</div>
+                        <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
+                          {wallet.serviceFee?.receiptUrl && (
+                            <span style={{ fontSize: '0.8rem' }}>
+                              <a href={wallet.serviceFee.receiptUrl} target="_blank" rel="noreferrer" style={{ color: '#166534', fontWeight: 600 }}>Screenshot uploaded ✓</a>
+                              <span style={{ color: 'var(--text-muted)' }}> · awaiting CareFirst verification</span>
+                            </span>
+                          )}
+                          {uploadButton(`${wallet._id}-service-fee`, wallet.serviceFee?.receiptUrl ? 'Replace Screenshot' : 'Upload Screenshot',
+                            f => uploadReceipt(wallet._id, 'service-fee', f))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Down payment — paid to the lab once the plan is active */}
+                  {['active', 'defaulter', 'completed'].includes(wallet.status) && wallet.downPayment?.amount > 0 && (() => {
+                    const dp = wallet.downPayment;
+                    const stage = installmentStage(dp);
+                    const canUpload = wallet.status === 'active' && !dp.labApproved && !dp.adminVerified;
+                    return (
+                      <div className="pat-card pat-fade-up" style={{ padding: '20px 22px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
+                          <div className="pat-card-title">Down payment · {pkr(dp.amount)}</div>
+                          <span className={`pat-badge ${dp.adminVerified ? 'pat-badge-green' : 'pat-badge-amber'}`}><span className="pat-badge-dot"></span>
+                            {dp.adminVerified ? 'Paid' : dp.receiptUrl ? stage.label : 'Due now'}
+                          </span>
+                        </div>
+                        {!dp.adminVerified && (
+                          <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap', marginTop: 12 }}>
+                            <div style={{ flex: '1 1 260px' }}>{paymentDetails(`Pay ${wallet.labName} directly`, labRows(wallet.labPayment))}</div>
+                            <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
+                              {dp.receiptUrl && (
+                                <span style={{ fontSize: '0.8rem' }}>
+                                  <a href={dp.receiptUrl} target="_blank" rel="noreferrer" style={{ color: '#166534', fontWeight: 600 }}>Receipt uploaded ✓</a>
+                                  <span style={{ color: 'var(--text-muted)' }}> · {stage.verification.toLowerCase()}</span>
+                                </span>
+                              )}
+                              {canUpload && uploadButton(`${wallet._id}-down-payment`, dp.receiptUrl ? 'Replace Receipt' : 'Upload Receipt',
+                                f => uploadReceipt(wallet._id, 'down-payment', f))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Wallet Summary Strip */}
                   <div className="pat-wallet-summary pat-fade-up pat-fade-up-1">
@@ -1116,13 +1487,23 @@ const PatientDashboard = () => {
                       <div className="pat-ws-item">
                         <div className="pat-ws-label">Down Payment</div>
                         <div className={`pat-ws-val ${wallet.downPayment?.adminVerified ? 'pat-ws-paid' : ''}`}>{pkr(wallet.downPayment?.amount)}</div>
-                        <div className="pat-ws-sub">{wallet.downPayment?.adminVerified ? 'Verified ✓' : wallet.downPayment?.amount ? 'Awaiting verification' : '—'}</div>
+                        <div className="pat-ws-sub">
+                          {wallet.downPayment?.adminVerified ? 'Verified ✓'
+                            : ['pending_approval', 'awaiting_fee'].includes(wallet.status) ? 'Due when plan starts'
+                            : wallet.downPayment?.receiptUrl ? 'Awaiting verification'
+                            : wallet.status === 'active' ? 'Due — pay the lab' : '—'}
+                        </div>
                       </div>
                       <div className="pat-ws-divider"></div>
                       <div className="pat-ws-item">
                         <div className="pat-ws-label">Service Fee</div>
                         <div className={`pat-ws-val ${wallet.serviceFee?.adminVerified ? 'pat-ws-paid' : ''}`}>{pkr(wallet.serviceFee?.amount)}</div>
-                        <div className="pat-ws-sub">{wallet.serviceFee?.adminVerified ? 'Verified ✓' : wallet.serviceFee?.amount ? 'Awaiting verification' : '—'}</div>
+                        <div className="pat-ws-sub">
+                          {wallet.serviceFee?.adminVerified ? 'Verified ✓'
+                            : wallet.status === 'pending_approval' ? 'Due after approval'
+                            : wallet.status === 'awaiting_fee' ? (wallet.serviceFee?.receiptUrl ? 'Awaiting verification' : 'Due now')
+                            : 'Paid to CareFirst'}
+                        </div>
                       </div>
                       <div className="pat-ws-divider"></div>
                       <div className="pat-ws-item">
@@ -1162,7 +1543,9 @@ const PatientDashboard = () => {
                           </tr>
                         </thead>
                         <tbody>
-                          {(wallet.installments || []).length === 0 ? emptyRow(7, 'No installments scheduled yet.')
+                          {(wallet.installments || []).length === 0
+                            ? emptyRow(7, wallet.status === 'rejected' ? 'No schedule — the application was not approved.'
+                              : `${wallet.installmentCount || ''} installments every ${wallet.installmentTenureDays || '—'} days — due dates are set when the plan starts.`)
                             : wallet.installments.map((inst: any, idx: number) => {
                             const stage     = installmentStage(inst);
                             const key       = `${wallet._id}-${idx}`;
@@ -1185,17 +1568,7 @@ const PatientDashboard = () => {
                                 </td>
                                 <td style={{ textAlign: 'right' }}>
                                   {canUpload ? (
-                                    <label className="pat-upload-receipt-btn" style={{ cursor: uploadingKey ? 'wait' : 'pointer', opacity: uploadingKey && uploadingKey !== key ? 0.5 : 1 }}>
-                                      <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                                      {uploadingKey === key ? 'Uploading…' : inst.receiptUrl ? 'Replace Receipt' : 'Upload Receipt'}
-                                      <input
-                                        type="file"
-                                        accept=".pdf,.jpg,.jpeg,.png"
-                                        hidden
-                                        disabled={Boolean(uploadingKey)}
-                                        onChange={e => { uploadReceipt(wallet._id, idx, e.target.files?.[0]); e.target.value = ''; }}
-                                      />
-                                    </label>
+                                    uploadButton(key, inst.receiptUrl ? 'Replace Receipt' : 'Upload Receipt', f => uploadReceipt(wallet._id, idx, f))
                                   ) : (
                                     <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{stage.label === 'Paid' ? 'Done' : '—'}</span>
                                   )}
@@ -1220,7 +1593,7 @@ const PatientDashboard = () => {
                       <table>
                         <thead>
                           <tr>
-                            <th>Installment</th>
+                            <th>Payment</th>
                             <th>Uploaded On</th>
                             <th>Amount</th>
                             <th>Receipt</th>
@@ -1229,16 +1602,18 @@ const PatientDashboard = () => {
                         </thead>
                         <tbody>
                           {receiptLog.length === 0 ? emptyRow(5, 'No receipts uploaded yet.')
-                            : receiptLog.map((inst: any) => (
-                            <tr key={inst._id || inst.idx}>
-                              <td style={{ fontWeight: 500, color: 'var(--text)' }}>Installment #{inst.number} — {wallet.testName}</td>
-                              <td>{fmtDate(inst.receiptUploadedAt)}</td>
-                              <td style={{ fontWeight: 600 }}>{pkr(inst.amount)}</td>
-                              <td><a href={inst.receiptUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.78rem', fontWeight: 600 }}>View</a></td>
+                            : receiptLog.map((r: any) => (
+                            <tr key={r.key}>
+                              <td style={{ fontWeight: 500, color: 'var(--text)' }}>{r.label} — {wallet.testName}</td>
+                              <td>{fmtDate(r.receiptUploadedAt)}</td>
+                              <td style={{ fontWeight: 600 }}>{pkr(r.amount)}</td>
+                              <td><a href={r.receiptUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.78rem', fontWeight: 600 }}>View</a></td>
                               <td style={{ textAlign: 'right' }}>
-                                {inst.adminVerified
+                                {r.adminVerified
                                   ? <span style={{ color: '#166534', fontWeight: 700, fontSize: '0.78rem' }}>Admin Verified ✓</span>
-                                  : inst.labApproved
+                                  : !r.labStep
+                                    ? <span style={{ color: '#854d0e', fontSize: '0.78rem' }}>Awaiting CareFirst verification</span>
+                                  : r.labApproved
                                     ? <span style={{ color: '#854d0e', fontSize: '0.78rem' }}>Lab confirmed · awaiting admin</span>
                                     : <span style={{ color: '#854d0e', fontSize: '0.78rem' }}>Awaiting lab confirmation</span>}
                               </td>
@@ -1248,6 +1623,24 @@ const PatientDashboard = () => {
                       </table>
                     </div>
                   </div>
+
+                  {/* Agreement & guarantor */}
+                  {wallet.agreement?.text && (
+                    <div className="pat-card pat-fade-up" style={{ padding: '18px 22px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                        <div>
+                          <div className="pat-card-title">Agreement & Guarantor</div>
+                          <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                            Guarantor: {wallet.guarantor?.name} ({wallet.guarantor?.relation}) · accepted {fmtDate(wallet.agreement.acceptedAt)}
+                          </div>
+                        </div>
+                        <button type="button" className="pat-btn-ghost" onClick={() => setShowAgreement(s => !s)}>
+                          {showAgreement ? 'Hide agreement' : 'View agreement'}
+                        </button>
+                      </div>
+                      {showAgreement && <div style={{ marginTop: 14 }}>{agreementBox(wallet.agreement.text)}</div>}
+                    </div>
+                  )}
                 </>
               )}
             </section>
