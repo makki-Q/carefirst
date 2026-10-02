@@ -50,9 +50,17 @@ const AdminDashboard = () => {
   const [appRejectReason, setAppRejectReason] = useState('');
   const [wallets, setWallets]                 = useState<any[]>([]);
   const [walletFilter, setWalletFilter]       = useState('all');
+  const [planRejectingId, setPlanRejectingId] = useState<string | null>(null);
+  const [planRejectReason, setPlanRejectReason] = useState('');
+  const [feeRejectingId, setFeeRejectingId]   = useState<string | null>(null);
+  const [feeRejectReason, setFeeRejectReason] = useState('');
+  const [openAgreementId, setOpenAgreementId] = useState<string | null>(null);
   const [defaulterCases, setDefaulterCases]   = useState<any[]>([]);
   const [cnicRejectingId, setCnicRejectingId] = useState<string | null>(null);
   const [cnicRejectReason, setCnicRejectReason] = useState('');
+
+  const loadWallets = () =>
+    api.get('/admin/wallets?limit=1000').then((d: any) => setWallets(d.wallets || [])).catch(() => {});
 
   // ── Effects ───────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -78,7 +86,7 @@ const AdminDashboard = () => {
 
     api.get('/admin/community-applications').then((d: any) => setCommunityApps(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/admin/users?role=lab&status=active').then((d: any) => setActiveLabs(d.users || [])).catch(() => {});
-    api.get('/admin/wallets').then((d: any) => setWallets(d.wallets || [])).catch(() => {});
+    loadWallets();
     api.get('/admin/defaulter-cases').then((d: any) => setDefaulterCases(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/admin/notifications').then((d: any) => {
       const arr = Array.isArray(d) ? d : [];
@@ -98,6 +106,7 @@ const AdminDashboard = () => {
       if (n.type === 'community_submitted') {
         api.get('/admin/community-applications').then((d: any) => setCommunityApps(Array.isArray(d) ? d : [])).catch(() => {});
       }
+      if (['plan_submitted', 'service_fee_uploaded', 'receipt_lab_approved', 'defaulter_escalated'].includes(n.type)) loadWallets();
     });
     return () => { socket.off('notification:new'); };
   }, []);
@@ -185,20 +194,51 @@ const AdminDashboard = () => {
     } catch (err: any) { alert(err.message || 'Rejection failed'); }
   };
 
-  const adminVerifyInstallment = async (walletId: string, instIndex: number) => {
-    if (!window.confirm('Verify this installment payment? This marks it as fully paid.')) return;
+  const replaceWallet = (w: any) => setWallets(prev => prev.map((x: any) => x._id === w._id ? w : x));
+
+  // path: `installments/<index>` or `down-payment`
+  const adminVerifyPayment = async (walletId: string, path: string, label: string) => {
+    if (!window.confirm(`Verify the ${label} payment? This marks it as paid.`)) return;
     try {
-      await api.put(`/admin/wallets/${walletId}/installments/${instIndex}/verify`, {});
-      setWallets(prev => prev.map((w: any) => {
-        if (w._id !== walletId) return w;
-        return {
-          ...w,
-          installments: w.installments.map((inst: any, i: number) =>
-            i === instIndex ? { ...inst, adminVerified: true, adminVerifiedAt: new Date(), status: 'paid' } : inst
-          ),
-        };
-      }));
+      const d: any = await api.put(`/admin/wallets/${walletId}/${path}/verify`, {});
+      replaceWallet(d.wallet);
     } catch (err: any) { alert(err.message || 'Verification failed'); }
+  };
+
+  const approvePlan = async (walletId: string) => {
+    if (!window.confirm('Approve this installment plan? The patient will be asked to pay the service fee.')) return;
+    try {
+      const d: any = await api.put(`/admin/wallets/${walletId}/approve`, {});
+      replaceWallet(d.wallet);
+    } catch (err: any) { alert(err.message || 'Approval failed'); }
+  };
+
+  const rejectPlan = async () => {
+    if (!planRejectingId) return;
+    if (!planRejectReason.trim()) { alert('Please enter a reason — it is sent to the patient.'); return; }
+    try {
+      const d: any = await api.put(`/admin/wallets/${planRejectingId}/reject`, { reason: planRejectReason.trim() });
+      replaceWallet(d.wallet);
+      setPlanRejectingId(null); setPlanRejectReason('');
+    } catch (err: any) { alert(err.message || 'Rejection failed'); }
+  };
+
+  const verifyServiceFee = async (walletId: string) => {
+    if (!window.confirm('Confirm CareFirst received this service fee? The plan becomes active and the installment schedule is generated.')) return;
+    try {
+      const d: any = await api.put(`/admin/wallets/${walletId}/service-fee/verify`, {});
+      replaceWallet(d.wallet);
+    } catch (err: any) { alert(err.message || 'Verification failed'); }
+  };
+
+  const rejectServiceFee = async () => {
+    if (!feeRejectingId) return;
+    if (!feeRejectReason.trim()) { alert('Please enter a reason — it is sent to the patient.'); return; }
+    try {
+      const d: any = await api.put(`/admin/wallets/${feeRejectingId}/service-fee/reject`, { reason: feeRejectReason.trim() });
+      replaceWallet(d.wallet);
+      setFeeRejectingId(null); setFeeRejectReason('');
+    } catch (err: any) { alert(err.message || 'Rejection failed'); }
   };
 
   // ── Navigation ────────────────────────────────────────────────────────────────
@@ -252,21 +292,56 @@ const AdminDashboard = () => {
     ? communityApps
     : communityApps.filter((a: any) => a.status === appStatusFilter);
 
-  // Installments where patient uploaded, lab approved, admin hasn't verified yet
-  const pendingVerifications: Array<{ wallet: any; inst: any; instIndex: number }> = [];
+  // Down payments / installments the patient uploaded and the lab confirmed, not yet verified by admin
+  const awaitingAdmin = (p: any) => Boolean(p?.receiptUrl && p.labApproved && !p.adminVerified);
+  const pendingVerifications: Array<{ wallet: any; payment: any; label: string; path: string }> = [];
   wallets.forEach((w: any) => {
+    if (awaitingAdmin(w.downPayment)) {
+      pendingVerifications.push({ wallet: w, payment: w.downPayment, label: 'Down payment', path: 'down-payment' });
+    }
     (w.installments || []).forEach((inst: any, i: number) => {
-      if (inst.receiptUrl && inst.labApproved && !inst.adminVerified) {
-        pendingVerifications.push({ wallet: w, inst, instIndex: i });
+      if (awaitingAdmin(inst)) {
+        pendingVerifications.push({ wallet: w, payment: inst, label: `#${inst.number}`, path: `installments/${i}` });
       }
     });
   });
 
+  const pendingPlans = wallets.filter((w: any) => w.status === 'pending_approval');
+  const feeQueue     = wallets.filter((w: any) => w.status === 'awaiting_fee');
+  const feesToVerify = feeQueue.filter((w: any) => w.serviceFee?.receiptUrl).length;
+
   const filteredWallets = walletFilter === 'all'
     ? wallets
     : walletFilter === 'needs_verify'
-      ? wallets.filter((w: any) => w.installments?.some((inst: any) => inst.receiptUrl && inst.labApproved && !inst.adminVerified))
+      ? wallets.filter((w: any) => awaitingAdmin(w.downPayment) || w.installments?.some(awaitingAdmin))
       : wallets.filter((w: any) => w.status === walletFilter);
+
+  const WALLET_STATUS: Record<string, { label: string; cls: string }> = {
+    pending_approval: { label: 'Under review',    cls: 'dash-amber' },
+    rejected:         { label: 'Rejected',        cls: 'dash-gray'  },
+    awaiting_fee:     { label: 'Service fee due', cls: 'dash-blue'  },
+    active:           { label: 'Active',          cls: 'dash-green' },
+    completed:        { label: 'Completed',       cls: 'dash-green' },
+    defaulter:        { label: 'Defaulter',       cls: 'dash-red'   },
+  };
+  const pkr = (n: number) => `PKR ${(Number(n) || 0).toLocaleString()}`;
+  const shortDate = (d?: string) => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—';
+
+  // Inline "reason" row shared by plan and service-fee rejection
+  const reasonRow = (cols: number, label: string, value: string, setValue: (v: string) => void, onConfirm: () => void, onCancel: () => void) => (
+    <tr>
+      <td colSpan={cols} style={{ background: 'var(--glass-bg)', padding: '12px 20px' }}>
+        <div className="adm-reject-reason-row">
+          <svg width="15" height="15" fill="none" stroke="#991b1b" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#991b1b', flexShrink: 0 }}>{label}</span>
+          <input className="adm-reject-reason-input" type="text" placeholder="Reason (sent to the patient)…"
+            value={value} onChange={e => setValue(e.target.value)} onKeyDown={e => e.key === 'Enter' && onConfirm()} autoFocus />
+          <button className="adm-reject-btn" style={{ flexShrink: 0 }} onClick={onConfirm}>Confirm</button>
+          <button className="dash-btn-ghost" style={{ flexShrink: 0, padding: '5px 10px', fontSize: '0.75rem' }} onClick={onCancel}>Cancel</button>
+        </div>
+      </td>
+    </tr>
+  );
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
@@ -320,7 +395,9 @@ const AdminDashboard = () => {
             <button className={`dash-nav-item ${currentPage === 'wallets' ? 'active' : ''}`} onClick={() => navigate('wallets')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
               Wallet Management
-              {pendingVerifications.length > 0 && <span className="dash-nav-badge">{pendingVerifications.length}</span>}
+              {pendingVerifications.length + pendingPlans.length + feesToVerify > 0 && (
+                <span className="dash-nav-badge">{pendingVerifications.length + pendingPlans.length + feesToVerify}</span>
+              )}
             </button>
 
             <button className={`dash-nav-item ${currentPage === 'defaulters' ? 'active' : ''}`} onClick={() => navigate('defaulters')}>
@@ -929,10 +1006,147 @@ const AdminDashboard = () => {
               <div className="dash-page-header dash-fu">
                 <div className="dash-page-title">Wallet Management</div>
                 <div className="dash-page-rule"></div>
-                <div className="dash-page-subtitle">Verify patient installment payments after lab confirmation — final step in the receipt flow</div>
+                <div className="dash-page-subtitle">Review installment applications, verify the CareFirst service fee, then verify lab-confirmed payments</div>
               </div>
 
-              {/* Pending verifications — action-first */}
+              {/* 1. Applications awaiting review */}
+              <div className="dash-card dash-fu dash-fu-1">
+                <div className="dash-card-header">
+                  <div className="dash-card-title">
+                    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    Installment Applications
+                    {pendingPlans.length > 0 && (
+                      <span style={{ marginLeft: 8, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: 10, padding: '2px 8px', fontSize: '0.72rem', fontWeight: 700 }}>
+                        {pendingPlans.length} to review
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {pendingPlans.length === 0 ? (
+                  <div style={{ padding: '28px 24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>No applications waiting for review.</div>
+                ) : (
+                  <div className="dash-table-wrap">
+                    <table>
+                      <thead>
+                        <tr><th>Patient</th><th>Lab / Test</th><th>Plan</th><th>Guarantor</th><th>Applied</th><th style={{ textAlign: 'right' }}>Action</th></tr>
+                      </thead>
+                      <tbody>
+                        {pendingPlans.map((w: any) => (
+                          <React.Fragment key={w._id}>
+                            <tr>
+                              <td>
+                                <div style={{ fontWeight: 600, color: 'var(--text)' }}>{w.patient?.name || '—'}</div>
+                                <div className="dash-mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                  {w.patient?.cnic || '—'} {w.patient?.cnicStatus === 'verified' ? '✓' : `(${w.patient?.cnicStatus || 'unverified'})`}
+                                </div>
+                              </td>
+                              <td>
+                                <div style={{ fontWeight: 600 }}>{w.testName}</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-sub)' }}>{w.labName}</div>
+                              </td>
+                              <td style={{ fontSize: '0.78rem' }}>
+                                <div style={{ fontWeight: 600 }}>{pkr(w.totalAmount)}</div>
+                                <div style={{ color: 'var(--text-sub)' }}>{pkr(w.downPayment?.amount)} down · {w.installmentCount} × every {w.installmentTenureDays} days</div>
+                              </td>
+                              <td style={{ fontSize: '0.78rem' }}>
+                                <div style={{ fontWeight: 600 }}>{w.guarantor?.name} <span style={{ fontWeight: 400, color: 'var(--text-sub)' }}>({w.guarantor?.relation})</span></div>
+                                <div className="dash-mono" style={{ color: 'var(--text-muted)' }}>{w.guarantor?.cnic} · {w.guarantor?.phone}</div>
+                              </td>
+                              <td style={{ fontSize: '0.78rem' }}>{shortDate(w.createdAt)}</td>
+                              <td style={{ textAlign: 'right' }}>
+                                <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                  <button className="dash-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.72rem' }} onClick={() => setOpenAgreementId(openAgreementId === w._id ? null : w._id)}>
+                                    {openAgreementId === w._id ? 'Hide' : 'Agreement'}
+                                  </button>
+                                  <button className="adm-approve-btn" onClick={() => approvePlan(w._id)}>Approve</button>
+                                  <button className="adm-reject-btn" onClick={() => { setPlanRejectingId(w._id); setPlanRejectReason(''); }}>Reject</button>
+                                </div>
+                              </td>
+                            </tr>
+                            {openAgreementId === w._id && (
+                              <tr>
+                                <td colSpan={6} style={{ background: 'var(--glass-bg)', padding: '12px 20px' }}>
+                                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+                                    Accepted by the patient on {w.agreement?.acceptedAt ? new Date(w.agreement.acceptedAt).toLocaleString('en-GB') : '—'}
+                                  </div>
+                                  <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '0.72rem', lineHeight: 1.5, maxHeight: 320, overflow: 'auto', margin: 0 }}>
+                                    {w.agreement?.text || 'No agreement stored.'}
+                                  </pre>
+                                </td>
+                              </tr>
+                            )}
+                            {planRejectingId === w._id && reasonRow(6, `Reject ${w.patient?.name}'s application:`, planRejectReason, setPlanRejectReason, rejectPlan, () => setPlanRejectingId(null))}
+                          </React.Fragment>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* 2. Approved plans waiting for the CareFirst service fee */}
+              <div className="dash-card dash-fu dash-fu-1">
+                <div className="dash-card-header">
+                  <div className="dash-card-title">
+                    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                    Service Fees
+                    {feesToVerify > 0 && (
+                      <span style={{ marginLeft: 8, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: 10, padding: '2px 8px', fontSize: '0.72rem', fontWeight: 700 }}>
+                        {feesToVerify} to verify
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Paid to CareFirst · verifying activates the plan</div>
+                </div>
+                {feeQueue.length === 0 ? (
+                  <div style={{ padding: '28px 24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>No approved plans waiting for a service fee.</div>
+                ) : (
+                  <div className="dash-table-wrap">
+                    <table>
+                      <thead>
+                        <tr><th>Patient</th><th>Lab / Test</th><th>Fee</th><th>Approved</th><th>Screenshot</th><th style={{ textAlign: 'right' }}>Action</th></tr>
+                      </thead>
+                      <tbody>
+                        {feeQueue.map((w: any) => (
+                          <React.Fragment key={w._id}>
+                            <tr>
+                              <td style={{ fontWeight: 600, color: 'var(--text)' }}>{w.patient?.name || '—'}</td>
+                              <td>
+                                <div style={{ fontWeight: 600 }}>{w.testName}</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-sub)' }}>{w.labName}</div>
+                              </td>
+                              <td style={{ fontWeight: 600 }}>{pkr(w.serviceFee?.amount)}</td>
+                              <td style={{ fontSize: '0.78rem' }}>{shortDate(w.planApprovedAt)}</td>
+                              <td>
+                                {w.serviceFee?.receiptUrl ? (
+                                  <a href={w.serviceFee.receiptUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: '0.78rem', fontWeight: 600, textDecoration: 'none' }}>
+                                    View ↗ <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{shortDate(w.serviceFee.receiptUploadedAt)}</span>
+                                  </a>
+                                ) : (
+                                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                    {w.serviceFee?.rejectionReason ? 'Rejected — waiting for a new one' : 'Waiting for patient'}
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                {w.serviceFee?.receiptUrl ? (
+                                  <div style={{ display: 'inline-flex', gap: 6 }}>
+                                    <button className="adm-approve-btn" onClick={() => verifyServiceFee(w._id)}>Verify & Activate</button>
+                                    <button className="adm-reject-btn" onClick={() => { setFeeRejectingId(w._id); setFeeRejectReason(''); }}>Reject</button>
+                                  </div>
+                                ) : <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>—</span>}
+                              </td>
+                            </tr>
+                            {feeRejectingId === w._id && reasonRow(6, `Reject ${w.patient?.name}'s fee screenshot:`, feeRejectReason, setFeeRejectReason, rejectServiceFee, () => setFeeRejectingId(null))}
+                          </React.Fragment>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Lab-confirmed payments — action-first */}
               <div className="dash-card dash-fu dash-fu-1">
                 <div className="dash-card-header">
                   <div className="dash-card-title">
@@ -953,30 +1167,30 @@ const AdminDashboard = () => {
                   <div className="dash-table-wrap">
                     <table>
                       <thead>
-                        <tr><th>Patient</th><th>Lab</th><th>Test</th><th>Inst #</th><th>Amount</th><th>Lab Confirmed</th><th>Receipt</th><th style={{ textAlign: 'right' }}>Action</th></tr>
+                        <tr><th>Patient</th><th>Lab</th><th>Test</th><th>Payment</th><th>Amount</th><th>Lab Confirmed</th><th>Receipt</th><th style={{ textAlign: 'right' }}>Action</th></tr>
                       </thead>
                       <tbody>
-                        {pendingVerifications.map(({ wallet, inst, instIndex }, i) => (
-                          <tr key={i}>
+                        {pendingVerifications.map(({ wallet, payment, label, path }) => (
+                          <tr key={`${wallet._id}-${path}`}>
                             <td style={{ fontWeight: 600, color: 'var(--text)' }}>{wallet.patient?.name || '—'}</td>
-                            <td style={{ color: 'var(--text-sub)' }}>{wallet.lab?.name || '—'}</td>
+                            <td style={{ color: 'var(--text-sub)' }}>{wallet.labName || wallet.lab?.name || '—'}</td>
                             <td>{wallet.testName || '—'}</td>
-                            <td className="dash-mono">#{inst.number}</td>
-                            <td style={{ fontWeight: 600 }}>PKR {inst.amount?.toLocaleString()}</td>
+                            <td className="dash-mono">{label}</td>
+                            <td style={{ fontWeight: 600 }}>{pkr(payment.amount)}</td>
                             <td>
                               <span style={{ color: '#166534', fontWeight: 600, fontSize: '0.78rem' }}>
-                                {inst.labApprovedAt ? new Date(inst.labApprovedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'Confirmed ✓'}
+                                {payment.labApprovedAt ? shortDate(payment.labApprovedAt) : 'Confirmed ✓'}
                               </span>
                             </td>
                             <td>
-                              {inst.receiptUrl ? (
-                                <a href={inst.receiptUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: '0.78rem', fontWeight: 600, textDecoration: 'none' }}>
+                              {payment.receiptUrl ? (
+                                <a href={payment.receiptUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: '0.78rem', fontWeight: 600, textDecoration: 'none' }}>
                                   View Receipt ↗
                                 </a>
                               ) : '—'}
                             </td>
                             <td style={{ textAlign: 'right' }}>
-                              <button className="adm-approve-btn" onClick={() => adminVerifyInstallment(wallet._id, instIndex)}>
+                              <button className="adm-approve-btn" onClick={() => adminVerifyPayment(wallet._id, path, label === 'Down payment' ? 'down payment' : `installment ${label}`)}>
                                 <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
                                 Verify Payment
                               </button>
@@ -1000,9 +1214,12 @@ const AdminDashboard = () => {
                     <select className="dash-filter-select" style={{ height: 30 }} value={walletFilter} onChange={e => setWalletFilter(e.target.value)}>
                       <option value="all">All Plans</option>
                       <option value="needs_verify">Needs Verification</option>
+                      <option value="pending_approval">Under review</option>
+                      <option value="awaiting_fee">Service fee due</option>
                       <option value="active">Active</option>
                       <option value="defaulter">Defaulter</option>
                       <option value="completed">Completed</option>
+                      <option value="rejected">Rejected</option>
                     </select>
                   </div>
                 </div>
@@ -1015,24 +1232,29 @@ const AdminDashboard = () => {
                         <tr><th>Patient</th><th>Lab</th><th>Test</th><th>Total</th><th>Remaining</th><th>Installments</th><th>Status</th></tr>
                       </thead>
                       <tbody>
-                        {filteredWallets.map((w: any, i: number) => (
-                          <tr key={i}>
-                            <td style={{ fontWeight: 600, color: 'var(--text)' }}>{w.patient?.name || '—'}</td>
-                            <td style={{ color: 'var(--text-sub)' }}>{w.lab?.name || '—'}</td>
-                            <td>{w.testName || '—'}</td>
-                            <td style={{ fontWeight: 600 }}>PKR {(w.totalAmount || w.installments?.reduce((s: number, i: any) => s + i.amount, 0) || 0).toLocaleString()}</td>
-                            <td style={{ fontWeight: 600, color: w.remainingBalance > 0 ? '#854d0e' : '#166534' }}>PKR {(w.remainingBalance || 0).toLocaleString()}</td>
-                            <td style={{ fontSize: '0.8rem' }}>
-                              {w.installments?.filter((i: any) => i.status === 'paid').length ?? 0} / {w.installments?.length ?? 0} paid
-                            </td>
-                            <td>
-                              <span className={`dash-badge ${statusClass(w.status === 'completed' ? 'active' : w.status === 'defaulter' ? 'rejected' : 'pending')}`}>
-                                <span className="dash-badge-dot"></span>
-                                {w.status === 'completed' ? 'Completed' : w.status === 'defaulter' ? 'Defaulter' : 'Active'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
+                        {filteredWallets.map((w: any) => {
+                          const st = WALLET_STATUS[w.status] || { label: w.status, cls: 'dash-gray' };
+                          const scheduled = ['active', 'defaulter', 'completed'].includes(w.status);
+                          return (
+                            <tr key={w._id}>
+                              <td style={{ fontWeight: 600, color: 'var(--text)' }}>{w.patient?.name || '—'}</td>
+                              <td style={{ color: 'var(--text-sub)' }}>{w.labName || w.lab?.name || '—'}</td>
+                              <td>{w.testName || '—'}</td>
+                              <td style={{ fontWeight: 600 }}>{pkr(w.totalAmount)}</td>
+                              <td style={{ fontWeight: 600, color: !scheduled ? 'var(--text-muted)' : w.remainingBalance > 0 ? '#854d0e' : '#166534' }}>
+                                {scheduled ? pkr(w.remainingBalance) : '—'}
+                              </td>
+                              <td style={{ fontSize: '0.8rem' }}>
+                                {scheduled
+                                  ? <>{w.installments?.filter((i: any) => i.status === 'paid').length ?? 0} / {w.installments?.length ?? 0} paid{!w.downPayment?.adminVerified && <span style={{ color: '#854d0e' }}> · down payment due</span>}</>
+                                  : <span style={{ color: 'var(--text-muted)' }}>{w.status === 'rejected' ? w.rejectionReason : 'Not started'}</span>}
+                              </td>
+                              <td>
+                                <span className={`dash-badge ${st.cls}`}><span className="dash-badge-dot"></span>{st.label}</span>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

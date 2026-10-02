@@ -440,7 +440,8 @@ const verifyInstallment = async (req, res) => {
     });
     sendNotification(wallet.patient._id.toString(), notif);
 
-    res.json({ message: `${isInstallment ? 'Installment' : 'Down payment'} verified and marked paid`, wallet });
+    const [enriched] = await enrichWallets([wallet]);
+    res.json({ message: `${isInstallment ? 'Installment' : 'Down payment'} verified and marked paid`, wallet: enriched });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
