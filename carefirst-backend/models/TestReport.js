@@ -7,6 +7,7 @@ const testReportSchema = new mongoose.Schema(
     testName:  { type: String, required: true, trim: true },
     reportUrl: { type: String, required: true },
     notes:     { type: String, trim: true },
+    booking:   { type: mongoose.Schema.Types.ObjectId, ref: 'LabBooking' }, // the visit it came from, if booked
     isRead:    { type: Boolean, default: false },
   },
   { timestamps: true }

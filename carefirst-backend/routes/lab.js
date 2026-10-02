@@ -7,6 +7,7 @@ const {
   getReceiptsPendingApproval, approveReceipt,
   getNeedyPatients, markTestConducted,
   getLabPatients,
+  getBookings, markSampleCollected, completeBooking,
   getNotifications, markRead,
 } = require('../controllers/labController');
 const { protect, requireRole, requireActive } = require('../middleware/auth');
@@ -36,6 +37,11 @@ router.put('/receipts/:walletId/down-payment/approve',                    ...gua
 // Needy patients (community support)
 router.get('/needy-patients',                      ...guard, getNeedyPatients);
 router.put('/needy-patients/:id/mark-conducted',   ...guard, markTestConducted);
+
+// Bookings (patients' lab visits): confirmed → sample_collected → completed
+router.get('/bookings',                        ...guard, getBookings);
+router.put('/bookings/:id/sample-collected',   ...guard, markSampleCollected);
+router.put('/bookings/:id/complete',           ...guard, completeBooking);
 
 // Patients linked to this lab (for report upload dropdown)
 router.get('/patients', ...guard, getLabPatients);

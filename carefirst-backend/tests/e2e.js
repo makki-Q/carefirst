@@ -750,6 +750,96 @@ const testDownPaymentAndCompletion = async () => {
   check('completed plan no longer counts toward the limit', config.data.openPlans === 1, config.data);
 };
 
+// ─── Step 3 — lab bookings ───────────────────────────────────────────────────
+const testLabBookings = async () => {
+  section('Lab bookings');
+  const Wallet = require('../models/Wallet');
+  const { pktDate, addDays } = require('../utils/schedule');
+  const today    = pktDate();
+  const tomorrow = addDays(today, 1);
+  const book = (body, token = tokens.patient) =>
+    post('/api/patient/lab-bookings', { token, body: { labId: ids.lab, testId: ids.cbcTest, visitDate: tomorrow, ...body } });
+
+  const cbc = await book({});
+  check('patient books a test visit → confirmed, pay at the lab',
+    cbc.status === 201 && cbc.data.status === 'confirmed' && cbc.data.paymentMethod === 'at_lab' &&
+    cbc.data.price === 1500 && cbc.data.labName === 'E2E Diagnostics', cbc);
+  check('lab and patient are notified of the booking',
+    (await get('/api/lab/notifications', { token: tokens.lab })).data.some(n => n.type === 'lab_booking_created') &&
+    (await get('/api/patient/notifications', { token: tokens.patient })).data.some(n => n.type === 'lab_booking_created' && n.message.includes('PKR 1,500')));
+
+  check('a visit date beyond 14 days is rejected (400)', (await book({ visitDate: addDays(today, 15) })).status === 400);
+  check('a past visit date is rejected (400)', (await book({ visitDate: addDays(today, -1) })).status === 400);
+  check('an unknown test returns 404', (await book({ testId: ids.lab })).status === 404);
+
+  // Paying through an installment plan (ids.plan: the patient's completed MRI plan at this lab)
+  check('a plan for a different test cannot pay for this one (400)', (await book({ walletId: ids.plan })).status === 400);
+  check("another patient's plan cannot be used (404)",
+    (await book({ testId: ids.mriTest, walletId: ids.plan }, tokens.patient2)).status === 404);
+  const pending = await Wallet.create({ patient: ids.patient, lab: ids.lab, labTest: ids.mriTest, testName: 'MRI Brain', totalAmount: 25000, status: 'pending_approval' });
+  check('a plan that is not active yet cannot pay (400)', (await book({ testId: ids.mriTest, walletId: pending._id.toString() })).status === 400);
+  await Wallet.deleteOne({ _id: pending._id });
+
+  const mri = await book({ testId: ids.mriTest, walletId: ids.plan });
+  check('patient books MRI paid through their installment plan',
+    mri.status === 201 && mri.data.paymentMethod === 'installment' && mri.data.wallet === ids.plan, mri);
+  check('one plan covers one booking (409)', (await book({ testId: ids.mriTest, walletId: ids.plan })).status === 409);
+
+  const cancelMri = await put(`/api/patient/lab-bookings/${mri.data._id}/cancel`, { token: tokens.patient });
+  check('patient cancels before the visit date', cancelMri.status === 200 && cancelMri.data.booking.status === 'cancelled', cancelMri);
+  check('lab is told about the cancellation',
+    (await get('/api/lab/notifications', { token: tokens.lab })).data.some(n => n.type === 'lab_booking_cancelled'));
+  check('cancelling twice is refused (400)', (await put(`/api/patient/lab-bookings/${mri.data._id}/cancel`, { token: tokens.patient })).status === 400);
+  const mri2 = await book({ testId: ids.mriTest, walletId: ids.plan });
+  check('a cancelled booking frees the plan for a new one', mri2.status === 201, mri2);
+
+  const todayVisit = await book({ visitDate: today });
+  check('a visit can be booked for today', todayVisit.status === 201, todayVisit);
+  const lateCancel = await put(`/api/patient/lab-bookings/${todayVisit.data._id}/cancel`, { token: tokens.patient });
+  check('patient cannot cancel on the visit date (400)', lateCancel.status === 400, lateCancel);
+  check("patient cannot cancel someone else's booking (404)",
+    (await put(`/api/patient/lab-bookings/${cbc.data._id}/cancel`, { token: tokens.patient2 })).status === 404);
+
+  section('Lab booking chain');
+  const list = await get('/api/lab/bookings', { token: tokens.lab });
+  check('lab sees its bookings with patient CNIC and payment method',
+    list.data.length === 4 && list.data.every(b => b.patient?.cnic === '35202-1234567-9') &&
+    list.data.some(b => b.paymentMethod === 'installment' && b.status === 'confirmed'), list.data.map(b => [b.testName, b.status]));
+  check('booked patients are in the lab patient list',
+    (await get('/api/lab/patients', { token: tokens.lab })).data.some(p => p._id === ids.patient));
+
+  const before = listUploads().size;
+  const tooEarly = await post('/api/lab/reports/upload', { token: tokens.lab, body: { bookingId: todayVisit.data._id }, files: { report: ['r.png'] } });
+  check('report upload needs the sample collected first (400)', tooEarly.status === 400 && /sample/.test(tooEarly.data.message), tooEarly);
+  await new Promise(r => setTimeout(r, 100));
+  check('the refused report file is deleted', listUploads().size === before);
+  check('a booking cannot be completed before sample collection (400)',
+    (await put(`/api/lab/bookings/${todayVisit.data._id}/complete`, { token: tokens.lab })).status === 400);
+
+  const sample = await put(`/api/lab/bookings/${todayVisit.data._id}/sample-collected`, { token: tokens.lab });
+  check('lab marks the sample collected', sample.status === 200 && sample.data.booking.status === 'sample_collected', sample);
+  check('patient is told the sample was collected',
+    (await get('/api/patient/notifications', { token: tokens.patient })).data.some(n => n.type === 'lab_booking_updated'));
+  check('collecting twice is refused (400)',
+    (await put(`/api/lab/bookings/${todayVisit.data._id}/sample-collected`, { token: tokens.lab })).status === 400);
+  check('an invalid booking id returns 404',
+    (await put('/api/lab/bookings/not-an-id/sample-collected', { token: tokens.lab })).status === 404);
+
+  const report = await post('/api/lab/reports/upload', { token: tokens.lab, body: { bookingId: todayVisit.data._id, notes: 'All normal' }, files: { report: ['cbc2.png'] } });
+  check('report uploaded for a booking takes patient and test from it',
+    report.status === 201 && report.data.patient === ids.patient && report.data.testName === 'CBC' && report.data.booking === todayVisit.data._id, report);
+  const mine = (await get('/api/patient/lab-bookings', { token: tokens.patient })).data.find(b => b._id === todayVisit.data._id);
+  check('the report completes the booking and is linked to it', mine?.status === 'completed' && mine?.report?.reportUrl === report.data.reportUrl, mine);
+  check('a booking gets one report (409)',
+    (await post('/api/lab/reports/upload', { token: tokens.lab, body: { bookingId: todayVisit.data._id }, files: { report: ['x.png'] } })).status === 409);
+
+  await put(`/api/lab/bookings/${mri2.data._id}/sample-collected`, { token: tokens.lab });
+  const done = await put(`/api/lab/bookings/${mri2.data._id}/complete`, { token: tokens.lab });
+  check('lab completes a booking without a report yet', done.status === 200 && done.data.booking.status === 'completed', done);
+  check('a completed booking cannot be cancelled (400)',
+    (await put(`/api/patient/lab-bookings/${mri2.data._id}/cancel`, { token: tokens.patient })).status === 400);
+};
+
 const testDefaulterEscalation = async () => {
   section('Defaulter escalation (nightly job)');
   const Wallet = require('../models/Wallet');
@@ -866,6 +956,7 @@ const main = async () => {
     await testPlanApplication();
     await testPlanReview();
     await testDownPaymentAndCompletion();
+    await testLabBookings();
     await testDefaulterEscalation();
     await testDueReminders();
     await testMisc();

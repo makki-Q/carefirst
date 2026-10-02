@@ -4,8 +4,10 @@ const Wallet               = require('../models/Wallet');
 const Notification         = require('../models/Notification');
 const CommunityApplication = require('../models/CommunityApplication');
 const User                 = require('../models/User');
+const LabBooking           = require('../models/LabBooking');
+const mongoose             = require('mongoose');
 const { sendNotification } = require('../socket/notificationSocket');
-const { fileUrl }          = require('../utils/fileUrl');
+const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
 const { withPatientDetails } = require('../utils/patientProfiles');
 const { findLabPayment }     = require('../utils/installmentPlan');
 
@@ -109,17 +111,34 @@ const deleteTest = async (req, res) => {
 
 // ─── POST /api/lab/reports/upload ─────────────────────────────────────────────
 // Lab uploads the patient's test result (PDF / image)
+// Body: { patientId, testName, notes } or { bookingId, notes } — a booking supplies
+// the patient and test, needs its sample collected, and is completed by the report
 const uploadReport = async (req, res) => {
+  const reject = (status, message) => {
+    removeUploadedFiles(req);
+    return res.status(status).json({ message });
+  };
+
   try {
-    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+    if (!req.file) return reject(400, 'No file uploaded');
 
-    const { patientId, testName, notes } = req.body;
-    if (!patientId || !testName) {
-      return res.status(400).json({ message: 'patientId and testName are required' });
+    const { bookingId, notes } = req.body;
+    let { patientId, testName } = req.body;
+    let booking = null;
+    if (bookingId) {
+      if (!mongoose.isValidObjectId(bookingId)) return reject(404, 'Booking not found');
+      booking = await LabBooking.findOne({ _id: bookingId, lab: req.user._id });
+      if (!booking) return reject(404, 'Booking not found');
+      if (booking.status === 'cancelled') return reject(400, 'This booking was cancelled');
+      if (booking.status === 'confirmed') return reject(400, 'Mark the sample as collected before uploading the report');
+      if (booking.report) return reject(409, 'This booking already has a report');
+      patientId = booking.patient.toString();
+      testName  = testName || booking.testName;
     }
+    if (!patientId || !testName) return reject(400, 'patientId and testName are required');
 
-    const patient = await User.findOne({ _id: patientId, role: 'patient' });
-    if (!patient) return res.status(404).json({ message: 'Patient not found' });
+    const patient = mongoose.isValidObjectId(patientId) && await User.findOne({ _id: patientId, role: 'patient' });
+    if (!patient) return reject(404, 'Patient not found');
 
     const reportUrl = fileUrl('reports', req.file.filename);
     const report    = await TestReport.create({
@@ -128,7 +147,17 @@ const uploadReport = async (req, res) => {
       testName,
       reportUrl,
       notes,
+      booking: booking?._id,
     });
+
+    if (booking) {
+      booking.report = report._id;
+      if (booking.status === 'sample_collected') {
+        booking.status      = 'completed';
+        booking.completedAt = new Date();
+      }
+      await booking.save();
+    }
 
     const notif = await Notification.create({
       recipient: patientId,
@@ -141,9 +170,66 @@ const uploadReport = async (req, res) => {
 
     res.status(201).json(report);
   } catch (err) {
+    removeUploadedFiles(req);
     res.status(500).json({ message: err.message });
   }
 };
+
+// ─── Bookings (patients' lab visits) ─────────────────────────────────────────
+
+const visitDay = (date) =>
+  new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+const findBookings = (filter) =>
+  LabBooking.find(filter)
+    .populate('patient', 'name email phone')
+    .populate('report', 'reportUrl createdAt')
+    .sort({ visitDate: 1, createdAt: 1 });
+
+// ─── GET /api/lab/bookings ───────────────────────────────────────────────────
+const getBookings = async (req, res) => {
+  try {
+    res.json(await withPatientDetails(await findBookings({ lab: req.user._id })));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PUT /api/lab/bookings/:id/sample-collected | /complete ──────────────────
+// confirmed → sample_collected → completed
+const advanceBooking = (from, to) => async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Booking not found' });
+    const booking = await LabBooking.findOne({ _id: req.params.id, lab: req.user._id });
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    if (booking.status !== from) {
+      return res.status(400).json({ message: `Only a ${from.replace('_', ' ')} booking can be marked ${to.replace('_', ' ')} (this one is ${booking.status.replace('_', ' ')})` });
+    }
+
+    booking.status = to;
+    if (to === 'sample_collected') booking.sampleCollectedAt = new Date();
+    if (to === 'completed')        booking.completedAt       = new Date();
+    await booking.save();
+
+    const notif = await Notification.create({
+      recipient: booking.patient,
+      title:     to === 'completed' ? 'Test Completed' : 'Sample Collected',
+      message:   to === 'completed'
+        ? `Your ${booking.testName} at ${req.user.name} is complete. The report will appear in My Reports once uploaded.`
+        : `${req.user.name} collected your sample for ${booking.testName} (visit ${visitDay(booking.visitDate)}).`,
+      type:      'lab_booking_updated',
+      meta:      { bookingId: booking._id },
+    });
+    sendNotification(booking.patient.toString(), notif);
+
+    const [enriched] = await withPatientDetails(await findBookings({ _id: booking._id }));
+    res.json({ message: 'Booking updated', booking: enriched });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+const markSampleCollected = advanceBooking('confirmed', 'sample_collected');
+const completeBooking     = advanceBooking('sample_collected', 'completed');
 
 // ─── GET /api/lab/reports ────────────────────────────────────────────────────
 const getReports = async (req, res) => {
@@ -276,18 +362,20 @@ const markTestConducted = async (req, res) => {
 };
 
 // ─── GET /api/lab/patients ────────────────────────────────────────────────────
-// Returns all unique patients linked to this lab (via wallets or community apps)
+// Returns all unique patients linked to this lab (via bookings, wallets or community apps)
 const getLabPatients = async (req, res) => {
   try {
-    const [communityApps, wallets] = await Promise.all([
+    const [communityApps, wallets, bookings] = await Promise.all([
       CommunityApplication.find({ assignedLab: req.user._id }).populate('patient', 'name email phone').select('patient'),
       Wallet.find({ lab: req.user._id, status: { $in: ['active', 'completed', 'defaulter'] } })
+        .populate('patient', 'name email phone').select('patient'),
+      LabBooking.find({ lab: req.user._id, status: { $ne: 'cancelled' } })
         .populate('patient', 'name email phone').select('patient'),
     ]);
 
     const seen = new Set();
     const patients = [];
-    for (const item of [...communityApps, ...wallets]) {
+    for (const item of [...bookings, ...communityApps, ...wallets]) {
       if (item.patient && !seen.has(item.patient._id.toString())) {
         seen.add(item.patient._id.toString());
         patients.push(item.patient);
@@ -332,5 +420,6 @@ module.exports = {
   getReceiptsPendingApproval, approveReceipt,
   getNeedyPatients, markTestConducted,
   getLabPatients,
+  getBookings, markSampleCollected, completeBooking,
   getNotifications, markRead,
 };

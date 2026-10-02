@@ -9,10 +9,11 @@ const DoctorProfile        = require('../models/DoctorProfile');
 const LabProfile           = require('../models/LabProfile');
 const User                 = require('../models/User');
 const Appointment          = require('../models/Appointment');
+const LabBooking           = require('../models/LabBooking');
 const { sendNotification } = require('../socket/notificationSocket');
 const {
   BOOKING_WINDOW_DAYS, PATIENT_CANCEL_HOURS, DEFAULT_CONSULTATION_MINUTES,
-  isValidDate, isValidTime, isWithinBookingWindow, slotTimes, weekdayOf, pktInstant, formatTime12,
+  isValidDate, isValidTime, isWithinBookingWindow, slotTimes, weekdayOf, pktInstant, formatTime12, pktDate,
 } = require('../utils/schedule');
 const { normalizeCnic }    = require('../utils/cnic');
 const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
@@ -567,6 +568,123 @@ const cancelAppointment = async (req, res) => {
   }
 };
 
+// ─── Lab bookings ─────────────────────────────────────────────────────────────
+
+const visitDay = (date) =>
+  new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+const findLabBookings = (filter) =>
+  LabBooking.find(filter)
+    .populate('lab', 'name phone')
+    .populate('report', 'reportUrl testName createdAt')
+    .sort({ visitDate: -1, createdAt: -1 });
+
+// ─── GET /api/patient/lab-bookings ────────────────────────────────────────────
+const getLabBookings = async (req, res) => {
+  try {
+    res.json(await withLabInfo(await findLabBookings({ patient: req.user._id }), 'lab'));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── POST /api/patient/lab-bookings ───────────────────────────────────────────
+// Body: { labId, testId, visitDate: "YYYY-MM-DD", walletId? } — auto-confirmed.
+// With walletId the test is paid through that installment plan, otherwise at the lab.
+const bookLabTest = async (req, res) => {
+  try {
+    const { labId, testId, visitDate, walletId } = req.body;
+    if (!mongoose.isValidObjectId(labId) || !mongoose.isValidObjectId(testId)) return res.status(404).json({ message: 'Test not found' });
+    if (!isValidDate(visitDate)) return res.status(400).json({ message: 'Please pick a visit date' });
+    if (!isWithinBookingWindow(visitDate)) {
+      return res.status(400).json({ message: `Lab visits can be booked for the next ${BOOKING_WINDOW_DAYS} days only` });
+    }
+
+    const labUser    = await User.findOne({ _id: labId, role: 'lab', status: 'active' });
+    const labProfile = labUser && await LabProfile.findOne({ user: labUser._id });
+    const test       = labProfile?.tests.id(testId);
+    if (!test || !test.isActive) return res.status(404).json({ message: 'Test not found' });
+
+    let wallet = null;
+    if (walletId) {
+      if (!mongoose.isValidObjectId(walletId)) return res.status(404).json({ message: 'Installment plan not found' });
+      wallet = await Wallet.findOne({ _id: walletId, patient: req.user._id });
+      if (!wallet) return res.status(404).json({ message: 'Installment plan not found' });
+      const sameTest = wallet.labTest ? wallet.labTest.equals(test._id) : wallet.testName === test.name;
+      if (!wallet.lab.equals(labUser._id) || !sameTest) {
+        return res.status(400).json({ message: 'That installment plan is for a different test or lab' });
+      }
+      if (!['active', 'completed'].includes(wallet.status)) {
+        return res.status(400).json({ message: 'That installment plan is not active yet' });
+      }
+      if (await LabBooking.exists({ wallet: wallet._id, status: { $ne: 'cancelled' } })) {
+        return res.status(409).json({ message: 'That installment plan is already used for another booking' });
+      }
+    }
+
+    const booking = await LabBooking.create({
+      patient:       req.user._id,
+      lab:           labUser._id,
+      labTest:       test._id,
+      testName:      test.name,
+      price:         test.price,
+      visitDate,
+      paymentMethod: wallet ? 'installment' : 'at_lab',
+      wallet:        wallet?._id,
+    });
+
+    const payNote = wallet ? 'paid through their installment plan' : 'to be paid at the lab';
+    await notifyUser(labUser._id, {
+      title:   'New Test Booking',
+      message: `${req.user.name} booked ${test.name} for ${visitDay(visitDate)} (PKR ${test.price.toLocaleString()}, ${payNote}).`,
+      type:    'lab_booking_created',
+      meta:    { bookingId: booking._id },
+    });
+    await notifyUser(req.user._id, {
+      title:   'Test Booked',
+      message: `Your ${test.name} visit at ${labProfile.labName} on ${visitDay(visitDate)} is confirmed. ` +
+               (wallet ? 'It is covered by your installment plan.' : `Pay PKR ${test.price.toLocaleString()} at the lab.`),
+      type:    'lab_booking_created',
+      meta:    { bookingId: booking._id },
+    });
+
+    const [enriched] = await withLabInfo(await findLabBookings({ _id: booking._id }), 'lab');
+    res.status(201).json(enriched);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PUT /api/patient/lab-bookings/:id/cancel ─────────────────────────────────
+// Allowed until the day before the visit date (PKT)
+const cancelLabBooking = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Booking not found' });
+    const booking = await LabBooking.findOne({ _id: req.params.id, patient: req.user._id });
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    if (booking.status !== 'confirmed') return res.status(400).json({ message: `This booking is already ${booking.status.replace('_', ' ')}` });
+    if (pktDate() >= booking.visitDate) {
+      return res.status(400).json({ message: 'A lab visit can only be cancelled before the visit date. Please contact the lab.' });
+    }
+
+    booking.status      = 'cancelled';
+    booking.cancelledAt = new Date();
+    await booking.save();
+
+    await notifyUser(booking.lab, {
+      title:   'Test Booking Cancelled',
+      message: `${req.user.name} cancelled their ${booking.testName} visit on ${visitDay(booking.visitDate)}.`,
+      type:    'lab_booking_cancelled',
+      meta:    { bookingId: booking._id },
+    });
+
+    const [enriched] = await withLabInfo(await findLabBookings({ _id: booking._id }), 'lab');
+    res.json({ message: 'Booking cancelled', booking: enriched });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── GET /api/patient/community-applications ──────────────────────────────────
 const getCommunityApplications = async (req, res) => {
   try {
@@ -664,6 +782,7 @@ module.exports = {
   getWallets, uploadPaymentReceipt, uploadServiceFeeReceipt,
   getInstallmentConfig, previewInstallmentPlan, applyForInstallmentPlan,
   getAppointments, bookAppointment, cancelAppointment,
+  getLabBookings, bookLabTest, cancelLabBooking,
   getCommunityApplications, createCommunityApplication,
   getNotifications, markRead, markAllRead,
 };
