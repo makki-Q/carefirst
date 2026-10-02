@@ -8,7 +8,12 @@ const Notification         = require('../models/Notification');
 const DoctorProfile        = require('../models/DoctorProfile');
 const LabProfile           = require('../models/LabProfile');
 const User                 = require('../models/User');
+const Appointment          = require('../models/Appointment');
 const { sendNotification } = require('../socket/notificationSocket');
+const {
+  BOOKING_WINDOW_DAYS, PATIENT_CANCEL_HOURS, DEFAULT_CONSULTATION_MINUTES,
+  isValidDate, isValidTime, isWithinBookingWindow, slotTimes, weekdayOf, pktInstant, formatTime12,
+} = require('../utils/schedule');
 const { normalizeCnic }    = require('../utils/cnic');
 const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
 const { generateInstallmentAgreement } = require('../utils/legalAgreementTemplate');
@@ -426,6 +431,142 @@ const uploadServiceFeeReceipt = async (req, res) => {
   }
 };
 
+// ─── Appointments ─────────────────────────────────────────────────────────────
+
+const apptWhen = (a) => {
+  const day = new Date(`${a.date}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+  return `${day}, ${formatTime12(a.time)}`;
+};
+
+// Adds doctorSpecialization and the prescription written in each appointment
+const enrichAppointments = async (appts) => {
+  const doctorIds = [...new Set(appts.map(a => a.doctor?._id?.toString()).filter(Boolean))];
+  const [profiles, prescriptions] = await Promise.all([
+    DoctorProfile.find({ user: { $in: doctorIds } }).select('user specialization'),
+    Prescription.find({ appointment: { $in: appts.map(a => a._id) } }),
+  ]);
+  const spec = {};
+  profiles.forEach(p => { spec[p.user.toString()] = p.specialization; });
+  const rx = {};
+  prescriptions.forEach(p => { rx[p.appointment.toString()] = p; });
+  return appts.map(a => {
+    const obj = a.toObject();
+    return {
+      ...obj,
+      doctorSpecialization: spec[obj.doctor?._id?.toString()] || '',
+      prescription: rx[obj._id.toString()] || null,
+    };
+  });
+};
+
+// ─── GET /api/patient/appointments ────────────────────────────────────────────
+const getAppointments = async (req, res) => {
+  try {
+    const appts = await Appointment.find({ patient: req.user._id })
+      .populate('doctor', 'name phone')
+      .sort({ startsAt: -1 });
+    res.json(await enrichAppointments(appts));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── POST /api/patient/appointments ───────────────────────────────────────────
+// Body: { doctorId, date: "YYYY-MM-DD", time: "HH:MM" } — auto-confirmed
+const bookAppointment = async (req, res) => {
+  try {
+    const { doctorId, date, time } = req.body;
+    if (!mongoose.isValidObjectId(doctorId)) return res.status(404).json({ message: 'Doctor not found' });
+    if (!isValidDate(date) || !isValidTime(time)) return res.status(400).json({ message: 'Please pick a date and time' });
+
+    const doctor  = await User.findOne({ _id: doctorId, role: 'doctor', status: 'active' });
+    const profile = doctor && await DoctorProfile.findOne({ user: doctor._id });
+    if (!profile) return res.status(404).json({ message: 'Doctor not found' });
+
+    if (!isWithinBookingWindow(date)) {
+      return res.status(400).json({ message: `Appointments can be booked for the next ${BOOKING_WINDOW_DAYS} days only` });
+    }
+    const duration = profile.consultationDuration || DEFAULT_CONSULTATION_MINUTES;
+    const ranges   = (profile.availability.find(a => a.day === weekdayOf(date))?.slots || []).map(s => s.time);
+    if (!slotTimes(ranges, duration).includes(time)) {
+      return res.status(400).json({ message: 'The doctor is not available at that time' });
+    }
+    const startsAt = pktInstant(date, time);
+    if (startsAt <= new Date()) return res.status(400).json({ message: 'That time has already passed' });
+
+    if (await Appointment.exists({ patient: req.user._id, date, time, status: 'confirmed' })) {
+      return res.status(409).json({ message: 'You already have another appointment at that time' });
+    }
+
+    await Appointment.init(); // make sure the one-booking-per-slot index exists
+    let appt;
+    try {
+      appt = await Appointment.create({
+        patient: req.user._id, doctor: doctor._id, date, time, startsAt,
+        durationMinutes: duration, fee: profile.consultationFee || 0,
+      });
+    } catch (err) {
+      if (err.code === 11000) {
+        return res.status(409).json({ message: 'Sorry, that slot was just booked by someone else. Please pick another time.' });
+      }
+      throw err;
+    }
+
+    const when = apptWhen(appt);
+    await notifyUser(doctor._id, {
+      title:   'New Appointment',
+      message: `${req.user.name} booked an appointment with you on ${when}.`,
+      type:    'appointment_booked',
+      meta:    { appointmentId: appt._id },
+    });
+    await notifyUser(req.user._id, {
+      title:   'Appointment Confirmed',
+      message: `Your appointment with ${doctor.name} on ${when} is confirmed. The consultation fee (PKR ${appt.fee.toLocaleString()}) is paid at the clinic.`,
+      type:    'appointment_booked',
+      meta:    { appointmentId: appt._id },
+    });
+
+    await appt.populate('doctor', 'name phone');
+    const [enriched] = await enrichAppointments([appt]);
+    res.status(201).json(enriched);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PUT /api/patient/appointments/:id/cancel ─────────────────────────────────
+// Allowed up to PATIENT_CANCEL_HOURS before the start
+const cancelAppointment = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Appointment not found' });
+    const appt = await Appointment.findOne({ _id: req.params.id, patient: req.user._id }).populate('doctor', 'name phone');
+    if (!appt) return res.status(404).json({ message: 'Appointment not found' });
+    if (appt.status !== 'confirmed') return res.status(400).json({ message: `This appointment is already ${appt.status.replace('_', '-')}` });
+
+    const deadline = new Date(appt.startsAt.getTime() - PATIENT_CANCEL_HOURS * 60 * 60 * 1000);
+    if (new Date() > deadline) {
+      return res.status(400).json({ message: `Appointments can only be cancelled up to ${PATIENT_CANCEL_HOURS} hours before they start. Please contact the clinic.` });
+    }
+
+    appt.status      = 'cancelled';
+    appt.cancelledBy = 'patient';
+    appt.cancelledAt = new Date();
+    await appt.save();
+
+    await notifyUser(appt.doctor._id, {
+      title:   'Appointment Cancelled',
+      message: `${req.user.name} cancelled their appointment on ${apptWhen(appt)}. The slot is open again.`,
+      type:    'appointment_cancelled',
+      meta:    { appointmentId: appt._id },
+    });
+
+    const [enriched] = await enrichAppointments([appt]);
+    res.json({ message: 'Appointment cancelled', appointment: enriched });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── GET /api/patient/community-applications ──────────────────────────────────
 const getCommunityApplications = async (req, res) => {
   try {
@@ -522,6 +663,7 @@ module.exports = {
   getReports, markReportRead,
   getWallets, uploadPaymentReceipt, uploadServiceFeeReceipt,
   getInstallmentConfig, previewInstallmentPlan, applyForInstallmentPlan,
+  getAppointments, bookAppointment, cancelAppointment,
   getCommunityApplications, createCommunityApplication,
   getNotifications, markRead, markAllRead,
 };

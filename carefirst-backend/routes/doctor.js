@@ -4,6 +4,7 @@ const {
   getProfile, updateProfile,
   getAvailability, updateAvailability, updateFee,
   createPrescription, getPrescriptions,
+  getAppointments, cancelAppointment, completeAppointment, markNoShow, getPatients,
   getReports,
   getNotifications, markRead,
 } = require('../controllers/doctorController');
@@ -20,7 +21,14 @@ router.get('/availability',  ...guard, getAvailability);
 router.put('/availability',  ...guard, updateAvailability);
 router.put('/fee',           ...guard, updateFee);
 
-// Prescriptions
+// Appointments (patients book them; the doctor closes or cancels them)
+router.get('/appointments',               ...guard, getAppointments);
+router.put('/appointments/:id/cancel',    ...guard, cancelAppointment);
+router.put('/appointments/:id/complete',  ...guard, completeAppointment);
+router.put('/appointments/:id/no-show',   ...guard, markNoShow);
+router.get('/patients',                   ...guard, getPatients);
+
+// Prescriptions (written for an appointment)
 router.post('/prescriptions',  ...guard, createPrescription);
 router.get('/prescriptions',   ...guard, getPrescriptions);
 

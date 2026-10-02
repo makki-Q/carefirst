@@ -268,16 +268,6 @@ const testLabAndDoctor = async () => {
   check('public doctors show fee and available days only',
     doc?.consultationFee === 2000 && JSON.stringify(doc.availableDays) === '["Monday"]', docs.data);
 
-  const rx = await post('/api/doctor/prescriptions', {
-    token: tokens.doctor,
-    body:  { patientId: ids.patient, tests: [{ testName: 'MRI Brain', notes: 'Recurring headaches' }] },
-  });
-  check('doctor issues a prescription', rx.status === 201, rx);
-
-  const rxList = await get('/api/patient/prescriptions', { token: tokens.patient });
-  check('patient sees prescription with doctor specialization',
-    rxList.data[0]?.doctorSpecialization === 'Cardiology', rxList.data);
-
   const report = await post('/api/lab/reports/upload', {
     token: tokens.lab,
     body:  { patientId: ids.patient, testName: 'CBC', notes: 'Normal' },
@@ -293,9 +283,149 @@ const testLabAndDoctor = async () => {
 
   const badId = await put('/api/patient/reports/not-an-id/read', { token: tokens.patient });
   check('invalid report id returns 404', badId.status === 404, badId);
+};
+
+// ─── Step 3 — doctor appointments ────────────────────────────────────────────
+const testAppointments = async () => {
+  section('Doctor appointments');
+  const Appointment = require('../models/Appointment');
+  const { pktDate, addDays, pktInstant } = require('../utils/schedule');
+  const today    = pktDate();
+  const tomorrow = addDays(today, 1);
+  const book = (token, time, date = tomorrow, doctorId = ids.doctor) =>
+    post('/api/patient/appointments', { token, body: { doctorId, date, time } });
+
+  // Every day: 12:00–12:30 AM (always in the past today) and 9–11 AM, 30-minute consultations
+  const week = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    .map(day => ({ day, slots: [{ time: '12:00 AM – 12:30 AM' }, { time: '09:00 AM – 11:00 AM' }] }));
+  const badDuration = await put('/api/doctor/availability', { token: tokens.doctor, body: { availability: week, consultationDuration: 3 } });
+  check('consultation duration outside 5–120 minutes is rejected (400)', badDuration.status === 400, badDuration);
+  const avail = await put('/api/doctor/availability', { token: tokens.doctor, body: { availability: week, consultationDuration: 30 } });
+  check('doctor saves availability with a 30-minute duration', avail.status === 200 && avail.data.consultationDuration === 30, avail.data);
+
+  const slots = await get(`/api/public/doctors/${ids.doctor}/slots`);
+  const tomorrowSlots = () => slots.data.days?.find(d => d.date === tomorrow)?.times.map(t => t.time);
+  check('slots cover 14 days and split ranges by the duration',
+    slots.status === 200 && slots.data.days.length === 14 && slots.data.consultationFee === 2000 &&
+    JSON.stringify(tomorrowSlots()) === '["00:00","09:00","09:30","10:00","10:30"]', slots.data.days?.[1]);
+  check("today's slots never include past times", !slots.data.days[0].times.some(t => t.time === '00:00'), slots.data.days[0]);
+  check('unknown doctor has no slots (404)', (await get(`/api/public/doctors/${ids.lab}/slots`)).status === 404);
+
+  const booked = await book(tokens.patient, '09:00');
+  check('patient books a free slot → confirmed with the fee',
+    booked.status === 201 && booked.data.status === 'confirmed' && booked.data.fee === 2000 &&
+    new Date(booked.data.startsAt).getTime() === pktInstant(tomorrow, '09:00').getTime() &&
+    booked.data.doctorSpecialization === 'Cardiology', booked);
+  ids.apptBooked = booked.data._id;
+
+  const docNotifs = await get('/api/doctor/notifications', { token: tokens.doctor });
+  const patNotifs = await get('/api/patient/notifications', { token: tokens.patient });
+  check('doctor and patient are notified of the booking',
+    docNotifs.data.some(n => n.type === 'appointment_booked') && patNotifs.data.some(n => n.type === 'appointment_booked' && n.message.includes('PKR 2,000')));
+
+  const after = await get(`/api/public/doctors/${ids.doctor}/slots`);
+  check('a booked slot disappears from the free slots',
+    !after.data.days.find(d => d.date === tomorrow).times.some(t => t.time === '09:00'));
+
+  const taken = await book(tokens.patient2, '09:00');
+  check('another patient cannot book a taken slot (409)', taken.status === 409, taken);
+
+  const same = await book(tokens.patient, '09:00');
+  check('the same patient cannot double-book (409)', same.status === 409, same);
+
+  const [raceA, raceB] = await Promise.all([book(tokens.patient, '09:30'), book(tokens.patient2, '09:30')]);
+  check('two simultaneous bookings for one slot: exactly one wins',
+    [raceA.status, raceB.status].sort().join() === '201,409', [raceA.status, raceB.status]);
+  const winner = raceA.status === 201 ? raceA.data : raceB.data;
+
+  let dbBlocked = false;
+  try {
+    await Appointment.create({ patient: ids.patient2, doctor: ids.doctor, date: tomorrow, time: '09:00', startsAt: pktInstant(tomorrow, '09:00'), durationMinutes: 30 });
+  } catch (err) { dbBlocked = err.code === 11000; }
+  check('the database itself rejects a second confirmed booking for a slot', dbBlocked);
+
+  check('a time outside availability is rejected (400)', (await book(tokens.patient, '09:15')).status === 400);
+  check('a date beyond 14 days is rejected (400)', (await book(tokens.patient, '09:00', addDays(today, 20))).status === 400);
+  check('a past date is rejected (400)', (await book(tokens.patient, '09:00', addDays(today, -1))).status === 400);
+  const past = await book(tokens.patient, '00:00', today);
+  check('a time that already passed today is rejected (400)', past.status === 400 && /passed/.test(past.data.message), past);
+  check('booking an unknown doctor returns 404', (await book(tokens.patient, '09:00', tomorrow, ids.lab)).status === 404);
+
+  section('Appointment cancellation & closing');
+  const toCancel = await book(tokens.patient, '10:00');
+  const cancel = await put(`/api/patient/appointments/${toCancel.data._id}/cancel`, { token: tokens.patient });
+  check('patient cancels more than 2 hours ahead', cancel.status === 200 && cancel.data.appointment.status === 'cancelled' && cancel.data.appointment.cancelledBy === 'patient', cancel);
+  check('cancelling twice is refused (400)', (await put(`/api/patient/appointments/${toCancel.data._id}/cancel`, { token: tokens.patient })).status === 400);
+  const rebook = await book(tokens.patient2, '10:00');
+  check('a cancelled slot can be booked again', rebook.status === 201, rebook);
+  check('doctor is told about the cancellation',
+    (await get('/api/doctor/notifications', { token: tokens.doctor })).data.some(n => n.type === 'appointment_cancelled'));
+
+  // Appointments at fixed offsets from now, inserted directly
+  const at = async (minutesFromNow, patient = ids.patient) => {
+    const startsAt = new Date(Math.floor((Date.now() + minutesFromNow * 60000) / 60000) * 60000);
+    const pkt = new Date(startsAt.getTime() + 5 * 3600000);
+    const time = `${String(pkt.getUTCHours()).padStart(2, '0')}:${String(pkt.getUTCMinutes()).padStart(2, '0')}`;
+    return (await Appointment.create({ patient, doctor: ids.doctor, date: pktDate(startsAt), time, startsAt, durationMinutes: 30, fee: 2000 }))._id.toString();
+  };
+  const soon = await at(60);
+  const late = await put(`/api/patient/appointments/${soon}/cancel`, { token: tokens.patient });
+  check('patient cannot cancel within 2 hours of the start (400)', late.status === 400 && /2 hours/.test(late.data.message), late);
+  check("patient cannot cancel someone else's appointment (404)",
+    (await put(`/api/patient/appointments/${soon}/cancel`, { token: tokens.patient2 })).status === 404);
+
+  const noReason = await put(`/api/doctor/appointments/${soon}/cancel`, { token: tokens.doctor, body: {} });
+  check('doctor must give a reason to cancel (400)', noReason.status === 400, noReason);
+  const docCancel = await put(`/api/doctor/appointments/${soon}/cancel`, { token: tokens.doctor, body: { reason: 'Called into surgery.' } });
+  check('doctor cancels any time, even within 2 hours', docCancel.status === 200 && docCancel.data.appointment.cancellationReason === 'Called into surgery.', docCancel);
+  check('patient receives the doctor\'s reason',
+    (await get('/api/patient/notifications', { token: tokens.patient })).data.some(n => n.type === 'appointment_cancelled' && n.message.includes('Called into surgery.')));
+
+  const early = await put(`/api/doctor/appointments/${ids.apptBooked}/complete`, { token: tokens.doctor });
+  check('an appointment cannot be closed before it starts (400)', early.status === 400, early);
+
+  ids.apptDone = await at(-60);
+  const done = await put(`/api/doctor/appointments/${ids.apptDone}/complete`, { token: tokens.doctor });
+  check('doctor marks a started appointment completed', done.status === 200 && done.data.appointment.status === 'completed', done);
+  check('closing twice is refused (400)', (await put(`/api/doctor/appointments/${ids.apptDone}/no-show`, { token: tokens.doctor })).status === 400);
+  const missed = await at(-30, ids.patient2);
+  const noShow = await put(`/api/doctor/appointments/${missed}/no-show`, { token: tokens.doctor });
+  check('doctor marks a no-show', noShow.status === 200 && noShow.data.appointment.status === 'no_show', noShow);
+  check('patient cannot cancel a completed appointment (400)',
+    (await put(`/api/patient/appointments/${ids.apptDone}/cancel`, { token: tokens.patient })).status === 400);
+
+  const docAppts = await get('/api/doctor/appointments', { token: tokens.doctor });
+  check('doctor sees all appointments with patient CNIC',
+    docAppts.data.length === 7 && docAppts.data.some(a => a.patient?.cnic === '35202-1234567-9'), docAppts.data.length);
+  const patients = await get('/api/doctor/patients', { token: tokens.doctor });
+  const p1 = patients.data.find?.(p => p.patient._id === ids.patient);
+  check('patient list comes from appointments (cancelled ones excluded)',
+    patients.data.length === 2 && p1?.appointments === (winner.patient === ids.patient ? 3 : 2) && p1?.lastVisit && p1?.nextVisit, patients.data);
+  check('patient sees their appointments with specialization',
+    (await get('/api/patient/appointments', { token: tokens.patient })).data.every(a => a.doctorSpecialization === 'Cardiology'));
+
+  section('Prescriptions from appointments');
+  const rxBody = (appointmentId) => ({ appointmentId, tests: [{ testName: 'MRI Brain', notes: 'Recurring headaches' }, { testName: ' ' }] });
+  check('prescription needs an appointment (400)',
+    (await post('/api/doctor/prescriptions', { token: tokens.doctor, body: { patientId: ids.patient, tests: [{ testName: 'CBC' }] } })).status === 400);
+  check('cannot prescribe before the appointment starts (400)',
+    (await post('/api/doctor/prescriptions', { token: tokens.doctor, body: rxBody(ids.apptBooked) })).status === 400);
+  check('cannot prescribe for a no-show (400)',
+    (await post('/api/doctor/prescriptions', { token: tokens.doctor, body: rxBody(missed) })).status === 400);
+  const rx = await post('/api/doctor/prescriptions', { token: tokens.doctor, body: rxBody(ids.apptDone) });
+  check('doctor prescribes for a completed appointment (blank tests dropped)',
+    rx.status === 201 && rx.data.patient === ids.patient && rx.data.appointment === ids.apptDone && rx.data.tests.length === 1, rx);
+  check('one prescription per appointment (409)',
+    (await post('/api/doctor/prescriptions', { token: tokens.doctor, body: rxBody(ids.apptDone) })).status === 409);
+
+  const rxList = await get('/api/patient/prescriptions', { token: tokens.patient });
+  check('patient sees prescription with doctor specialization',
+    rxList.data[0]?.doctorSpecialization === 'Cardiology' && rxList.data[0]?.appointment === ids.apptDone, rxList.data);
+  const apptWithRx = (await get('/api/patient/appointments', { token: tokens.patient })).data.find(a => a._id === ids.apptDone);
+  check("the appointment shows the prescription written in it", apptWithRx?.prescription?.tests?.[0]?.testName === 'MRI Brain', apptWithRx);
 
   const docReports = await get('/api/doctor/reports', { token: tokens.doctor });
-  check("doctor sees reports of patients they prescribed for", docReports.data.length === 1, docReports.data);
+  check('doctor sees reports of patients they prescribed for', docReports.data.length === 1, docReports.data);
 };
 
 const testCommunitySupport = async () => {
@@ -730,6 +860,7 @@ const main = async () => {
     await testAccounts();
     await testCnicReview();
     await testLabAndDoctor();
+    await testAppointments();
     await testCommunitySupport();
     await testInstallmentReceipts();
     await testPlanApplication();

@@ -14,6 +14,11 @@ const NOTIFICATION_TYPES = [
   'service_fee_uploaded',    // patient uploaded the service fee screenshot
   'service_fee_rejected',    // admin could not verify the service fee screenshot
   'plan_activated',          // service fee verified, schedule generated
+  'appointment_booked',      // patient booked a doctor slot (to doctor + patient)
+  'appointment_cancelled',   // patient or doctor cancelled an appointment
+  'lab_booking_created',     // patient booked a lab visit (to lab + patient)
+  'lab_booking_cancelled',   // patient cancelled a lab visit
+  'lab_booking_updated',     // lab collected the sample / completed the booking
   'defaulter_escalated',     // case moved to lawyer
   'test_report_uploaded',    // lab uploaded patient's result
   'prescription_issued',     // doctor issued a prescription

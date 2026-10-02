@@ -16,7 +16,10 @@ const doctorProfileSchema = new mongoose.Schema(
     specialization:  { type: String, required: true, trim: true },
     experience:      { type: Number, min: 0 },   // years
     consultationFee: { type: Number, default: 0, min: 0 },
+    // Weekly template; each slot.time is a range ("09:00 AM – 01:00 PM") split into
+    // bookable times of consultationDuration minutes (utils/schedule.js)
     availability:    [availabilitySchema],
+    consultationDuration: { type: Number, default: 20, min: 5, max: 120 },
     bio:             { type: String, trim: true },
     rating:          { type: Number, default: 0, min: 0, max: 5 },
   },

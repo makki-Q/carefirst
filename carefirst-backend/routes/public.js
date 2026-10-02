@@ -3,7 +3,12 @@ const router        = express.Router();
 const LabProfile    = require('../models/LabProfile');
 const DoctorProfile = require('../models/DoctorProfile');
 const User          = require('../models/User');
+const Appointment   = require('../models/Appointment');
+const mongoose      = require('mongoose');
 const { hasPaymentDetails } = require('../utils/installmentPlan');
+const {
+  freeSlots, formatTime12, bookingDates, DEFAULT_CONSULTATION_MINUTES, BOOKING_WINDOW_DAYS,
+} = require('../utils/schedule');
 
 // GET /api/public/tests — all active tests from all active labs (no auth required)
 router.get('/tests', async (req, res) => {
@@ -62,11 +67,45 @@ router.get('/doctors', async (req, res) => {
           rating:          p.rating || 0,
           bio:             p.bio || '',
           availableDays:   p.availability.filter(a => a.slots.length > 0).map(a => a.day),
+          consultationDuration: p.consultationDuration || DEFAULT_CONSULTATION_MINUTES,
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
 
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/public/doctors/:doctorId/slots — free future start times for the next
+// BOOKING_WINDOW_DAYS days, from the weekly availability minus confirmed bookings
+router.get('/doctors/:doctorId/slots', async (req, res) => {
+  try {
+    const { doctorId } = req.params;
+    if (!mongoose.isValidObjectId(doctorId)) return res.status(404).json({ message: 'Doctor not found' });
+
+    const doctor  = await User.findOne({ _id: doctorId, role: 'doctor', status: 'active' }).select('name');
+    const profile = doctor && await DoctorProfile.findOne({ user: doctor._id });
+    if (!profile) return res.status(404).json({ message: 'Doctor not found' });
+
+    const dates  = bookingDates();
+    const booked = await Appointment.find({ doctor: doctor._id, status: 'confirmed', date: { $in: dates } }).select('date time');
+    const taken  = new Set(booked.map(a => `${a.date} ${a.time}`));
+    const duration = profile.consultationDuration || DEFAULT_CONSULTATION_MINUTES;
+
+    res.json({
+      doctorId:             doctor._id,
+      name:                 doctor.name,
+      specialization:       profile.specialization,
+      consultationFee:      profile.consultationFee || 0,
+      consultationDuration: duration,
+      windowDays:           BOOKING_WINDOW_DAYS,
+      days: freeSlots(profile.availability, duration, taken).map(d => ({
+        ...d,
+        times: d.times.map(time => ({ time, label: formatTime12(time) })),
+      })),
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

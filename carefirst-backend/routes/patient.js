@@ -6,6 +6,7 @@ const {
   getReports, markReportRead,
   getWallets, uploadPaymentReceipt, uploadServiceFeeReceipt,
   getInstallmentConfig, previewInstallmentPlan, applyForInstallmentPlan,
+  getAppointments, bookAppointment, cancelAppointment,
   getCommunityApplications, createCommunityApplication,
   getNotifications, markRead, markAllRead,
 } = require('../controllers/patientController');
@@ -38,6 +39,11 @@ router.post('/wallets/:walletId/service-fee/receipt',
 router.get('/installment-plans/config',   ...guard, getInstallmentConfig);
 router.post('/installment-plans/preview', ...guard, previewInstallmentPlan);
 router.post('/installment-plans',         ...guard, applyForInstallmentPlan);
+
+// Doctor appointments (clinic visits)
+router.get('/appointments',             ...guard, getAppointments);
+router.post('/appointments',            ...guard, bookAppointment);
+router.put('/appointments/:id/cancel',  ...guard, cancelAppointment);
 
 // Community support
 router.get('/community-applications',  ...guard, getCommunityApplications);
