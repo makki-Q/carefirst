@@ -21,6 +21,11 @@ const LabDashboard = () => {
   const [labPatients, setLabPatients] = useState<any[]>([]);
   const [receipts, setReceipts]       = useState<any[]>([]);
 
+  // Payment details — patients pay the down payment and installments here
+  const [payForm, setPayForm]     = useState({ bankName: '', accountNumber: '', jazzCash: '', easyPaisa: '' });
+  const [paySaving, setPaySaving] = useState(false);
+  const [payMsg, setPayMsg]       = useState<{ ok: boolean; text: string } | null>(null);
+
   // Add test form
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [addForm, setAddForm] = useState({
@@ -50,7 +55,15 @@ const LabDashboard = () => {
   }, []);
 
   useEffect(() => {
-    api.get('/lab/profile').then((d: any) => setLabProfile(d)).catch(() => {});
+    api.get('/lab/profile').then((d: any) => {
+      setLabProfile(d);
+      setPayForm({
+        bankName:      d.profile?.bankDetails?.bankName      || '',
+        accountNumber: d.profile?.bankDetails?.accountNumber || '',
+        jazzCash:      d.profile?.jazzCash  || '',
+        easyPaisa:     d.profile?.easyPaisa || '',
+      });
+    }).catch(() => {});
     api.get('/lab/tests').then((d: any) => setTests(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/lab/reports').then((d: any) => setReports(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/lab/needy-patients').then((d: any) => setNeedyPats(Array.isArray(d) ? d : [])).catch(() => {});
@@ -73,6 +86,9 @@ const LabDashboard = () => {
       setNotifBadge(prev => prev + 1);
       if (n.type === 'receipt_uploaded') {
         api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
+      }
+      if (n.type === 'plan_activated') {
+        api.get('/lab/patients').then((d: any) => setLabPatients(Array.isArray(d) ? d : [])).catch(() => {});
       }
     });
     return () => { socket.off('notification:new'); };
@@ -168,11 +184,37 @@ const LabDashboard = () => {
     finally { setUploadLoading(false); }
   };
 
-  const approveReceipt = async (walletId: string, instIndex: number) => {
+  // path: `installments/<index>` or `down-payment`
+  const approveReceipt = async (walletId: string, path: string) => {
     try {
-      await api.put(`/lab/receipts/${walletId}/installments/${instIndex}/approve`, {});
+      await api.put(`/lab/receipts/${walletId}/${path}/approve`, {});
       api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
-    } catch {}
+    } catch (err: any) { alert(err.message || 'Could not confirm the receipt'); }
+  };
+
+  const savePaymentDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPayMsg(null);
+    const f = { bankName: payForm.bankName.trim(), accountNumber: payForm.accountNumber.trim(), jazzCash: payForm.jazzCash.trim(), easyPaisa: payForm.easyPaisa.trim() };
+    if (Boolean(f.bankName) !== Boolean(f.accountNumber)) {
+      setPayMsg({ ok: false, text: 'Enter both the bank name and the account number, or leave both empty' }); return;
+    }
+    if (!f.accountNumber && !f.jazzCash && !f.easyPaisa) {
+      setPayMsg({ ok: false, text: 'Add at least one way for patients to pay you' }); return;
+    }
+    setPaySaving(true);
+    try {
+      const updated: any = await api.put('/lab/profile', {
+        bankDetails: { bankName: f.bankName, accountNumber: f.accountNumber },
+        jazzCash: f.jazzCash, easyPaisa: f.easyPaisa,
+      });
+      setLabProfile((prev: any) => ({ ...prev, profile: updated }));
+      setPayMsg({ ok: true, text: 'Payment details saved. Patients can now apply for installments at your lab.' });
+    } catch (err: any) {
+      setPayMsg({ ok: false, text: err.message || 'Could not save payment details' });
+    } finally {
+      setPaySaving(false);
+    }
   };
 
   const navigate = (page: string) => setCurrentPage(page);
@@ -180,7 +222,19 @@ const LabDashboard = () => {
   const labName     = labProfile?.profile?.labName || (sessionUser as any)?.name || 'Lab Dashboard';
   const labLocation = labProfile?.profile?.location || '';
   const pendingNeedyCount   = needyPats.filter((p: any) => !p.testConducted && p.status !== 'conducted').length;
-  const pendingReceiptCount = receipts.reduce((s: number, r: any) => s + (r.pendingInstallments?.length || 0), 0);
+  const pendingReceiptCount = receipts.reduce((s: number, r: any) => s + (r.pendingInstallments?.length || 0) + (r.pendingDownPayment ? 1 : 0), 0);
+
+  // Mirrors hasPaymentDetails() in carefirst-backend/utils/installmentPlan.js
+  const lp = labProfile?.profile;
+  const hasPaymentDetails = Boolean((lp?.bankDetails?.bankName && lp?.bankDetails?.accountNumber) || lp?.jazzCash || lp?.easyPaisa);
+  const offersInstallments = tests.some((t: any) => t.installmentEnabled);
+  const paymentDetailsNotice = labProfile && !hasPaymentDetails && (
+    <div className="dash-card dash-fu" style={{ padding: '12px 18px', marginBottom: 18, background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', fontSize: '0.82rem' }}>
+      <strong>Add your payment details.</strong> Patients pay the down payment and installments directly to your lab, so they
+      {offersInstallments ? " can't apply for installments on your tests" : " can't use installment plans at your lab"} until you add a bank account, JazzCash or EasyPaisa number.
+      {currentPage !== 'catalog' && <> <a style={{ textDecoration: 'underline', cursor: 'pointer', fontWeight: 600 }} onClick={() => setCurrentPage('catalog')}>Add them in Test Catalog</a>.</>}
+    </div>
+  );
 
   const breadcrumbs: Record<string, string> = {
     dashboard:    'Dashboard',
@@ -332,6 +386,8 @@ const LabDashboard = () => {
                 <div className="dash-page-rule"></div>
                 <div className="dash-page-subtitle">Lab operations overview for {dateString}</div>
               </div>
+
+              {paymentDetailsNotice}
 
               <div className="dash-hero-card dash-fu dash-fu-1">
                 <div className="dash-hero-inner">
@@ -575,6 +631,40 @@ const LabDashboard = () => {
                 </button>
               </div>
 
+              {paymentDetailsNotice}
+
+              {/* Payment details — where patients pay the down payment and installments */}
+              <div className="dash-card dash-fu" style={{ padding: '20px 28px', marginBottom: 20 }}>
+                <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text)', marginBottom: 4 }}>Payment Details</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 14 }}>
+                  Shown to patients on installment plans — they pay the down payment and every installment to you directly, then you confirm each receipt.
+                </div>
+                {payMsg && (
+                  <div style={{ padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: '0.8rem', background: payMsg.ok ? '#f0fdf4' : '#fef2f2', color: payMsg.ok ? '#166534' : '#991b1b', border: `1px solid ${payMsg.ok ? '#bbf7d0' : '#fecaca'}` }}>
+                    {payMsg.text}
+                  </div>
+                )}
+                <form onSubmit={savePaymentDetails}>
+                  <div className="dash-form-row">
+                    {[
+                      ['bankName',      'Bank Name',      'e.g. HBL'],
+                      ['accountNumber', 'Account Number / IBAN', 'PK00 XXXX 0000 0000 0000 0000'],
+                      ['jazzCash',      'JazzCash',       '03XX-XXXXXXX'],
+                      ['easyPaisa',     'EasyPaisa',      '03XX-XXXXXXX'],
+                    ].map(([field, label, placeholder]) => (
+                      <div className="dash-form-group" key={field}>
+                        <label className="dash-form-label">{label}</label>
+                        <input className="dash-form-input" type="text" placeholder={placeholder} disabled={paySaving}
+                          value={(payForm as any)[field]} onChange={e => setPayForm(f => ({ ...f, [field]: e.target.value }))} />
+                      </div>
+                    ))}
+                  </div>
+                  <button type="submit" className="dash-btn-primary accent" disabled={paySaving} style={paySaving ? { opacity: 0.6 } : {}}>
+                    {paySaving ? 'Saving…' : 'Save Payment Details'}
+                  </button>
+                </form>
+              </div>
+
               {showAddPanel && (
                 <div className="dash-card dash-fu" style={{ padding: '24px 28px', marginBottom: 20 }}>
                   <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text)', marginBottom: 16 }}>New Test</div>
@@ -806,7 +896,7 @@ const LabDashboard = () => {
               <div className="dash-page-header dash-fu">
                 <div className="dash-page-title">Receipts</div>
                 <div className="dash-page-rule"></div>
-                <div className="dash-page-subtitle">Installment receipts from patients awaiting your approval</div>
+                <div className="dash-page-subtitle">Confirm you received each down payment and installment — CareFirst verifies it next</div>
               </div>
 
               <div className="dash-card dash-fu dash-fu-1">
@@ -828,11 +918,14 @@ const LabDashboard = () => {
                       </thead>
                       <tbody>
                         {receipts.map((r: any) =>
-                          (r.pendingInstallments || []).map((inst: any) => (
-                            <tr key={`${r.walletId}-${inst.index}`}>
+                          [
+                            ...(r.pendingDownPayment ? [{ ...r.pendingDownPayment, label: 'Down payment', path: 'down-payment' }] : []),
+                            ...(r.pendingInstallments || []).map((inst: any) => ({ ...inst, label: `#${inst.number || inst.index + 1}`, path: `installments/${inst.index}` })),
+                          ].map((inst: any) => (
+                            <tr key={`${r.walletId}-${inst.path}`}>
                               <td style={{ fontWeight: 600, color: 'var(--text)' }}>{r.patient?.name || '—'}</td>
                               <td>{r.testName || '—'}</td>
-                              <td>#{inst.number || inst.index + 1}</td>
+                              <td>{inst.label}</td>
                               <td>PKR {Number(inst.amount || 0).toLocaleString()}</td>
                               <td>{inst.dueDate ? new Date(inst.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
                               <td>
@@ -847,7 +940,7 @@ const LabDashboard = () => {
                                     <a href={inst.receiptUrl} target="_blank" rel="noreferrer" className="dash-action-btn" title="View Receipt" style={{ textDecoration: 'none', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                                       <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                                     </a>
-                                    <button className="adm-approve-btn" onClick={() => approveReceipt(r.walletId, inst.index)}>
+                                    <button className="adm-approve-btn" onClick={() => approveReceipt(r.walletId, inst.path)}>
                                       <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
                                       Approve
                                     </button>
