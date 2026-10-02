@@ -88,7 +88,16 @@ Principles from the proposal that every feature must respect:
 2. A **verified CNIC is required** for community support applications, and must also gate installment plans (Step 2). A rejected CNIC can be corrected from the patient's Profile page, which sends it back to `unverified`. A verified CNIC is locked.
 3. **Receipts are uploaded by the patient** (proposal 1.4.8). Chain: patient uploads → lab confirms it received the cash → admin verifies → installment `paid`. A receipt can be replaced until the lab confirms.
 4. **Donations are not collected by the platform** (proposal 1.4.10); admin only shows partner labs' donation channels.
-5. **Defaulter escalation is automatic** (nightly cron, 3-day grace period, assigned to the least-loaded lawyer).
+5. **Defaulter escalation is automatic** (nightly cron, 3-day grace period, assigned to the least-loaded lawyer). The job only looks at `active` plans.
+6. **Installment plans (Step 2, decided 2026-10-02).** CareFirst is not a middleman for test payments: down payment and installments go **directly to the lab**. The only money paid to CareFirst is the **service fee**, and only when a patient opts into an installment plan.
+   - **Apply:** patient with a verified CNIC picks an installment-enabled test, enters guarantor details, reads and accepts the legal agreement (text + acceptance time stored) → wallet `pending_approval`. Pending applications count toward the **max 2 open plans** per patient (open = `pending_approval`, `awaiting_fee` — approved, fee not yet verified — `active` or `defaulter`).
+   - **Guarantor:** name, phone and relation required; CNIC required, valid and different from the patient's; address optional.
+   - **Admin approves or rejects** (rejection needs a reason; patient notified). No lab acceptance step.
+   - **Service fee:** PKR 500 (`SERVICE_FEE_PKR`), paid to CareFirst's account (`CAREFIRST_*` in `.env`). Patient uploads a screenshot; **admin verifies it directly** (no lab step).
+   - **Activation:** once the fee is verified the wallet becomes `active` and the schedule is generated: down payment = 20% of the test price (`DOWN_PAYMENT_PERCENT`, whole rupees), the rest split into `installmentCount` installments, whole rupees with the remainder on the last one. **Tenure is the gap between installments**; the first installment is due one tenure after activation. The lab is notified.
+   - **Down payment and installments** use the same receipt chain: patient uploads a screenshot → lab confirms → admin verifies. The patient sees the lab's own payment details from `LabProfile` (bankDetails, jazzCash, easyPaisa). A lab with no payment details cannot receive applications and is prompted to add them.
+   - **Balance:** `remainingBalance = totalAmount − verified down payment − paid installments` (the service fee is separate). `completed` = fee verified + down payment verified + all installments paid.
+   - **Reminders:** notifications 3 days and 1 day before each due date.
 
 ## Open questions — settle with the supervisor
 The SRS and proposal disagree; the code currently follows the proposal:
@@ -114,7 +123,7 @@ Today wallets can only be created by hand in the DB. Build the application flow:
 8. **Reminders before due dates** (notification type `installment_overdue` exists but is never sent; add a "due soon" reminder in the cron job).
 9. Wire the patient's Book Tests page to start the application; the My Wallet page already displays wallets/installments and handles receipt upload.
 
-**Ask Makki first:** the service-fee amount (fixed? percent?), the down-payment rule (percentage of price?), and whether a lab must accept the plan too.
+Product rules for this step are settled — see decision 6 above.
 
 ### Step 3 — Doctor appointments + lab test booking (appointment is in the project title and is 0% built)
 - New `Appointment` model; patient books a slot from `DoctorProfile.availability` (`slots[].isBooked` exists but is unused). Double-booking must be impossible.
