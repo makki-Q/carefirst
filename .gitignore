@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Secrets — share .env.example instead
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+
+# Files uploaded at runtime (reports, receipts, community docs)
+carefirst-backend/uploads/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor / Office clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*
+.vscode/
+.idea/
