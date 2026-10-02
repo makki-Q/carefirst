@@ -405,6 +405,90 @@ const testInstallmentReceipts = async () => {
     ['receipt_lab_approved', 'receipt_admin_verified'].every(t => notifs.data.some(n => n.type === t)));
 };
 
+// ─── Step 2 — installment plans ──────────────────────────────────────────────
+const guarantor = { name: 'Kamran Khan', cnic: '35202-5555555-5', phone: '0300 1234567', relation: 'Brother', address: 'Lahore' };
+const planBody  = () => ({ labId: ids.lab, testId: ids.mriTest, guarantor });
+
+const testPlanApplication = async () => {
+  section('Installment plan application');
+  const config = await get('/api/patient/installment-plans/config', { token: tokens.patient });
+  check('config returns fee, down-payment rule and limit',
+    config.data.serviceFee === 500 && config.data.downPaymentPercent === 20 &&
+    config.data.maxOpenPlans === 2 && config.data.openPlans === 1 && config.data.careFirstAccount, config.data);
+
+  const unverified = await post('/api/patient/installment-plans/preview', { token: tokens.patient2, body: planBody() });
+  check('unverified CNIC cannot apply (403)', unverified.status === 403, unverified);
+
+  let pub = await get('/api/public/tests');
+  check('lab without payment details does not accept installments',
+    pub.data.find(l => l.labId === ids.lab)?.acceptsInstallments === false, pub.data);
+
+  const noDetails = await post('/api/patient/installment-plans/preview', { token: tokens.patient, body: planBody() });
+  check('application blocked while lab has no payment details (400)', noDetails.status === 400 && /payment details/.test(noDetails.data.message), noDetails);
+
+  const labUpd = await put('/api/lab/profile', { token: tokens.lab, body: { jazzCash: '0301-7654321', bankDetails: { bankName: 'HBL', accountNumber: '1234-5678' } } });
+  check('lab adds payment details', labUpd.status === 200 && labUpd.data.jazzCash === '0301-7654321', labUpd);
+
+  pub = await get('/api/public/tests');
+  check('lab now accepts installments', pub.data.find(l => l.labId === ids.lab)?.acceptsInstallments === true, pub.data);
+
+  const notEnabled = await post('/api/patient/installment-plans/preview', { token: tokens.patient, body: { ...planBody(), testId: ids.cbcTest } });
+  check('test without installments is rejected (400)', notEnabled.status === 400, notEnabled);
+
+  const badTest = await post('/api/patient/installment-plans/preview', { token: tokens.patient, body: { ...planBody(), testId: ids.lab } });
+  check('unknown test returns 404', badTest.status === 404, badTest);
+
+  const cases = [
+    ['missing guarantor name', { ...guarantor, name: ' ' }],
+    ['invalid guarantor CNIC', { ...guarantor, cnic: '123' }],
+    ["guarantor with the patient's own CNIC", { ...guarantor, cnic: '3520212345679' }],
+    ['invalid guarantor phone', { ...guarantor, phone: '12' }],
+    ['missing relation', { ...guarantor, relation: '' }],
+  ];
+  for (const [label, g] of cases) {
+    const r = await post('/api/patient/installment-plans/preview', { token: tokens.patient, body: { ...planBody(), guarantor: g } });
+    check(`${label} is rejected (400)`, r.status === 400, r);
+  }
+
+  const preview = await post('/api/patient/installment-plans/preview', { token: tokens.patient, body: planBody() });
+  check('preview: 20% down payment and whole-rupee installments with remainder last',
+    preview.status === 200 && preview.data.downPayment === 5000 &&
+    JSON.stringify(preview.data.installments) === '[6666,6666,6668]' && preview.data.installmentTenureDays === 30, preview.data);
+  check('agreement names patient CNIC, guarantor, lab and service fee',
+    ['35202-1234567-9', 'Kamran Khan', '35202-5555555-5', 'E2E Diagnostics', 'PKR 500', 'PKR 6,668']
+      .every(s => preview.data.agreementText?.includes(s)), preview.data.agreementText);
+
+  const notAccepted = await post('/api/patient/installment-plans', { token: tokens.patient, body: { ...planBody(), agreementText: preview.data.agreementText } });
+  check('applying without accepting the agreement is rejected (400)', notAccepted.status === 400, notAccepted);
+
+  const tampered = await post('/api/patient/installment-plans', {
+    token: tokens.patient,
+    body:  { ...planBody(), acceptAgreement: true, agreementText: preview.data.agreementText + ' ' },
+  });
+  check('agreement text that does not match the terms is rejected (409)', tampered.status === 409, tampered);
+
+  const apply = await post('/api/patient/installment-plans', {
+    token: tokens.patient,
+    body:  { ...planBody(), acceptAgreement: true, agreementText: preview.data.agreementText },
+  });
+  check('patient applies → pending_approval with stored agreement',
+    apply.status === 201 && apply.data.status === 'pending_approval' &&
+    apply.data.agreement?.text === preview.data.agreementText && apply.data.agreement?.acceptedAt &&
+    apply.data.guarantor?.phone === '03001234567' && apply.data.installments.length === 0, apply.data);
+  check("wallet carries the lab's payment details", apply.data.labPayment?.jazzCash === '0301-7654321', apply.data.labPayment);
+  ids.plan = apply.data._id;
+
+  const adminNotifs = await get('/api/admin/notifications', { token: tokens.admin });
+  check('admins are notified of the application', adminNotifs.data.some(n => n.type === 'plan_submitted' && n.meta?.walletId === ids.plan));
+
+  const early = await post(`/api/patient/wallets/${ids.plan}/installments/0/receipt`, { token: tokens.patient, files: { receipt: ['r.png'] } });
+  check('no installment receipts on a plan that is not active (400)', early.status === 400, early);
+
+  // Direct wallet + this application = 2 open plans
+  const second = await post('/api/patient/installment-plans/preview', { token: tokens.patient, body: planBody() });
+  check('third open plan is blocked by the 2-plan limit (409)', second.status === 409, second);
+};
+
 const testDefaulterEscalation = async () => {
   section('Defaulter escalation (nightly job)');
   const Wallet = require('../models/Wallet');
@@ -477,6 +561,7 @@ const main = async () => {
     await testLabAndDoctor();
     await testCommunitySupport();
     await testInstallmentReceipts();
+    await testPlanApplication();
     await testDefaulterEscalation();
     await testMisc();
   } catch (err) {

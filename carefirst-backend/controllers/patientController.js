@@ -11,6 +11,13 @@ const User                 = require('../models/User');
 const { sendNotification } = require('../socket/notificationSocket');
 const { normalizeCnic }    = require('../utils/cnic');
 const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
+const { generateInstallmentAgreement } = require('../utils/legalAgreementTemplate');
+const {
+  OPEN_PLAN_STATUSES, labPaymentDetails, hasPaymentDetails, planAmounts,
+} = require('../utils/installmentPlan');
+const {
+  SERVICE_FEE, DOWN_PAYMENT_PERCENT, MAX_OPEN_PLANS, GRACE_DAYS, CAREFIRST_ACCOUNT,
+} = require('../config/installments');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -42,6 +49,95 @@ const notifyUser = async (recipient, { title, message, type, meta }) => {
 const notifyAdmins = async (payload) => {
   const admins = await User.find({ role: 'admin' }).select('_id');
   for (const admin of admins) await notifyUser(admin._id, payload);
+};
+
+// Adds the lab's payment channels (labPayment) to wallets with a populated `lab`
+const withLabPayment = async (wallets) => {
+  const labIds   = [...new Set(wallets.map(w => w.lab?._id?.toString()).filter(Boolean))];
+  const profiles = await LabProfile.find({ user: { $in: labIds } }).select('user bankDetails jazzCash easyPaisa');
+  const map = {};
+  profiles.forEach(lp => { map[lp.user.toString()] = labPaymentDetails(lp); });
+  return wallets.map(w => ({ ...w, labPayment: map[w.lab?._id?.toString()] || labPaymentDetails(null) }));
+};
+
+const enrichWallets = async (wallets) => withLabPayment(await withLabInfo(wallets, 'lab'));
+
+const PHONE_FORMAT = /^\+?\d{10,13}$/;
+
+// Validates an installment-plan application and works out its terms.
+// Returns { error: { status, message } } or { terms, agreementText }.
+const buildPlanApplication = async (user, body) => {
+  const fail = (status, message) => ({ error: { status, message } });
+
+  const profile = await PatientProfile.findOne({ user: user._id });
+  if (profile?.cnicStatus !== 'verified') {
+    return fail(403, 'Your CNIC must be verified by the admin before you can apply for an installment plan');
+  }
+
+  const openPlans = await Wallet.countDocuments({ patient: user._id, status: { $in: OPEN_PLAN_STATUSES } });
+  if (openPlans >= MAX_OPEN_PLANS) {
+    return fail(409, `You can have at most ${MAX_OPEN_PLANS} open installment plans (including applications under review)`);
+  }
+
+  const { labId, testId } = body;
+  if (!mongoose.isValidObjectId(labId) || !mongoose.isValidObjectId(testId)) return fail(404, 'Test not found');
+
+  const labUser    = await User.findOne({ _id: labId, role: 'lab', status: 'active' });
+  const labProfile = labUser && await LabProfile.findOne({ user: labUser._id });
+  const test       = labProfile?.tests.id(testId);
+  if (!test || !test.isActive) return fail(404, 'Test not found');
+  if (!test.installmentEnabled) return fail(400, 'This test is not available on installments');
+  if (!hasPaymentDetails(labProfile)) {
+    return fail(400, 'This lab has not added its payment details yet, so it cannot accept installment plans');
+  }
+
+  const g = body.guarantor || {};
+  const str = (v) => (typeof v === 'string' ? v.trim() : '');
+  const guarantor = {
+    name:     str(g.name),
+    cnic:     normalizeCnic(g.cnic),
+    phone:    str(g.phone).replace(/[\s-]/g, ''),
+    relation: str(g.relation),
+    address:  str(g.address),
+  };
+  if (!guarantor.name)     return fail(400, "Please enter the guarantor's full name");
+  if (!guarantor.cnic)     return fail(400, "Please enter the guarantor's valid 13-digit CNIC");
+  if (guarantor.cnic === profile.cnic) return fail(400, 'The guarantor must be someone other than you');
+  if (!PHONE_FORMAT.test(guarantor.phone)) return fail(400, "Please enter the guarantor's phone number (e.g. 03001234567)");
+  if (!guarantor.relation) return fail(400, 'Please enter how the guarantor is related to you');
+
+  const totalAmount = Math.round(test.price);
+  const { downPayment, installments } = planAmounts(totalAmount, test.installmentCount);
+
+  const terms = {
+    labId:                 labUser._id,
+    labName:               labProfile.labName,
+    testId:                test._id,
+    testName:              test.name,
+    totalAmount,
+    downPayment,
+    downPaymentPercent:    DOWN_PAYMENT_PERCENT,
+    installments,
+    installmentTenureDays: test.installmentTenureDays,
+    serviceFee:            SERVICE_FEE,
+    guarantor,
+  };
+
+  const agreementText = generateInstallmentAgreement({
+    patient:     user,
+    patientCnic: profile.cnic,
+    guarantor,
+    labName:     terms.labName,
+    testName:    terms.testName,
+    totalAmount,
+    downPayment,
+    installments,
+    tenureDays:  terms.installmentTenureDays,
+    serviceFee:  SERVICE_FEE,
+    graceDays:   GRACE_DAYS,
+  });
+
+  return { terms, agreementText };
 };
 
 // ─── GET /api/patient/profile ─────────────────────────────────────────────────
@@ -155,7 +251,87 @@ const getWallets = async (req, res) => {
     const wallets = await Wallet.find({ patient: req.user._id })
       .populate('lab', 'name')
       .sort({ createdAt: -1 });
-    res.json(await withLabInfo(wallets, 'lab'));
+    res.json(await enrichWallets(wallets));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── GET /api/patient/installment-plans/config ────────────────────────────────
+// Fee, down-payment rule, plan limit and CareFirst's account for the service fee
+const getInstallmentConfig = async (req, res) => {
+  try {
+    const [profile, openPlans] = await Promise.all([
+      PatientProfile.findOne({ user: req.user._id }).select('cnicStatus'),
+      Wallet.countDocuments({ patient: req.user._id, status: { $in: OPEN_PLAN_STATUSES } }),
+    ]);
+    res.json({
+      serviceFee:         SERVICE_FEE,
+      downPaymentPercent: DOWN_PAYMENT_PERCENT,
+      maxOpenPlans:       MAX_OPEN_PLANS,
+      graceDays:          GRACE_DAYS,
+      careFirstAccount:   CAREFIRST_ACCOUNT,
+      openPlans,
+      cnicStatus:         profile?.cnicStatus || 'unverified',
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── POST /api/patient/installment-plans/preview ──────────────────────────────
+// Body: { labId, testId, guarantor: { name, cnic, phone, relation, address } }
+// Returns the plan terms and the agreement text the patient must accept
+const previewInstallmentPlan = async (req, res) => {
+  try {
+    const { error, terms, agreementText } = await buildPlanApplication(req.user, req.body);
+    if (error) return res.status(error.status).json({ message: error.message });
+    res.json({ ...terms, agreementText });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── POST /api/patient/installment-plans ──────────────────────────────────────
+// Body: preview body + { acceptAgreement: true, agreementText } — the text the
+// patient was shown, which must still match the current terms
+const applyForInstallmentPlan = async (req, res) => {
+  try {
+    if (req.body.acceptAgreement !== true) {
+      return res.status(400).json({ message: 'You must read and accept the agreement to apply' });
+    }
+
+    const { error, terms, agreementText } = await buildPlanApplication(req.user, req.body);
+    if (error) return res.status(error.status).json({ message: error.message });
+    if (req.body.agreementText !== agreementText) {
+      return res.status(409).json({ message: 'The plan terms have changed. Please review the agreement again.' });
+    }
+
+    const wallet = await Wallet.create({
+      patient:               req.user._id,
+      lab:                   terms.labId,
+      labTest:               terms.testId,
+      testName:              terms.testName,
+      totalAmount:           terms.totalAmount,
+      installmentCount:      terms.installments.length,
+      installmentTenureDays: terms.installmentTenureDays,
+      downPayment:           { amount: terms.downPayment },
+      serviceFee:            { amount: terms.serviceFee },
+      guarantor:             terms.guarantor,
+      agreement:             { text: agreementText, acceptedAt: new Date() },
+      status:                'pending_approval',
+    });
+
+    await notifyAdmins({
+      title:   'New Installment Plan Application',
+      message: `${req.user.name} applied to pay for ${terms.testName} at ${terms.labName} (PKR ${terms.totalAmount.toLocaleString()}) in ${terms.installments.length} installments.`,
+      type:    'plan_submitted',
+      meta:    { walletId: wallet._id },
+    });
+
+    await wallet.populate('lab', 'name');
+    const [enriched] = await enrichWallets([wallet]);
+    res.status(201).json(enriched);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -201,7 +377,7 @@ const uploadInstallmentReceipt = async (req, res) => {
     });
 
     await wallet.populate('lab', 'name');
-    const [enriched] = await withLabInfo([wallet], 'lab');
+    const [enriched] = await enrichWallets([wallet]);
     res.json({ message: 'Receipt uploaded. Awaiting lab confirmation.', wallet: enriched });
   } catch (err) {
     removeUploadedFiles(req);
@@ -304,6 +480,7 @@ module.exports = {
   getPrescriptions,
   getReports, markReportRead,
   getWallets, uploadInstallmentReceipt,
+  getInstallmentConfig, previewInstallmentPlan, applyForInstallmentPlan,
   getCommunityApplications, createCommunityApplication,
   getNotifications, markRead, markAllRead,
 };

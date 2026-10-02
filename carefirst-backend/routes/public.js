@@ -3,6 +3,7 @@ const router        = express.Router();
 const LabProfile    = require('../models/LabProfile');
 const DoctorProfile = require('../models/DoctorProfile');
 const User          = require('../models/User');
+const { hasPaymentDetails } = require('../utils/installmentPlan');
 
 // GET /api/public/tests — all active tests from all active labs (no auth required)
 router.get('/tests', async (req, res) => {
@@ -10,7 +11,7 @@ router.get('/tests', async (req, res) => {
     const activeLabIds = await User.find({ role: 'lab', status: 'active' }).distinct('_id');
     const labs = await LabProfile.find({ user: { $in: activeLabIds } })
       .populate('user', 'name')
-      .select('labName location user tests isCharityPartner');
+      .select('labName location user tests isCharityPartner bankDetails jazzCash easyPaisa');
 
     const result = labs
       .filter(lab => lab.user && lab.tests.some(t => t.isActive))
@@ -19,6 +20,8 @@ router.get('/tests', async (req, res) => {
         labName:          lab.labName,
         location:         lab.location,
         isCharityPartner: lab.isCharityPartner,
+        // Installment plans need the lab's payment details (down payment + installments go to the lab)
+        acceptsInstallments: hasPaymentDetails(lab),
         tests: lab.tests
           .filter(t => t.isActive)
           .map(t => ({
