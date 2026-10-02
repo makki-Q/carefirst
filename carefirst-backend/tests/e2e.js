@@ -358,7 +358,7 @@ const testInstallmentReceipts = async () => {
   const Wallet = require('../models/Wallet');
   const due = (days) => new Date(Date.now() + days * 86400000);
   const wallet = await Wallet.create({
-    patient: ids.patient, lab: ids.lab, testName: 'Direct Plan', totalAmount: 9000,
+    patient: ids.patient, lab: ids.lab, testName: 'Direct Plan', totalAmount: 9000, status: 'active',
     installments: [
       { number: 1, dueDate: due(10), amount: 4500 },
       { number: 2, dueDate: due(40), amount: 4500 },
@@ -411,7 +411,7 @@ const testDefaulterEscalation = async () => {
   const { runDefaulterCheck } = require('../jobs/defaulterJob');
 
   const wallet = await Wallet.create({
-    patient: ids.patient2, lab: ids.lab, testName: 'Overdue Plan', totalAmount: 6000,
+    patient: ids.patient2, lab: ids.lab, testName: 'Overdue Plan', totalAmount: 6000, status: 'active',
     guarantor: { name: 'Kamran', cnic: '35202-1111111-1', phone: '03000000000', relation: 'Brother' },
     installments: [
       { number: 1, dueDate: new Date(Date.now() - 5 * 86400000), amount: 3000 },

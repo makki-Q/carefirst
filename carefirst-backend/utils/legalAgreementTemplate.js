@@ -54,4 +54,74 @@ support@carefirst.pk
 `.trim();
 };
 
-module.exports = { generateLegalAgreement };
+// Agreement the patient reads and accepts when applying for an installment plan.
+// It has no date in it: the acceptance time is stored next to the text, so the
+// text shown before acceptance can be compared word for word with the stored one.
+const generateInstallmentAgreement = ({
+  patient, patientCnic, guarantor, labName, testName,
+  totalAmount, downPayment, installments, tenureDays, serviceFee, graceDays,
+}) => {
+  const pkr = (n) => `PKR ${(n || 0).toLocaleString('en-US')}`;
+  const schedule = installments
+    .map((amount, i) => `  Installment ${i + 1}: ${pkr(amount).padEnd(12)} due ${tenureDays * (i + 1)} days after plan activation`)
+    .join('\n');
+
+  return `
+INSTALLMENT PLAN AGREEMENT
+CareFirst Health Platform
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 1 — PARTIES
+Patient   : ${patient.name}
+CNIC      : ${patientCnic}
+Phone     : ${patient.phone || 'Not provided'}
+
+Guarantor : ${guarantor.name}
+CNIC      : ${guarantor.cnic}
+Phone     : ${guarantor.phone}
+Relation  : ${guarantor.relation}
+Address   : ${guarantor.address || 'Not provided'}
+
+Laboratory: ${labName}
+
+SECTION 2 — SERVICE AND AMOUNTS
+Test / Service : ${testName}
+Test Price     : ${pkr(totalAmount)}
+Down Payment   : ${pkr(downPayment)} (paid to the laboratory)
+Installments   : ${installments.length} × every ${tenureDays} days (paid to the laboratory)
+${schedule}
+
+CareFirst Service Fee: ${pkr(serviceFee)} (paid to CareFirst, separate from the test price)
+
+SECTION 3 — HOW THE PLAN WORKS
+1. This application is reviewed by CareFirst. If approved, the patient pays the
+   service fee to CareFirst and uploads proof of payment.
+2. The plan becomes active once CareFirst verifies the service fee. The
+   installment due dates are counted from that day.
+3. The down payment and every installment are paid directly to the laboratory.
+   CareFirst does not receive, hold or transfer any payment for the test.
+4. For every payment the patient uploads proof on CareFirst; the laboratory
+   confirms receipt and CareFirst verifies it.
+
+SECTION 4 — DEFAULT
+1. If no proof of payment is uploaded within ${graceDays} days after an installment's
+   due date, the patient is in default.
+2. On default the plan is escalated automatically to CareFirst's legal counsel,
+   who receive this agreement and the patient and guarantor details above.
+3. The guarantor is jointly liable with the patient for every outstanding amount.
+4. Recovery is pursued offline through applicable legal channels.
+
+SECTION 5 — DECLARATION
+The patient confirms that the details above are correct, that the guarantor
+has agreed to stand as guarantor, and that the patient has read and accepts
+this agreement. CareFirst records the time of acceptance.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CareFirst Health Platform — Legal Department
+support@carefirst.pk
+`.trim();
+};
+
+module.exports = { generateLegalAgreement, generateInstallmentAgreement };

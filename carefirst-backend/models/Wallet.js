@@ -1,5 +1,9 @@
 const mongoose = require('mongoose');
 
+// Lifecycle: pending_approval → (rejected | awaiting_fee) → active → (completed | defaulter)
+//   awaiting_fee = admin approved the application; CareFirst service fee not yet verified
+const WALLET_STATUSES = ['pending_approval', 'rejected', 'awaiting_fee', 'active', 'completed', 'defaulter'];
+
 const installmentSchema = new mongoose.Schema({
   number:         { type: Number, required: true },
   dueDate:        { type: Date,   required: true },
@@ -18,30 +22,45 @@ const installmentSchema = new mongoose.Schema({
   adminVerified:   { type: Boolean, default: false },
   adminVerifiedAt: { type: Date },
   adminVerifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+  // "Due soon" reminders already sent (days before due date, see config/installments.js)
+  remindersSent: [{ type: Number }],
 });
 
 const walletSchema = new mongoose.Schema(
   {
     patient:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     lab:      { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    labTest:  { type: mongoose.Schema.Types.ObjectId }, // LabProfile.tests[] subdocument id
     testName: { type: String, required: true },
 
     totalAmount: { type: Number, required: true },
 
+    // Plan terms copied from the lab test when the patient applied
+    installmentCount:      { type: Number, min: 1 },
+    installmentTenureDays: { type: Number }, // gap between installments
+
+    // Paid to the lab — same chain as an installment: patient → lab → admin
     downPayment: {
-      amount:       { type: Number, default: 0 },
-      receiptUrl:   { type: String },
-      paidAt:       Date,
-      adminVerified:{ type: Boolean, default: false },
-      verifiedAt:   Date,
+      amount:            { type: Number, default: 0 },
+      receiptUrl:        { type: String },
+      receiptUploadedAt: { type: Date },
+      labApproved:       { type: Boolean, default: false },
+      labApprovedAt:     { type: Date },
+      adminVerified:     { type: Boolean, default: false },
+      adminVerifiedAt:   { type: Date },
+      adminVerifiedBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     },
 
+    // Paid to CareFirst — admin verifies directly (no lab step)
     serviceFee: {
-      amount:       { type: Number, default: 0 },
-      receiptUrl:   { type: String },
-      paidAt:       Date,
-      adminVerified:{ type: Boolean, default: false },
-      verifiedAt:   Date,
+      amount:            { type: Number, default: 0 },
+      receiptUrl:        { type: String },
+      receiptUploadedAt: { type: Date },
+      rejectionReason:   { type: String },
+      adminVerified:     { type: Boolean, default: false },
+      adminVerifiedAt:   { type: Date },
+      adminVerifiedBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     },
 
     remainingBalance: { type: Number },
@@ -57,23 +76,43 @@ const walletSchema = new mongoose.Schema(
       address:  String,
     },
 
-    status:          { type: String, enum: ['active', 'completed', 'defaulter'], default: 'active' },
+    // Legal agreement exactly as the patient read and accepted it
+    agreement: {
+      text:       { type: String },
+      acceptedAt: { type: Date },
+    },
+
+    status:          { type: String, enum: WALLET_STATUSES, default: 'pending_approval' },
     planApprovedAt:  { type: Date },
     planApprovedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    rejectionReason: { type: String },
+    rejectedAt:      { type: Date },
+    rejectedBy:      { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    activatedAt:     { type: Date }, // service fee verified, schedule generated
   },
   { timestamps: true }
 );
 
-// Recalculate remaining balance every time the wallet is saved
+// Fee verified + down payment verified + every installment paid
+walletSchema.methods.isFullyPaid = function () {
+  return Boolean(
+    this.serviceFee?.adminVerified &&
+    this.downPayment?.adminVerified &&
+    this.installments.length > 0 &&
+    this.installments.every(i => i.status === 'paid')
+  );
+};
+
+// Recalculate remaining balance every time the wallet is saved.
+// The service fee is separate from the test price, so it is not part of the balance.
 walletSchema.pre('save', function (next) {
   const paidInstallmentsTotal = this.installments
     .filter(i => i.status === 'paid')
     .reduce((sum, i) => sum + i.amount, 0);
 
   const downPaid = this.downPayment?.adminVerified ? (this.downPayment?.amount || 0) : 0;
-  const feePaid  = this.serviceFee?.adminVerified  ? (this.serviceFee?.amount  || 0) : 0;
 
-  this.remainingBalance = this.totalAmount - downPaid - feePaid - paidInstallmentsTotal;
+  this.remainingBalance = this.totalAmount - downPaid - paidInstallmentsTotal;
   next();
 });
 

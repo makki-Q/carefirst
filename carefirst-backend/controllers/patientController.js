@@ -180,6 +180,7 @@ const uploadInstallmentReceipt = async (req, res) => {
       return reject(400, 'This plan has been escalated to the legal team. Please contact CareFirst support.');
     }
     if (wallet.status === 'completed') return reject(400, 'This plan is already fully paid');
+    if (wallet.status !== 'active')    return reject(400, 'This plan is not active yet');
 
     const instIndex = Number(req.params.instIndex);
     const inst      = Number.isInteger(instIndex) ? wallet.installments[instIndex] : null;

@@ -7,6 +7,13 @@ const NOTIFICATION_TYPES = [
   'receipt_lab_approved',    // lab confirmed receipt
   'receipt_admin_verified',  // admin marked installment paid
   'installment_overdue',     // reminder: due date passed, still pending
+  'installment_due_soon',    // reminder: installment due in a few days
+  'plan_submitted',          // patient applied for an installment plan
+  'plan_approved',           // admin approved the application — service fee due
+  'plan_rejected',           // admin rejected the application
+  'service_fee_uploaded',    // patient uploaded the service fee screenshot
+  'service_fee_rejected',    // admin could not verify the service fee screenshot
+  'plan_activated',          // service fee verified, schedule generated
   'defaulter_escalated',     // case moved to lawyer
   'test_report_uploaded',    // lab uploaded patient's result
   'prescription_issued',     // doctor issued a prescription

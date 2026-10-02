@@ -261,11 +261,7 @@ const verifyInstallment = async (req, res) => {
     inst.adminVerifiedBy = req.user._id;
     inst.status          = 'paid';
 
-    // Check if the full plan is now settled
-    const allPaid = wallet.installments.every(i => i.status === 'paid');
-    if (allPaid && wallet.downPayment?.adminVerified && wallet.serviceFee?.adminVerified) {
-      wallet.status = 'completed';
-    }
+    if (wallet.isFullyPaid()) wallet.status = 'completed';
 
     await wallet.save(); // pre-save hook recalculates remainingBalance
 

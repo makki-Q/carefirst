@@ -160,7 +160,7 @@ const getReports = async (req, res) => {
 // Returns installments that have a patient-uploaded receipt awaiting lab approval
 const getReceiptsPendingApproval = async (req, res) => {
   try {
-    const wallets = await Wallet.find({ lab: req.user._id, status: { $ne: 'defaulter' } })
+    const wallets = await Wallet.find({ lab: req.user._id, status: 'active' })
       .populate('patient', 'name email phone')
       .sort({ updatedAt: -1 });
 
@@ -276,7 +276,8 @@ const getLabPatients = async (req, res) => {
   try {
     const [communityApps, wallets] = await Promise.all([
       CommunityApplication.find({ assignedLab: req.user._id }).populate('patient', 'name email phone').select('patient'),
-      Wallet.find({ lab: req.user._id }).populate('patient', 'name email phone').select('patient'),
+      Wallet.find({ lab: req.user._id, status: { $in: ['active', 'completed', 'defaulter'] } })
+        .populate('patient', 'name email phone').select('patient'),
     ]);
 
     const seen = new Set();
