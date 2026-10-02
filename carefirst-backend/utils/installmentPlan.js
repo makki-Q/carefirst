@@ -22,15 +22,18 @@ const hasPaymentDetails = (labProfile) => {
   return Boolean((d.bankName && d.accountNumber) || d.jazzCash || d.easyPaisa);
 };
 
-// Down payment = DOWN_PAYMENT_PERCENT of the price; the rest is split into
-// `count` whole-rupee installments with the remainder on the last one
+// `amount` split into `count` whole-rupee installments, remainder on the last one
+const splitInstallments = (amount, count) => {
+  const base = Math.floor(amount / count);
+  const installments = Array(count).fill(base);
+  installments[count - 1] += amount - base * count;
+  return installments;
+};
+
+// Down payment = DOWN_PAYMENT_PERCENT of the price; the rest goes into installments
 const planAmounts = (totalAmount, count) => {
   const downPayment = Math.round(totalAmount * DOWN_PAYMENT_PERCENT / 100);
-  const rest        = totalAmount - downPayment;
-  const base        = Math.floor(rest / count);
-  const installments = Array(count).fill(base);
-  installments[count - 1] += rest - base * count;
-  return { downPayment, installments };
+  return { downPayment, installments: splitInstallments(totalAmount - downPayment, count) };
 };
 
 // Installment N is due N tenures after activation
@@ -44,5 +47,5 @@ const buildSchedule = (amounts, tenureDays, activatedAt) =>
 module.exports = {
   OPEN_PLAN_STATUSES, pktDay,
   labPaymentDetails, hasPaymentDetails,
-  planAmounts, buildSchedule,
+  splitInstallments, planAmounts, buildSchedule,
 };

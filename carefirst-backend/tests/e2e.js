@@ -489,6 +489,94 @@ const testPlanApplication = async () => {
   check('third open plan is blocked by the 2-plan limit (409)', second.status === 409, second);
 };
 
+const testPlanReview = async () => {
+  section('Admin review, service fee & activation');
+  const feeTooEarly = await post(`/api/patient/wallets/${ids.plan}/service-fee/receipt`, { token: tokens.patient, files: { receipt: ['fee.png'] } });
+  check('service fee cannot be paid before approval (400)', feeTooEarly.status === 400, feeTooEarly);
+
+  const pending = await get('/api/admin/wallets?status=pending_approval', { token: tokens.admin });
+  const listed = pending.data.wallets?.find(w => w._id === ids.plan);
+  check('admin sees the application with patient CNIC, lab name and agreement',
+    listed?.patient?.cnic === '35202-1234567-9' && listed?.labName === 'E2E Diagnostics' && listed?.agreement?.text, listed);
+
+  // A second patient applies so there is one application to reject
+  await put(`/api/admin/patients/${ids.patient2}/cnic/verify`, { token: tokens.admin });
+  const body2 = { ...planBody(), guarantor: { ...guarantor, cnic: '35202-6666666-6' } };
+  const preview2 = await post('/api/patient/installment-plans/preview', { token: tokens.patient2, body: body2 });
+  const apply2 = await post('/api/patient/installment-plans', {
+    token: tokens.patient2,
+    body:  { ...body2, acceptAgreement: true, agreementText: preview2.data.agreementText },
+  });
+  check('second patient applies', apply2.status === 201, apply2);
+
+  const noReason = await put(`/api/admin/wallets/${apply2.data._id}/reject`, { token: tokens.admin, body: {} });
+  check('rejecting without a reason is refused (400)', noReason.status === 400, noReason);
+
+  const rejected = await put(`/api/admin/wallets/${apply2.data._id}/reject`, { token: tokens.admin, body: { reason: 'Guarantor could not be reached.' } });
+  check('admin rejects the application with a reason',
+    rejected.status === 200 && rejected.data.wallet.status === 'rejected' && rejected.data.wallet.rejectionReason === 'Guarantor could not be reached.', rejected);
+
+  const p2Notifs = await get('/api/patient/notifications', { token: tokens.patient2 });
+  check('patient is told why the plan was rejected',
+    p2Notifs.data.some(n => n.type === 'plan_rejected' && n.message.includes('Guarantor could not be reached.')), p2Notifs.data);
+
+  const approveRejected = await put(`/api/admin/wallets/${apply2.data._id}/approve`, { token: tokens.admin });
+  check('a rejected application cannot be approved (400)', approveRejected.status === 400, approveRejected);
+
+  const p2Config = await get('/api/patient/installment-plans/config', { token: tokens.patient2 });
+  check('rejected applications do not count toward the limit', p2Config.data.openPlans === 0, p2Config.data);
+
+  const approve = await put(`/api/admin/wallets/${ids.plan}/approve`, { token: tokens.admin });
+  check('admin approves → awaiting_fee',
+    approve.status === 200 && approve.data.wallet.status === 'awaiting_fee' && approve.data.wallet.planApprovedAt, approve);
+
+  const again = await put(`/api/admin/wallets/${ids.plan}/approve`, { token: tokens.admin });
+  check('approving twice is refused (400)', again.status === 400, again);
+
+  const pNotifs = await get('/api/patient/notifications', { token: tokens.patient });
+  check('patient is told to pay the service fee', pNotifs.data.some(n => n.type === 'plan_approved' && n.message.includes('PKR 500')), pNotifs.data);
+
+  const verifyEarly = await put(`/api/admin/wallets/${ids.plan}/service-fee/verify`, { token: tokens.admin });
+  check('fee cannot be verified before a receipt is uploaded (400)', verifyEarly.status === 400, verifyEarly);
+
+  const fee = await post(`/api/patient/wallets/${ids.plan}/service-fee/receipt`, { token: tokens.patient, files: { receipt: ['fee.png'] } });
+  check('patient uploads the service fee screenshot', fee.status === 200 && fee.data.wallet.serviceFee.receiptUrl, fee);
+
+  const adminNotifs = await get('/api/admin/notifications', { token: tokens.admin });
+  check('admins are notified of the fee receipt', adminNotifs.data.some(n => n.type === 'service_fee_uploaded'));
+
+  const feeReject = await put(`/api/admin/wallets/${ids.plan}/service-fee/reject`, { token: tokens.admin, body: { reason: 'Amount does not match.' } });
+  check('admin rejects an unclear fee screenshot',
+    feeReject.status === 200 && !feeReject.data.wallet.serviceFee.receiptUrl &&
+    feeReject.data.wallet.serviceFee.rejectionReason === 'Amount does not match.' && feeReject.data.wallet.status === 'awaiting_fee', feeReject);
+
+  const reup = await post(`/api/patient/wallets/${ids.plan}/service-fee/receipt`, { token: tokens.patient, files: { receipt: ['fee2.png'] } });
+  check('patient re-uploads; rejection reason clears',
+    reup.status === 200 && reup.data.wallet.serviceFee.receiptUrl && !reup.data.wallet.serviceFee.rejectionReason, reup);
+
+  const verify = await put(`/api/admin/wallets/${ids.plan}/service-fee/verify`, { token: tokens.admin });
+  const w = verify.data.wallet;
+  check('admin verifies the fee → plan active with 3 installments',
+    verify.status === 200 && w.status === 'active' && w.serviceFee.adminVerified && w.activatedAt &&
+    JSON.stringify(w.installments.map(i => i.amount)) === '[6666,6666,6668]', verify);
+  const DAY = 86400000;
+  check('installments are due every 30 days from activation',
+    w?.installments.every((i, n) => new Date(i.dueDate) - new Date(w.activatedAt) === 30 * DAY * (n + 1)), w?.installments);
+  check('balance excludes the service fee', w?.remainingBalance === 25000, w?.remainingBalance);
+
+  const labNotifs = await get('/api/lab/notifications', { token: tokens.lab });
+  check('lab is notified of the new plan', labNotifs.data.some(n => n.type === 'plan_activated' && n.meta?.walletId === ids.plan), labNotifs.data);
+
+  const pNotifs2 = await get('/api/patient/notifications', { token: tokens.patient });
+  check('patient is told the plan is active', pNotifs2.data.some(n => n.type === 'plan_activated'), pNotifs2.data);
+
+  const feeAfter = await post(`/api/patient/wallets/${ids.plan}/service-fee/receipt`, { token: tokens.patient, files: { receipt: ['fee3.png'] } });
+  check('fee receipt cannot be replaced after verification (400)', feeAfter.status === 400, feeAfter);
+
+  const badId = await put('/api/admin/wallets/not-an-id/approve', { token: tokens.admin });
+  check('invalid wallet id returns 404', badId.status === 404, badId);
+};
+
 const testDefaulterEscalation = async () => {
   section('Defaulter escalation (nightly job)');
   const Wallet = require('../models/Wallet');
@@ -562,6 +650,7 @@ const main = async () => {
     await testCommunitySupport();
     await testInstallmentReceipts();
     await testPlanApplication();
+    await testPlanReview();
     await testDefaulterEscalation();
     await testMisc();
   } catch (err) {

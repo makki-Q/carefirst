@@ -7,10 +7,36 @@ const Wallet                = require('../models/Wallet');
 const DefaulterCase         = require('../models/DefaulterCase');
 const Notification          = require('../models/Notification');
 const CommunityApplication  = require('../models/CommunityApplication');
+const mongoose              = require('mongoose');
 const generateToken         = require('../utils/generateToken');
 const { sendNotification }  = require('../socket/notificationSocket');
 const { v4: uuid }          = require('crypto');
 const { getPatientProfileMap, withPatientDetails } = require('../utils/patientProfiles');
+const { splitInstallments, buildSchedule } = require('../utils/installmentPlan');
+
+const notify = async (recipient, { title, message, type, meta }) => {
+  const notif = await Notification.create({ recipient, title, message, type, meta });
+  sendNotification(recipient.toString(), notif);
+};
+
+const findWallet = (walletId) =>
+  mongoose.isValidObjectId(walletId)
+    ? Wallet.findById(walletId).populate('patient', 'name email phone').populate('lab', 'name email')
+    : null;
+
+// Wallets as plain objects with patient CNIC details and the lab's name
+const enrichWallets = async (wallets) => {
+  const labIds   = [...new Set(wallets.map(w => w.lab?._id?.toString()).filter(Boolean))];
+  const profiles = await LabProfile.find({ user: { $in: labIds } }).select('user labName');
+  const labNames = {};
+  profiles.forEach(lp => { labNames[lp.user.toString()] = lp.labName; });
+  return (await withPatientDetails(wallets)).map(w => ({
+    ...w,
+    labName: labNames[w.lab?._id?.toString()] || w.lab?.name || '—',
+  }));
+};
+
+const pkr = (n) => `PKR ${(n || 0).toLocaleString()}`;
 
 // ─── POST /api/admin/login ────────────────────────────────────────────────────
 const adminLogin = async (req, res) => {
@@ -224,7 +250,7 @@ const getWallets = async (req, res) => {
       Wallet.countDocuments(filter),
     ]);
 
-    res.json({ wallets, total, page: Number(page), pages: Math.ceil(total / limit) });
+    res.json({ wallets: await enrichWallets(wallets), total, page: Number(page), pages: Math.ceil(total / limit) });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -233,11 +259,142 @@ const getWallets = async (req, res) => {
 // ─── GET /api/admin/wallets/:walletId ────────────────────────────────────────
 const getWalletById = async (req, res) => {
   try {
-    const wallet = await Wallet.findById(req.params.walletId)
-      .populate('patient', 'name email phone')
-      .populate('lab',     'name email');
+    const wallet = await findWallet(req.params.walletId);
     if (!wallet) return res.status(404).json({ message: 'Wallet not found' });
-    res.json(wallet);
+    const [enriched] = await enrichWallets([wallet]);
+    res.json(enriched);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PUT /api/admin/wallets/:walletId/approve ────────────────────────────────
+// Approves an installment application; the patient then pays the service fee
+const approvePlan = async (req, res) => {
+  try {
+    const wallet = await findWallet(req.params.walletId);
+    if (!wallet) return res.status(404).json({ message: 'Wallet not found' });
+    if (wallet.status !== 'pending_approval') return res.status(400).json({ message: 'This application has already been reviewed' });
+
+    wallet.status         = 'awaiting_fee';
+    wallet.planApprovedAt = new Date();
+    wallet.planApprovedBy = req.user._id;
+    await wallet.save();
+
+    await notify(wallet.patient._id, {
+      title:   'Installment Plan Approved',
+      message: `Your installment plan for ${wallet.testName} has been approved. Pay the ${pkr(wallet.serviceFee.amount)} CareFirst service fee and upload the screenshot from My Wallet to activate it.`,
+      type:    'plan_approved',
+      meta:    { walletId: wallet._id },
+    });
+
+    const [enriched] = await enrichWallets([wallet]);
+    res.json({ message: 'Plan approved — awaiting service fee', wallet: enriched });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PUT /api/admin/wallets/:walletId/reject ─────────────────────────────────
+// Body: { reason }
+const rejectPlan = async (req, res) => {
+  try {
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : '';
+    if (!reason) return res.status(400).json({ message: 'Please give a reason for rejecting the application' });
+
+    const wallet = await findWallet(req.params.walletId);
+    if (!wallet) return res.status(404).json({ message: 'Wallet not found' });
+    if (wallet.status !== 'pending_approval') return res.status(400).json({ message: 'This application has already been reviewed' });
+
+    wallet.status          = 'rejected';
+    wallet.rejectionReason = reason;
+    wallet.rejectedAt      = new Date();
+    wallet.rejectedBy      = req.user._id;
+    await wallet.save();
+
+    await notify(wallet.patient._id, {
+      title:   'Installment Plan Not Approved',
+      message: `Your installment plan application for ${wallet.testName} was not approved. Reason: ${reason}`,
+      type:    'plan_rejected',
+      meta:    { walletId: wallet._id },
+    });
+
+    const [enriched] = await enrichWallets([wallet]);
+    res.json({ message: 'Application rejected', wallet: enriched });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PUT /api/admin/wallets/:walletId/service-fee/verify ─────────────────────
+// Fee received by CareFirst → plan becomes active and the schedule is generated
+const verifyServiceFee = async (req, res) => {
+  try {
+    const wallet = await findWallet(req.params.walletId);
+    if (!wallet) return res.status(404).json({ message: 'Wallet not found' });
+    if (wallet.status !== 'awaiting_fee')  return res.status(400).json({ message: 'This plan is not waiting for a service fee' });
+    if (!wallet.serviceFee.receiptUrl)     return res.status(400).json({ message: 'Patient has not uploaded the service fee receipt yet' });
+
+    const now = new Date();
+    wallet.serviceFee.adminVerified   = true;
+    wallet.serviceFee.adminVerifiedAt = now;
+    wallet.serviceFee.adminVerifiedBy = req.user._id;
+    wallet.serviceFee.rejectionReason = undefined;
+
+    const amounts = splitInstallments(wallet.totalAmount - wallet.downPayment.amount, wallet.installmentCount);
+    wallet.installments = buildSchedule(amounts, wallet.installmentTenureDays, now);
+    wallet.activatedAt  = now;
+    wallet.status       = 'active';
+    await wallet.save();
+
+    const first = wallet.installments[0];
+    const firstDue = first.dueDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Karachi' });
+    await notify(wallet.patient._id, {
+      title:   'Installment Plan Active',
+      message: `Your service fee is verified and your plan for ${wallet.testName} is now active. Pay the ${pkr(wallet.downPayment.amount)} down payment to the lab and upload the receipt. Installment #1 (${pkr(first.amount)}) is due on ${firstDue}.`,
+      type:    'plan_activated',
+      meta:    { walletId: wallet._id },
+    });
+    await notify(wallet.lab._id, {
+      title:   'New Installment Plan',
+      message: `${wallet.patient.name} has an active installment plan with your lab for ${wallet.testName} (${pkr(wallet.totalAmount)}): ${pkr(wallet.downPayment.amount)} down payment and ${wallet.installments.length} installments every ${wallet.installmentTenureDays} days, paid to your lab. You will be asked to confirm each receipt.`,
+      type:    'plan_activated',
+      meta:    { walletId: wallet._id },
+    });
+
+    const [enriched] = await enrichWallets([wallet]);
+    res.json({ message: 'Service fee verified — plan is now active', wallet: enriched });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PUT /api/admin/wallets/:walletId/service-fee/reject ─────────────────────
+// Body: { reason } — screenshot could not be matched to a payment; patient re-uploads
+const rejectServiceFee = async (req, res) => {
+  try {
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : '';
+    if (!reason) return res.status(400).json({ message: 'Please give a reason' });
+
+    const wallet = await findWallet(req.params.walletId);
+    if (!wallet) return res.status(404).json({ message: 'Wallet not found' });
+    if (wallet.status !== 'awaiting_fee') return res.status(400).json({ message: 'This plan is not waiting for a service fee' });
+    if (!wallet.serviceFee.receiptUrl)    return res.status(400).json({ message: 'There is no service fee receipt to reject' });
+
+    wallet.serviceFee.receiptUrl        = undefined;
+    wallet.serviceFee.receiptUploadedAt = undefined;
+    wallet.serviceFee.rejectionReason   = reason;
+    await wallet.save();
+
+    await notify(wallet.patient._id, {
+      title:   'Service Fee Not Verified',
+      message: `We could not verify your service fee payment for ${wallet.testName}. Reason: ${reason} Please upload a valid screenshot from My Wallet.`,
+      type:    'service_fee_rejected',
+      meta:    { walletId: wallet._id },
+    });
+
+    const [enriched] = await enrichWallets([wallet]);
+    res.json({ message: 'Service fee receipt rejected', wallet: enriched });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -407,6 +564,7 @@ module.exports = {
   getUsers, suspendUser, activateUser,
   verifyPatientCnic, rejectPatientCnic,
   getWallets, getWalletById, verifyInstallment,
+  approvePlan, rejectPlan, verifyServiceFee, rejectServiceFee,
   getDefaulterCases,
   getCommunityApplications, approveCommunityApplication, rejectCommunityApplication,
   getNotifications, markNotificationRead,

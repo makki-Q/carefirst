@@ -385,6 +385,46 @@ const uploadInstallmentReceipt = async (req, res) => {
   }
 };
 
+// ─── POST /api/patient/wallets/:walletId/service-fee/receipt ──────────────────
+// Multipart field: receipt. Patient paid the CareFirst service fee after the
+// plan was approved; admin verifies it directly (no lab step). Replaceable until verified.
+const uploadServiceFeeReceipt = async (req, res) => {
+  const reject = (status, message) => {
+    removeUploadedFiles(req);
+    return res.status(status).json({ message });
+  };
+
+  try {
+    if (!req.file) return reject(400, 'Please attach the payment screenshot (PDF, JPG or PNG)');
+    if (!mongoose.isValidObjectId(req.params.walletId)) return reject(404, 'Wallet not found');
+
+    const wallet = await Wallet.findOne({ _id: req.params.walletId, patient: req.user._id });
+    if (!wallet) return reject(404, 'Wallet not found');
+    if (wallet.serviceFee.adminVerified)  return reject(400, 'The service fee is already verified');
+    if (wallet.status !== 'awaiting_fee') return reject(400, 'The service fee can be paid once your application is approved');
+
+    const isReplacement = Boolean(wallet.serviceFee.receiptUrl);
+    wallet.serviceFee.receiptUrl        = fileUrl('receipts', req.file.filename);
+    wallet.serviceFee.receiptUploadedAt = new Date();
+    wallet.serviceFee.rejectionReason   = undefined;
+    await wallet.save();
+
+    await notifyAdmins({
+      title:   isReplacement ? 'Service Fee Receipt Re-uploaded' : 'Service Fee Receipt Uploaded',
+      message: `${req.user.name} uploaded the PKR ${wallet.serviceFee.amount.toLocaleString()} service fee receipt for the ${wallet.testName} plan. Please verify it to activate the plan.`,
+      type:    'service_fee_uploaded',
+      meta:    { walletId: wallet._id },
+    });
+
+    await wallet.populate('lab', 'name');
+    const [enriched] = await enrichWallets([wallet]);
+    res.json({ message: 'Receipt uploaded. Awaiting CareFirst verification.', wallet: enriched });
+  } catch (err) {
+    removeUploadedFiles(req);
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── GET /api/patient/community-applications ──────────────────────────────────
 const getCommunityApplications = async (req, res) => {
   try {
@@ -479,7 +519,7 @@ module.exports = {
   getProfile, updateProfile,
   getPrescriptions,
   getReports, markReportRead,
-  getWallets, uploadInstallmentReceipt,
+  getWallets, uploadInstallmentReceipt, uploadServiceFeeReceipt,
   getInstallmentConfig, previewInstallmentPlan, applyForInstallmentPlan,
   getCommunityApplications, createCommunityApplication,
   getNotifications, markRead, markAllRead,

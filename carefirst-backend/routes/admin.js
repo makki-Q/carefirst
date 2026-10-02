@@ -6,6 +6,7 @@ const {
   getUsers, suspendUser, activateUser,
   verifyPatientCnic, rejectPatientCnic,
   getWallets, getWalletById, verifyInstallment,
+  approvePlan, rejectPlan, verifyServiceFee, rejectServiceFee,
   getDefaulterCases,
   getCommunityApplications, approveCommunityApplication, rejectCommunityApplication,
   getNotifications, markNotificationRead,
@@ -35,6 +36,12 @@ router.put('/patients/:userId/cnic/reject', ...guard, rejectPatientCnic);
 router.get('/wallets',                                              ...guard, getWallets);
 router.get('/wallets/:walletId',                                    ...guard, getWalletById);
 router.put('/wallets/:walletId/installments/:instIndex/verify',    ...guard, verifyInstallment);
+
+// Installment plan applications
+router.put('/wallets/:walletId/approve',             ...guard, approvePlan);
+router.put('/wallets/:walletId/reject',              ...guard, rejectPlan);
+router.put('/wallets/:walletId/service-fee/verify',  ...guard, verifyServiceFee);
+router.put('/wallets/:walletId/service-fee/reject',  ...guard, rejectServiceFee);
 
 // Defaulter cases (read-only — cases are auto-created by the cron job)
 router.get('/defaulter-cases', ...guard, getDefaulterCases);
