@@ -111,6 +111,10 @@ const buildPlanApplication = async (user, body) => {
   if (guarantor.cnic === profile.cnic) return fail(400, 'The guarantor must be someone other than you');
   if (!PHONE_FORMAT.test(guarantor.phone)) return fail(400, "Please enter the guarantor's phone number (e.g. 03001234567)");
   if (!guarantor.relation) return fail(400, 'Please enter how the guarantor is related to you');
+  // These go into the agreement (and its Urdu audio) — keep them to sensible lengths
+  if (guarantor.name.length > 80 || guarantor.relation.length > 40 || guarantor.address.length > 200) {
+    return fail(400, "Guarantor details are too long (name up to 80, relation up to 40, address up to 200 characters)");
+  }
 
   const totalAmount = Math.round(test.price);
   const { downPayment, installments } = planAmounts(totalAmount, test.installmentCount);
@@ -578,7 +582,7 @@ const visitDay = (date) =>
 const findLabBookings = (filter) =>
   LabBooking.find(filter)
     .populate('lab', 'name phone')
-    .populate('report', 'reportUrl testName createdAt')
+    .populate('report', 'reportUrl testName createdAt summary summaryUrdu summaryUrduSource')
     .sort({ visitDate: -1, createdAt: -1 });
 
 // ─── GET /api/patient/lab-bookings ────────────────────────────────────────────
@@ -787,4 +791,5 @@ module.exports = {
   getLabBookings, bookLabTest, cancelLabBooking,
   getCommunityApplications, createCommunityApplication,
   getNotifications, markRead, markAllRead,
+  buildPlanApplication, // also used by the TTS controller (agreement preview audio)
 };

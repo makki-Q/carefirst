@@ -1082,6 +1082,15 @@ const testUrdu = async () => {
   check("the assigned lawyer's case wallet has no Urdu agreement (409)",
     (await speak(tokens.lawyer, { source: 'agreement', id: ids.overdueWallet })).status === 409);
 
+  // Before applying: audio of the agreement preview, rebuilt on the server from the plan inputs
+  const previewBody = { source: 'agreement-preview', labId: ids.lab, testId: ids.mriTest, guarantor: { ...guarantor, cnic: '35202-7777777-7' } };
+  const prev = await speak(tokens.patient2, previewBody);
+  check('patient can hear the Urdu agreement before applying',
+    prev.status === 200 && mock.lastSsml.includes('35202-7777777-7') && mock.lastSsml.includes('35202-7654321-3'), [prev.status, prev.data]);
+  check('preview audio follows the same validation (400)',
+    (await speak(tokens.patient2, { ...previewBody, guarantor: { ...guarantor, name: 'x'.repeat(81) } })).status === 400);
+  check('only patients can request preview audio (404)', (await speak(tokens.doctor, previewBody)).status === 404);
+
   mock.speechDown = true;
   const down = await speak(tokens.patient, { source: 'agreement', id: ids.plan, voice: 'asad' });
   mock.speechDown = false;

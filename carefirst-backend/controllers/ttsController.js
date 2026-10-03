@@ -5,6 +5,7 @@ const DefaulterCase = require('../models/DefaulterCase');
 const Prescription  = require('../models/Prescription');
 const { urduAudioFile, speechConfigured, translatorConfigured } = require('../utils/azure');
 const { VOICES, DEFAULT_VOICE } = require('../config/azure');
+const { buildPlanApplication } = require('./patientController');
 
 const notFound = (res) => res.status(404).json({ message: 'Not found' });
 const same = (a, b) => Boolean(a && b && a.toString() === b.toString());
@@ -32,6 +33,15 @@ const reportText = async (user, id) => {
   return allowed ? { text: report.summaryUrdu || '' } : null;
 };
 
+// Urdu agreement for a plan the patient is about to apply for — rebuilt on the
+// server from the same validated inputs as the preview (body: labId, testId, guarantor)
+const previewAgreementText = async (user, body) => {
+  if (user.role !== 'patient') return null;
+  const { error, agreementTextUrdu } = await buildPlanApplication(user, body);
+  if (error) return { error };
+  return { text: agreementTextUrdu };
+};
+
 // ─── GET /api/tts/status ──────────────────────────────────────────────────────
 const getStatus = (req, res) => {
   res.json({ speech: speechConfigured(), translator: translatorConfigured(), voices: Object.keys(VOICES), defaultVoice: DEFAULT_VOICE });
@@ -39,15 +49,24 @@ const getStatus = (req, res) => {
 
 // ─── POST /api/tts ────────────────────────────────────────────────────────────
 // Body: { source: 'agreement' | 'report', id, voice?: 'uzma' | 'asad' } → audio/mpeg
-// Only stored Urdu text the user is allowed to see is spoken — never text from the request.
+//   or  { source: 'agreement-preview', labId, testId, guarantor, voice? } (patient, before applying)
+// Only Urdu text the server stores or generates itself is spoken — never text from the request.
 const speak = async (req, res) => {
   try {
     const { source, id } = req.body;
     const voice = req.body.voice || DEFAULT_VOICE;
-    if (!['agreement', 'report'].includes(source)) return res.status(400).json({ message: "source must be 'agreement' or 'report'" });
-    if (!mongoose.isValidObjectId(id)) return notFound(res);
+    if (!['agreement', 'agreement-preview', 'report'].includes(source)) {
+      return res.status(400).json({ message: "source must be 'agreement', 'agreement-preview' or 'report'" });
+    }
 
-    const found = source === 'agreement' ? await agreementText(req.user, id) : await reportText(req.user, id);
+    let found;
+    if (source === 'agreement-preview') {
+      found = await previewAgreementText(req.user, req.body);
+      if (found?.error) return res.status(found.error.status).json({ message: found.error.message });
+    } else {
+      if (!mongoose.isValidObjectId(id)) return notFound(res);
+      found = source === 'agreement' ? await agreementText(req.user, id) : await reportText(req.user, id);
+    }
     if (!found) return notFound(res);
     if (!found.text) {
       return res.status(409).json({ message: source === 'agreement' ? 'This agreement has no Urdu version' : 'This report has no Urdu summary yet' });
