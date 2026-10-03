@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import './PatientDashboard.css';
 import { api, getSession, saveSession, clearSession, formatCnic } from '../lib/api';
 import { getSocket } from '../lib/socket';
+import MapPicker, { currentPosition } from '../components/MapPicker';
 
 // ── Upload limits (mirror carefirst-backend/middleware/upload.js) ─────────────
 const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png'];
@@ -123,6 +124,14 @@ const PatientDashboard = () => {
   const [activeSpecialty, setActiveSpecialty] = useState('All');
   const [doctorSearch, setDoctorSearch]       = useState('');
   const [showTrueCost, setShowTrueCost]       = useState(false);
+
+  // ── True Cost Analysis — the position is only sent for the calculation, never stored ──
+  const [myPos, setMyPos]             = useState<{ lat: number; lng: number } | null>(null);
+  const [showPosMap, setShowPosMap]   = useState(false);
+  const [travelMode, setTravelMode]   = useState('motorbike');
+  const [travel, setTravel]           = useState<any>(null); // GET /public/true-cost
+  const [travelBusy, setTravelBusy]   = useState(false);
+  const [travelMsg, setTravelMsg]     = useState<{ ok: boolean; text: string } | null>(null);
   const [testSearch, setTestSearch]           = useState('');
   const [topSearch, setTopSearch]             = useState('');
   const [reportFilter, setReportFilter]       = useState('all');
@@ -260,6 +269,18 @@ const PatientDashboard = () => {
     return () => { socket.off('notification:new'); };
   }, []);
 
+  // True Cost: recalculate whenever the position or travel mode changes
+  useEffect(() => {
+    if (!showTrueCost || !myPos) return;
+    let stale = false;
+    setTravelBusy(true);
+    api.get(`/public/true-cost?lat=${myPos.lat}&lng=${myPos.lng}&mode=${travelMode}`)
+      .then((d: any) => { if (!stale) { setTravel(d); setTravelMsg(null); } })
+      .catch((err: any) => { if (!stale) setTravelMsg({ ok: false, text: err.message || 'Could not calculate travel costs' }); })
+      .finally(() => { if (!stale) setTravelBusy(false); });
+    return () => { stale = true; };
+  }, [showTrueCost, myPos?.lat, myPos?.lng, travelMode]);
+
   // Keep a valid wallet selected
   useEffect(() => {
     if (wallets.length && !wallets.some(w => w._id === selectedWalletId)) setSelectedWalletId(wallets[0]._id);
@@ -389,6 +410,19 @@ const PatientDashboard = () => {
   };
 
   const findLabsFor = (testName: string) => { setTestSearch(testName); navigate('bookTests'); };
+
+  const useMyLocation = async () => {
+    setTravelMsg(null); setTravelBusy(true);
+    try { setMyPos(await currentPosition()); setShowPosMap(false); }
+    catch (err: any) { setTravelMsg({ ok: false, text: err.message }); setShowPosMap(true); }
+    finally { setTravelBusy(false); } // the fetch effect sets it again while calculating
+  };
+
+  const toggleTrueCost = () => {
+    const on = !showTrueCost;
+    setShowTrueCost(on);
+    if (on && !myPos) useMyLocation(); // SRS UC-18: ask for live location when True Cost is switched on
+  };
 
   const startPlanApplication = (lab: any, test: any) => {
     setPlanTarget({ lab, test });
@@ -553,6 +587,18 @@ const PatientDashboard = () => {
       d.specialization?.toLowerCase().includes(doctorSearch.toLowerCase()))
   );
 
+  // True Cost: travel per lab (null until calculated / when the lab has no location)
+  const travelByLab: Record<string, any> = {};
+  if (showTrueCost && travel) (travel.labs || []).forEach((l: any) => { travelByLab[String(l.labId)] = l; });
+  const travelFor = (lab: any) => {
+    const t = travelByLab[String(lab.labId)];
+    return t && t.travelCost !== null ? t : null;
+  };
+  const travelModes = travel?.modes || [
+    { key: 'motorbike', label: 'Motorbike', ratePerKm: 8 }, { key: 'car', label: 'Car', ratePerKm: 25 },
+    { key: 'ride', label: 'Rickshaw / ride-hailing', ratePerKm: 50 },
+  ];
+
   const filteredLabs = allLabTests
     .map(lab => ({
       ...lab,
@@ -563,6 +609,18 @@ const PatientDashboard = () => {
       ),
     }))
     .filter(lab => lab.tests.length > 0);
+
+  // With travel costs: cheapest true cost first (for the searched test), labs without a location last
+  if (Object.keys(travelByLab).length) {
+    const rank = (lab: any) => {
+      const t = travelFor(lab);
+      if (!t) return Infinity;
+      return testSearch ? Math.min(...lab.tests.map((x: any) => x.price)) + t.travelCost : t.travelCost;
+    };
+    filteredLabs.sort((a, b) => rank(a) - rank(b));
+  }
+  const bestValueLabId = testSearch && filteredLabs[0] && travelFor(filteredLabs[0]) ? filteredLabs[0].labId : null;
+  const anyApprox = Object.values(travelByLab).some((t: any) => t.source === 'approx');
   const allTestNames = [...new Set(allLabTests.flatMap(l => l.tests.map((t: any) => t.name)))] as string[];
 
   const filteredReports = reports.filter(r =>
@@ -1147,7 +1205,7 @@ const PatientDashboard = () => {
                 <button
                   className={`pat-btn-ghost pat-fade-up pat-fade-up-1 ${showTrueCost ? 'pat-btn-primary' : ''}`}
                   style={showTrueCost ? { background: 'var(--text)', color: '#fff' } : {}}
-                  onClick={() => setShowTrueCost(!showTrueCost)}
+                  onClick={toggleTrueCost}
                 >
                   <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
                     <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
@@ -1157,12 +1215,39 @@ const PatientDashboard = () => {
               </div>
 
               {showTrueCost && (
-                <div className="pat-true-cost-banner pat-fade-up">
-                  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-                  </svg>
-                  <div className="pat-true-cost-text">
-                    <strong>True Cost Analysis enabled.</strong> Prices shown include lab fees, collection charges, and any applicable taxes — no hidden costs.
+                <div className="pat-card pat-fade-up" style={{ padding: '18px 22px', marginBottom: 18 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+                    <div style={{ fontWeight: 700, color: 'var(--text)', fontSize: '0.9rem', flex: 1, minWidth: 220 }}>
+                      True cost = test price + travel to the lab and back
+                    </div>
+                    <button type="button" className="pat-btn-ghost" onClick={useMyLocation} disabled={travelBusy}>
+                      {myPos ? 'Update my location' : 'Use my location'}
+                    </button>
+                    <button type="button" className="pat-btn-ghost" onClick={() => setShowPosMap(v => !v)}>
+                      {showPosMap ? 'Hide map' : 'Pick on map'}
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>I'll travel by</span>
+                    {travelModes.map((m: any) => (
+                      <button key={m.key} type="button" className={`pat-spec-chip ${travelMode === m.key ? 'active' : ''}`} onClick={() => setTravelMode(m.key)}>
+                        {m.label} · {pkr(m.ratePerKm)}/km
+                      </button>
+                    ))}
+                  </div>
+
+                  {showPosMap && (
+                    <div style={{ marginBottom: 10 }}>
+                      <MapPicker value={myPos} onChange={p => { setMyPos(p); setTravelMsg(null); }} height={240} />
+                    </div>
+                  )}
+
+                  {banner(travelMsg)}
+                  <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                    {travelBusy ? 'Calculating road distances…'
+                      : !myPos ? 'Share your location or drop a pin to see travel costs. Your location is only used for this calculation and is not saved.'
+                      : <>Distances {anyApprox ? 'are partly approximate (route service unavailable)' : 'are by road'} · travel cost = km × 2 × {pkr(travel?.ratePerKm ?? 0)}/km · labs are sorted by {testSearch ? `true cost for "${testSearch}"` : 'travel cost'}.</>}
                   </div>
                 </div>
               )}
@@ -1220,6 +1305,9 @@ const PatientDashboard = () => {
                           {lab.isCharityPartner && (
                             <span style={{ fontSize: '0.65rem', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', borderRadius: 10, padding: '1px 7px', fontWeight: 700 }}>Charity Partner</span>
                           )}
+                          {lab.labId === bestValueLabId && (
+                            <span style={{ fontSize: '0.65rem', background: 'var(--text)', color: '#fff', borderRadius: 10, padding: '1px 8px', fontWeight: 700 }}>Best value</span>
+                          )}
                         </div>
                         <div className="pat-lab-location">
                           <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24" style={{ marginRight: 3, verticalAlign: 'middle' }}>
@@ -1227,6 +1315,16 @@ const PatientDashboard = () => {
                           </svg>
                           {lab.location}
                         </div>
+                        {travel && showTrueCost && (() => {
+                          const t = travelFor(lab);
+                          return (
+                            <div style={{ fontSize: '0.74rem', marginTop: 3, color: t ? 'var(--text-sub)' : 'var(--text-muted)' }}>
+                              {t
+                                ? <>{t.source === 'approx' ? '≈ ' : ''}{t.distanceKm} km · {t.durationMin} min · travel <strong style={{ color: 'var(--text)' }}>{pkr(t.travelCost)}</strong> there &amp; back</>
+                                : 'Lab has not set its location — travel cost unknown'}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -1237,6 +1335,12 @@ const PatientDashboard = () => {
                             <span style={{ fontWeight: 600, color: 'var(--text)', fontSize: '0.84rem' }}>{t.name}</span>
                             <span className="pat-price-val">{pkr(t.price)}</span>
                           </div>
+                          {travelFor(lab) && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem', color: 'var(--text-sub)' }}>
+                              <span>True cost (with travel)</span>
+                              <strong style={{ color: 'var(--text)' }}>{pkr(t.price + travelFor(lab).travelCost)}</strong>
+                            </div>
+                          )}
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                             <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{t.category}</span>
                             {t.installmentEnabled && (() => {

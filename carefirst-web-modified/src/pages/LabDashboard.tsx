@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './LabDashboard.css';
 import { api, getSession, clearSession } from '../lib/api';
 import { getSocket } from '../lib/socket';
+import MapPicker, { currentPosition } from '../components/MapPicker';
 
 const TENURE_OPTIONS = [15, 20, 25, 30];
 
@@ -45,6 +46,11 @@ const LabDashboard = () => {
   const [paySaving, setPaySaving] = useState(false);
   const [payMsg, setPayMsg]       = useState<{ ok: boolean; text: string } | null>(null);
 
+  // Map pin — used for patients' True Cost (travel distance) comparison
+  const [pinDraft, setPinDraft]   = useState<{ lat: number; lng: number } | null>(null);
+  const [pinSaving, setPinSaving] = useState(false);
+  const [pinMsg, setPinMsg]       = useState<{ ok: boolean; text: string } | null>(null);
+
   // Add test form
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [addForm, setAddForm] = useState({
@@ -82,6 +88,8 @@ const LabDashboard = () => {
         jazzCash:      d.profile?.jazzCash  || '',
         easyPaisa:     d.profile?.easyPaisa || '',
       });
+      const c = d.profile?.coordinates;
+      if (Number.isFinite(c?.lat) && Number.isFinite(c?.lng)) setPinDraft({ lat: c.lat, lng: c.lng });
     }).catch(() => {});
     api.get('/lab/tests').then((d: any) => setTests(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/lab/reports').then((d: any) => setReports(Array.isArray(d) ? d : [])).catch(() => {});
@@ -232,6 +240,26 @@ const LabDashboard = () => {
     } catch (err: any) { alert(err.message || 'Could not confirm the receipt'); }
   };
 
+  const useLabPosition = async () => {
+    setPinMsg(null);
+    try { setPinDraft(await currentPosition()); }
+    catch (err: any) { setPinMsg({ ok: false, text: err.message }); }
+  };
+
+  const saveLocation = async (coords: { lat: number; lng: number } | null) => {
+    setPinMsg(null); setPinSaving(true);
+    try {
+      const updated: any = await api.put('/lab/profile', { coordinates: coords });
+      setLabProfile((prev: any) => ({ ...prev, profile: updated }));
+      if (!coords) setPinDraft(null);
+      setPinMsg({ ok: true, text: coords ? 'Location saved. Patients can now see their travel cost to your lab.' : 'Location removed.' });
+    } catch (err: any) {
+      setPinMsg({ ok: false, text: err.message || 'Could not save the location' });
+    } finally {
+      setPinSaving(false);
+    }
+  };
+
   const savePaymentDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     setPayMsg(null);
@@ -275,6 +303,14 @@ const LabDashboard = () => {
       {currentPage !== 'catalog' && <> <a style={{ textDecoration: 'underline', cursor: 'pointer', fontWeight: 600 }} onClick={() => setCurrentPage('catalog')}>Add them in Test Catalog</a>.</>}
     </div>
   );
+  const savedPin = Number.isFinite(lp?.coordinates?.lat) && Number.isFinite(lp?.coordinates?.lng) ? lp.coordinates : null;
+  const locationNotice = labProfile && !savedPin && (
+    <div className="dash-card dash-fu" style={{ padding: '12px 18px', marginBottom: 18, background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', fontSize: '0.82rem' }}>
+      <strong>Set your lab's location on the map.</strong> Patients compare labs by true cost (test price + travel); without a location your lab is listed last.
+      {currentPage !== 'catalog' && <> <a style={{ textDecoration: 'underline', cursor: 'pointer', fontWeight: 600 }} onClick={() => setCurrentPage('catalog')}>Set it in Test Catalog</a>.</>}
+    </div>
+  );
+  const pinChanged = Boolean(pinDraft) && (pinDraft?.lat !== savedPin?.lat || pinDraft?.lng !== savedPin?.lng);
 
   const today = pktToday();
   const openBookings   = bookings.filter((b: any) => ['confirmed', 'sample_collected'].includes(b.status));
@@ -440,6 +476,7 @@ const LabDashboard = () => {
               </div>
 
               {paymentDetailsNotice}
+              {locationNotice}
 
               <div className="dash-hero-card dash-fu dash-fu-1">
                 <div className="dash-hero-inner">
@@ -725,6 +762,7 @@ const LabDashboard = () => {
               </div>
 
               {paymentDetailsNotice}
+              {locationNotice}
 
               {/* Payment details — where patients pay the down payment and installments */}
               <div className="dash-card dash-fu" style={{ padding: '20px 28px', marginBottom: 20 }}>
@@ -756,6 +794,35 @@ const LabDashboard = () => {
                     {paySaving ? 'Saving…' : 'Save Payment Details'}
                   </button>
                 </form>
+              </div>
+
+              {/* Lab location — patients' True Cost (travel distance) comparison */}
+              <div className="dash-card dash-fu" style={{ padding: '20px 28px', marginBottom: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text)', marginBottom: 4 }}>Lab Location</div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                      Click the map or drag the pin to your entrance. Patients see the road distance and travel cost to your lab.
+                    </div>
+                  </div>
+                  <button type="button" className="dash-btn-ghost" onClick={useLabPosition} disabled={pinSaving}>Use my current location</button>
+                </div>
+                {pinMsg && (
+                  <div style={{ padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: '0.8rem', background: pinMsg.ok ? '#f0fdf4' : '#fef2f2', color: pinMsg.ok ? '#166534' : '#991b1b', border: '1px solid ' + (pinMsg.ok ? '#bbf7d0' : '#fecaca') }}>
+                    {pinMsg.text}
+                  </div>
+                )}
+                <MapPicker value={pinDraft} onChange={p => { setPinDraft(p); setPinMsg(null); }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
+                  <span className="dash-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flex: 1 }}>
+                    {pinDraft ? `${pinDraft.lat.toFixed(5)}, ${pinDraft.lng.toFixed(5)}${pinChanged ? ' — not saved yet' : ''}` : 'No location set'}
+                  </span>
+                  {savedPin && <button type="button" className="dash-btn-ghost" onClick={() => saveLocation(null)} disabled={pinSaving}>Remove</button>}
+                  <button type="button" className="dash-btn-primary accent" disabled={!pinChanged || pinSaving} onClick={() => pinDraft && saveLocation(pinDraft)}
+                    style={!pinChanged || pinSaving ? { opacity: 0.55 } : {}}>
+                    {pinSaving ? 'Saving…' : 'Save Location'}
+                  </button>
+                </div>
               </div>
 
               {showAddPanel && (
