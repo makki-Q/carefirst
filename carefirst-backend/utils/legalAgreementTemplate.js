@@ -124,4 +124,61 @@ support@carefirst.pk
 `.trim();
 };
 
-module.exports = { generateLegalAgreement, generateInstallmentAgreement };
+// Urdu version of the installment agreement — shown and read aloud (Azure Speech)
+// next to the English one. The English text remains the binding version.
+// Same inputs as generateInstallmentAgreement; names and CNICs stay as entered.
+const generateInstallmentAgreementUrdu = ({
+  patient, patientCnic, guarantor, labName, testName,
+  totalAmount, downPayment, installments, tenureDays, serviceFee, graceDays,
+}) => {
+  const rs = (n) => `${(n || 0).toLocaleString('en-US')} روپے`;
+  const schedule = installments
+    .map((amount, i) => `قسط نمبر ${i + 1}: ${rs(amount)} — منصوبہ فعال ہونے کے ${tenureDays * (i + 1)} دن بعد واجب الادا`)
+    .join('\n');
+
+  return `
+اقساط کے منصوبے کا معاہدہ
+کیئر فرسٹ ہیلتھ پلیٹ فارم
+
+حصہ اوّل — فریقین
+مریض: ${patient.name}
+شناختی کارڈ نمبر: ${patientCnic}
+فون: ${patient.phone || 'درج نہیں'}
+
+ضامن: ${guarantor.name}
+شناختی کارڈ نمبر: ${guarantor.cnic}
+فون: ${guarantor.phone}
+رشتہ: ${guarantor.relation}
+پتہ: ${guarantor.address || 'درج نہیں'}
+
+لیبارٹری: ${labName}
+
+حصہ دوم — ٹیسٹ اور رقم
+ٹیسٹ: ${testName}
+ٹیسٹ کی قیمت: ${rs(totalAmount)}
+پیشگی ادائیگی: ${rs(downPayment)}، جو لیبارٹری کو ادا کی جائے گی
+اقساط: ${installments.length} اقساط، ہر ${tenureDays} دن بعد، جو لیبارٹری کو ادا کی جائیں گی
+${schedule}
+
+کیئر فرسٹ سروس فیس: ${rs(serviceFee)}، جو کیئر فرسٹ کو ادا کی جائے گی اور ٹیسٹ کی قیمت سے الگ ہے
+
+حصہ سوم — منصوبہ کیسے کام کرتا ہے
+1. کیئر فرسٹ اس درخواست کا جائزہ لے گا۔ منظوری کی صورت میں مریض کیئر فرسٹ کو سروس فیس ادا کرے گا اور ادائیگی کا ثبوت اپ لوڈ کرے گا۔
+2. سروس فیس کی تصدیق کے بعد منصوبہ فعال ہو جائے گا، اور اقساط کی تاریخیں اسی دن سے شمار ہوں گی۔
+3. پیشگی ادائیگی اور ہر قسط براہِ راست لیبارٹری کو ادا کی جائے گی۔ کیئر فرسٹ ٹیسٹ کی کوئی رقم نہ وصول کرتا ہے، نہ اپنے پاس رکھتا ہے اور نہ منتقل کرتا ہے۔
+4. ہر ادائیگی کا ثبوت مریض کیئر فرسٹ پر اپ لوڈ کرے گا؛ لیبارٹری رقم کی وصولی کی تصدیق کرے گی اور کیئر فرسٹ اس کی توثیق کرے گا۔
+
+حصہ چہارم — نادہندگی
+1. اگر کسی قسط کی مقررہ تاریخ کے بعد ${graceDays} دن کے اندر ادائیگی کا ثبوت اپ لوڈ نہ کیا گیا تو مریض نادہندہ تصور ہوگا۔
+2. نادہندگی کی صورت میں معاملہ خود بخود کیئر فرسٹ کے قانونی مشیر کو بھیج دیا جائے گا، جنہیں یہ معاہدہ اور مریض و ضامن کی مندرجہ بالا تفصیلات فراہم کی جائیں گی۔
+3. تمام واجب الادا رقم کی ادائیگی کا ضامن، مریض کے ساتھ مشترکہ طور پر ذمہ دار ہوگا۔
+4. رقم کی وصولی کی کارروائی قابلِ اطلاق قانونی طریقوں کے مطابق آف لائن کی جائے گی۔
+
+حصہ پنجم — اقرار
+مریض اقرار کرتا ہے کہ اوپر درج تفصیلات درست ہیں، ضامن نے ضمانت دینے پر رضامندی ظاہر کی ہے، اور مریض نے یہ معاہدہ پڑھ لیا ہے اور اسے قبول کرتا ہے۔ کیئر فرسٹ قبولیت کا وقت محفوظ کرتا ہے۔
+
+نوٹ: یہ معاہدے کا اردو متن سہولت کے لیے ہے؛ قانونی طور پر انگریزی متن ہی معتبر ہوگا۔
+`.trim();
+};
+
+module.exports = { generateLegalAgreement, generateInstallmentAgreement, generateInstallmentAgreementUrdu };

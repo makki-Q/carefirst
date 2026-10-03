@@ -68,7 +68,8 @@ const call = async (method, urlPath, { token, body, files, raw } = {}) => {
   const text = await res.text();
   let data;
   try { data = JSON.parse(text); } catch { data = { _raw: text }; }
-  return { status: res.status, data, json: res.headers.get('content-type')?.includes('application/json') };
+  const type = res.headers.get('content-type') || '';
+  return { status: res.status, data, type, json: type.includes('application/json') };
 };
 
 const get  = (p, opts) => call('GET', p, opts);
@@ -85,18 +86,39 @@ const listUploads = () => new Set(
 const http = require('http');
 const MOCK_PORT = 5098;
 const MOCK      = `http://127.0.0.1:${MOCK_PORT}`;
-const mock = { osrmDown: false, osrmCalls: 0 };
+const mock = { osrmDown: false, osrmCalls: 0, translatorDown: false, translations: 0, speechDown: false, speechCalls: 0, lastSsml: '' };
 let mockServer;
+const AUDIO_DIR = path.join(require('os').tmpdir(), `carefirst-e2e-audio-${process.pid}`);
 
 // Fake road distance = straight line × 1.5 (the server's own fallback uses × 1.3)
 const fakeRoadKm = (a, b) => require('../utils/travel').haversineKm(a, b) * 1.5;
 
-const handleMock = (req, res) => {
+const handleMock = async (req, res) => {
   const url = new URL(req.url, MOCK);
   const send = (status, body, type = 'application/json') => {
     res.writeHead(status, { 'Content-Type': type });
     res.end(type === 'application/json' ? JSON.stringify(body) : body);
   };
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  const body = Buffer.concat(chunks).toString('utf8');
+
+  // Azure Translator: "[ur] <English>" so tests can recognise the translation
+  if (req.method === 'POST' && url.pathname === '/translate') {
+    if (req.headers['ocp-apim-subscription-key'] !== 'test-translator-key') return send(401, { error: 'bad key' });
+    if (mock.translatorDown) return send(500, { error: 'down' });
+    mock.translations++;
+    return send(200, JSON.parse(body).map(item => ({ translations: [{ text: `[ur] ${item.Text}`, to: 'ur' }] })));
+  }
+
+  // Azure Speech: fake MP3 bytes
+  if (req.method === 'POST' && url.pathname === '/cognitiveservices/v1') {
+    if (req.headers['ocp-apim-subscription-key'] !== 'test-speech-key') return send(401, { error: 'bad key' });
+    if (mock.speechDown) return send(500, { error: 'down' });
+    mock.speechCalls++;
+    mock.lastSsml = body;
+    return send(200, Buffer.from(`ID3fake-mp3-${mock.speechCalls}`), 'audio/mpeg');
+  }
 
   const table = url.pathname.match(/^\/table\/v1\/driving\/(.+)$/);
   if (table) {
@@ -130,6 +152,14 @@ const startServer = async () => {
       ADMIN_PASSWORD: ADMIN.password,
       BASE_URL:       BASE,
       OSRM_URL:       MOCK,
+      // Fake Azure — overrides the real keys in .env so tests never spend quota
+      AZURE_TRANSLATOR_KEY:      'test-translator-key',
+      AZURE_TRANSLATOR_REGION:   'test',
+      AZURE_TRANSLATOR_ENDPOINT: MOCK,
+      AZURE_SPEECH_KEY:          'test-speech-key',
+      AZURE_SPEECH_REGION:       'test',
+      AZURE_SPEECH_ENDPOINT:     MOCK,
+      AUDIO_CACHE_DIR:           AUDIO_DIR,
     },
   });
   server.stdout.on('data', d => { serverLog += d; });
@@ -943,6 +973,7 @@ const testDefaulterEscalation = async () => {
     ],
   });
 
+  ids.overdueWallet = wallet._id.toString();
   await runDefaulterCheck();
 
   const after = await Wallet.findById(wallet._id);
@@ -970,6 +1001,91 @@ const testDefaulterEscalation = async () => {
   const lawyerNotifs = await get('/api/lawyer/notifications', { token: tokens.lawyer });
   check('lawyer marks all notifications read',
     readAll.status === 200 && lawyerNotifs.data.length > 0 && lawyerNotifs.data.every(n => n.read), lawyerNotifs.data);
+};
+
+// ─── Step 4 — Urdu translation + speech (fake Azure) ─────────────────────────
+const testUrdu = async () => {
+  section('Urdu agreement and report summaries');
+  const speak = (token, body) => post('/api/tts', { token, body });
+
+  const status = await get('/api/tts/status', { token: tokens.patient });
+  check('TTS status reports speech + translator configured and both voices',
+    status.data.speech === true && status.data.translator === true && status.data.voices.join() === 'uzma,asad' && status.data.defaultVoice === 'uzma', status.data);
+
+  const plan = (await get('/api/patient/wallets', { token: tokens.patient })).data.find(w => w._id === ids.plan);
+  check('the stored agreement has an Urdu version with the same details',
+    ['35202-1234567-9', 'Kamran Khan', '25,000 روپے', '5,000 روپے', 'E2E Diagnostics', 'انگریزی متن ہی معتبر'].every(x => plan?.agreement?.textUrdu?.includes(x)), plan?.agreement?.textUrdu);
+
+  // Report summaries — translated on upload
+  const before = mock.translations;
+  const rep = await post('/api/lab/reports/upload', {
+    token: tokens.lab, body: { patientId: ids.patient, testName: 'CBC', summary: 'Your blood count is normal.' }, files: { report: ['cbc3.png'] },
+  });
+  check('report summary is machine-translated to Urdu on upload',
+    rep.status === 201 && rep.data.summary === 'Your blood count is normal.' && rep.data.summaryUrdu === '[ur] Your blood count is normal.' &&
+    rep.data.summaryUrduSource === 'machine' && mock.translations === before + 1, rep.data);
+  ids.urduReport = rep.data._id;
+
+  const plain = await post('/api/lab/reports/upload', { token: tokens.lab, body: { patientId: ids.patient, testName: 'CBC' }, files: { report: ['cbc4.png'] } });
+  check('a report without a summary is not translated', plain.status === 201 && !plain.data.summaryUrdu && mock.translations === before + 1, plain.data);
+
+  const mine = (await get('/api/patient/reports', { token: tokens.patient })).data.find(r => r._id === ids.urduReport);
+  check('patient sees the English and Urdu summary', mine?.summary && mine?.summaryUrdu === '[ur] Your blood count is normal.', mine);
+
+  // Audio
+  const calls = mock.speechCalls;
+  const a1 = await speak(tokens.patient, { source: 'report', id: ids.urduReport });
+  check('patient gets Urdu audio of their report summary (Uzma by default)',
+    a1.status === 200 && a1.type.includes('audio/mpeg') && mock.speechCalls === calls + 1 &&
+    mock.lastSsml.includes('ur-PK-UzmaNeural') && mock.lastSsml.includes('[ur] Your blood count is normal.'), [a1.status, a1.type, mock.lastSsml]);
+  const a2 = await speak(tokens.patient, { source: 'report', id: ids.urduReport });
+  check('the same audio is served from the cache', a2.status === 200 && mock.speechCalls === calls + 1);
+  const a3 = await speak(tokens.patient, { source: 'report', id: ids.urduReport, voice: 'asad' });
+  check('the Asad voice is generated separately', a3.status === 200 && mock.speechCalls === calls + 2 && mock.lastSsml.includes('ur-PK-AsadNeural'));
+
+  check('an unknown voice is rejected (400)', (await speak(tokens.patient, { source: 'report', id: ids.urduReport, voice: 'robot' })).status === 400);
+  check('an unknown source is rejected (400)', (await speak(tokens.patient, { source: 'free-text', id: ids.urduReport })).status === 400);
+  check('an invalid id returns 404', (await speak(tokens.patient, { source: 'report', id: 'nope' })).status === 404);
+  check('a report without an Urdu summary returns 409', (await speak(tokens.patient, { source: 'report', id: plain.data._id })).status === 409);
+  check('signing in is required (401)', (await post('/api/tts', { body: { source: 'report', id: ids.urduReport } })).status === 401);
+
+  check("another patient cannot hear this patient's report (404)", (await speak(tokens.patient2, { source: 'report', id: ids.urduReport })).status === 404);
+  check('the lab that uploaded it can listen', (await speak(tokens.lab, { source: 'report', id: ids.urduReport })).status === 200);
+  check('another lab cannot (404)', (await speak(tokens.lab2, { source: 'report', id: ids.urduReport })).status === 404);
+  check("the patient's doctor can listen", (await speak(tokens.doctor, { source: 'report', id: ids.urduReport })).status === 200);
+
+  // Lab corrections
+  const fix = await put(`/api/lab/reports/${ids.urduReport}/summary`, { token: tokens.lab, body: { summaryUrdu: 'آپ کا خون کا ٹیسٹ نارمل ہے۔' } });
+  check('lab corrects the Urdu summary', fix.status === 200 && fix.data.report.summaryUrdu === 'آپ کا خون کا ٹیسٹ نارمل ہے۔' && fix.data.report.summaryUrduSource === 'lab' && fix.data.report.summaryUrduEditedAt, fix.data);
+  const a4 = await speak(tokens.patient, { source: 'report', id: ids.urduReport });
+  check('corrected text gets new audio', a4.status === 200 && mock.speechCalls === calls + 3 && mock.lastSsml.includes('آپ کا خون کا ٹیسٹ نارمل ہے۔'));
+
+  const retr = await put(`/api/lab/reports/${ids.urduReport}/summary`, { token: tokens.lab, body: { summary: 'Haemoglobin is slightly low.' } });
+  check('a new English summary is translated again', retr.status === 200 && retr.data.report.summaryUrdu === '[ur] Haemoglobin is slightly low.' && retr.data.report.summaryUrduSource === 'machine', retr.data);
+  check("another lab cannot edit the summary (404)",
+    (await put(`/api/lab/reports/${ids.urduReport}/summary`, { token: tokens.lab2, body: { summaryUrdu: 'x' } })).status === 404);
+  check('an empty update is rejected (400)', (await put(`/api/lab/reports/${ids.urduReport}/summary`, { token: tokens.lab, body: {} })).status === 400);
+
+  mock.translatorDown = true;
+  const failRetr = await put(`/api/lab/reports/${ids.urduReport}/summary`, { token: tokens.lab, body: { summary: 'Platelets are normal.' } });
+  check('if translation fails, the lab is told (502)', failRetr.status === 502, failRetr);
+  const failUp = await post('/api/lab/reports/upload', { token: tokens.lab, body: { patientId: ids.patient, testName: 'CBC', summary: 'All normal.' }, files: { report: ['cbc5.png'] } });
+  check('a report still uploads when translation fails (no Urdu yet)', failUp.status === 201 && failUp.data.summary === 'All normal.' && !failUp.data.summaryUrdu, failUp.data);
+  mock.translatorDown = false;
+
+  // Agreement audio
+  const ag = await speak(tokens.patient, { source: 'agreement', id: ids.plan });
+  check('patient hears the Urdu agreement', ag.status === 200 && mock.lastSsml.includes('اقساط کے منصوبے کا معاہدہ') && mock.lastSsml.includes('<break'), mock.lastSsml.slice(0, 200));
+  check('admin can hear it', (await speak(tokens.admin, { source: 'agreement', id: ids.plan })).status === 200);
+  check("another patient cannot (404)", (await speak(tokens.patient2, { source: 'agreement', id: ids.plan })).status === 404);
+  check('a lawyer without the case cannot (404)', (await speak(tokens.lawyer, { source: 'agreement', id: ids.plan })).status === 404);
+  check("the assigned lawyer's case wallet has no Urdu agreement (409)",
+    (await speak(tokens.lawyer, { source: 'agreement', id: ids.overdueWallet })).status === 409);
+
+  mock.speechDown = true;
+  const down = await speak(tokens.patient, { source: 'agreement', id: ids.plan, voice: 'asad' });
+  mock.speechDown = false;
+  check('if the speech service fails, a clear 502 is returned', down.status === 502 && down.json, down);
 };
 
 const testDueReminders = async () => {
@@ -1049,6 +1165,7 @@ const main = async () => {
     await testLabBookings();
     await testTrueCost();
     await testDefaulterEscalation();
+    await testUrdu();
     await testDueReminders();
     await testMisc();
   } catch (err) {
@@ -1057,6 +1174,7 @@ const main = async () => {
   } finally {
     server?.kill();
     mockServer?.close();
+    fs.rmSync(AUDIO_DIR, { recursive: true, force: true });
     await mongoose.connection.dropDatabase();
     await mongoose.disconnect();
     for (const file of listUploads()) {

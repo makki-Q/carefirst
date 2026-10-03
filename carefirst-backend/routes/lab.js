@@ -3,7 +3,7 @@ const router  = express.Router();
 const {
   getProfile, updateProfile,
   getTests, addTest, updateTest, deleteTest,
-  uploadReport, getReports,
+  uploadReport, getReports, updateReportSummary,
   getReceiptsPendingApproval, approveReceipt,
   getNeedyPatients, markTestConducted,
   getLabPatients,
@@ -28,6 +28,7 @@ router.delete('/tests/:testId',...guard, deleteTest);
 // Test reports (lab → patient)
 router.post('/reports/upload',  ...guard, reportUpload.single('report'), uploadReport);
 router.get('/reports',          ...guard, getReports);
+router.put('/reports/:id/summary', ...guard, updateReportSummary); // correct the Urdu / re-translate
 
 // Receipt approval (lab confirms patient's payment)
 router.get('/receipts',                                                   ...guard, getReceiptsPendingApproval);

@@ -17,7 +17,7 @@ const {
 } = require('../utils/schedule');
 const { normalizeCnic }    = require('../utils/cnic');
 const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
-const { generateInstallmentAgreement } = require('../utils/legalAgreementTemplate');
+const { generateInstallmentAgreement, generateInstallmentAgreementUrdu } = require('../utils/legalAgreementTemplate');
 const {
   OPEN_PLAN_STATUSES, labPaymentDetails, hasPaymentDetails, planAmounts, findLabPayment,
 } = require('../utils/installmentPlan');
@@ -129,7 +129,7 @@ const buildPlanApplication = async (user, body) => {
     guarantor,
   };
 
-  const agreementText = generateInstallmentAgreement({
+  const agreementInput = {
     patient:     user,
     patientCnic: profile.cnic,
     guarantor,
@@ -141,9 +141,11 @@ const buildPlanApplication = async (user, body) => {
     tenureDays:  terms.installmentTenureDays,
     serviceFee:  SERVICE_FEE,
     graceDays:   GRACE_DAYS,
-  });
+  };
+  const agreementText     = generateInstallmentAgreement(agreementInput);
+  const agreementTextUrdu = generateInstallmentAgreementUrdu(agreementInput);
 
-  return { terms, agreementText };
+  return { terms, agreementText, agreementTextUrdu };
 };
 
 // ─── GET /api/patient/profile ─────────────────────────────────────────────────
@@ -290,9 +292,9 @@ const getInstallmentConfig = async (req, res) => {
 // Returns the plan terms and the agreement text the patient must accept
 const previewInstallmentPlan = async (req, res) => {
   try {
-    const { error, terms, agreementText } = await buildPlanApplication(req.user, req.body);
+    const { error, terms, agreementText, agreementTextUrdu } = await buildPlanApplication(req.user, req.body);
     if (error) return res.status(error.status).json({ message: error.message });
-    res.json({ ...terms, agreementText });
+    res.json({ ...terms, agreementText, agreementTextUrdu });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -307,7 +309,7 @@ const applyForInstallmentPlan = async (req, res) => {
       return res.status(400).json({ message: 'You must read and accept the agreement to apply' });
     }
 
-    const { error, terms, agreementText } = await buildPlanApplication(req.user, req.body);
+    const { error, terms, agreementText, agreementTextUrdu } = await buildPlanApplication(req.user, req.body);
     if (error) return res.status(error.status).json({ message: error.message });
     if (req.body.agreementText !== agreementText) {
       return res.status(409).json({ message: 'The plan terms have changed. Please review the agreement again.' });
@@ -324,7 +326,7 @@ const applyForInstallmentPlan = async (req, res) => {
       downPayment:           { amount: terms.downPayment },
       serviceFee:            { amount: terms.serviceFee },
       guarantor:             terms.guarantor,
-      agreement:             { text: agreementText, acceptedAt: new Date() },
+      agreement:             { text: agreementText, textUrdu: agreementTextUrdu, acceptedAt: new Date() },
       status:                'pending_approval',
     });
 

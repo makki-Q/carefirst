@@ -13,6 +13,9 @@ build/
 # Files uploaded at runtime (reports, receipts, community docs)
 carefirst-backend/uploads/
 
+# Generated Urdu audio cache (private, regenerated on demand)
+carefirst-backend/storage/
+
 # Logs
 *.log
 npm-debug.log*

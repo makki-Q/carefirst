@@ -11,6 +11,7 @@ const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
 const { withPatientDetails } = require('../utils/patientProfiles');
 const { findLabPayment }     = require('../utils/installmentPlan');
 const { isLatLng }           = require('../utils/travel');
+const { translateToUrdu }     = require('../utils/azure');
 
 // ─── GET /api/lab/profile ─────────────────────────────────────────────────────
 const getProfile = async (req, res) => {
@@ -153,6 +154,10 @@ const uploadReport = async (req, res) => {
     const patient = mongoose.isValidObjectId(patientId) && await User.findOne({ _id: patientId, role: 'patient' });
     if (!patient) return reject(404, 'Patient not found');
 
+    // Plain-language summary for the patient, machine-translated to Urdu (lab can correct it later)
+    const summary     = typeof req.body.summary === 'string' ? req.body.summary.trim() : '';
+    const summaryUrdu = summary ? await translateToUrdu(summary) : null;
+
     const reportUrl = fileUrl('reports', req.file.filename);
     const report    = await TestReport.create({
       patient: patientId,
@@ -161,6 +166,8 @@ const uploadReport = async (req, res) => {
       reportUrl,
       notes,
       booking: booking?._id,
+      ...(summary && { summary }),
+      ...(summaryUrdu && { summaryUrdu, summaryUrduSource: 'machine' }),
     });
 
     if (booking) {
@@ -184,6 +191,46 @@ const uploadReport = async (req, res) => {
     res.status(201).json(report);
   } catch (err) {
     removeUploadedFiles(req);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PUT /api/lab/reports/:id/summary ────────────────────────────────────────
+// Body: { summary?, summaryUrdu? }
+//   summaryUrdu  → the lab's own correction of the Urdu text
+//   summary only → new English summary, translated again
+const updateReportSummary = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Report not found' });
+    const report = await TestReport.findOne({ _id: req.params.id, lab: req.user._id });
+    if (!report) return res.status(404).json({ message: 'Report not found' });
+
+    const str = (v) => (typeof v === 'string' ? v.trim() : undefined);
+    const summary     = str(req.body.summary);
+    const summaryUrdu = str(req.body.summaryUrdu);
+    if (summary === undefined && summaryUrdu === undefined) {
+      return res.status(400).json({ message: 'Send summary and/or summaryUrdu' });
+    }
+
+    if (summary !== undefined) report.summary = summary || undefined;
+    if (summaryUrdu !== undefined) {
+      report.summaryUrdu         = summaryUrdu || undefined;
+      report.summaryUrduSource   = summaryUrdu ? 'lab' : undefined;
+      report.summaryUrduEditedAt = summaryUrdu ? new Date() : undefined;
+    } else if (summary) {
+      const translated = await translateToUrdu(summary);
+      if (!translated) return res.status(502).json({ message: 'Could not translate the summary right now. Please try again, or type the Urdu yourself.' });
+      report.summaryUrdu         = translated;
+      report.summaryUrduSource   = 'machine';
+      report.summaryUrduEditedAt = undefined;
+    } else {
+      report.summaryUrdu = report.summaryUrduSource = report.summaryUrduEditedAt = undefined;
+    }
+    await report.save();
+
+    await report.populate('patient', 'name email');
+    res.json({ message: 'Summary updated', report });
+  } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
@@ -429,7 +476,7 @@ const markRead = async (req, res) => {
 module.exports = {
   getProfile, updateProfile,
   getTests, addTest, updateTest, deleteTest,
-  uploadReport, getReports,
+  uploadReport, getReports, updateReportSummary,
   getReceiptsPendingApproval, approveReceipt,
   getNeedyPatients, markTestConducted,
   getLabPatients,
