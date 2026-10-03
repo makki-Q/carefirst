@@ -79,6 +79,40 @@ const listUploads = () => new Set(
   UPLOAD_DIRS.flatMap(dir => (fs.existsSync(dir) ? fs.readdirSync(dir).map(f => path.join(dir, f)) : []))
 );
 
+// ─── Fake external services (OSRM routing, Azure) ─────────────────────────────
+// The server under test is pointed here, so tests run offline and never touch
+// the real services or spend Azure quota.
+const http = require('http');
+const MOCK_PORT = 5098;
+const MOCK      = `http://127.0.0.1:${MOCK_PORT}`;
+const mock = { osrmDown: false, osrmCalls: 0 };
+let mockServer;
+
+// Fake road distance = straight line × 1.5 (the server's own fallback uses × 1.3)
+const fakeRoadKm = (a, b) => require('../utils/travel').haversineKm(a, b) * 1.5;
+
+const handleMock = (req, res) => {
+  const url = new URL(req.url, MOCK);
+  const send = (status, body, type = 'application/json') => {
+    res.writeHead(status, { 'Content-Type': type });
+    res.end(type === 'application/json' ? JSON.stringify(body) : body);
+  };
+
+  const table = url.pathname.match(/^\/table\/v1\/driving\/(.+)$/);
+  if (table) {
+    mock.osrmCalls++;
+    if (mock.osrmDown) return send(503, { code: 'Unavailable' });
+    const pts = table[1].split(';').map(p => { const [lng, lat] = p.split(',').map(Number); return { lat, lng }; });
+    const km = pts.map(p => fakeRoadKm(pts[0], p));
+    return send(200, { code: 'Ok', distances: [km.map(k => k * 1000)], durations: [km.map(k => k * 90)] });
+  }
+  send(404, { message: 'mock: unknown route' });
+};
+
+const startMock = () => new Promise(resolve => {
+  mockServer = http.createServer(handleMock).listen(MOCK_PORT, '127.0.0.1', resolve);
+});
+
 // ─── Server lifecycle ─────────────────────────────────────────────────────────
 let server;
 let serverLog = '';
@@ -95,6 +129,7 @@ const startServer = async () => {
       ADMIN_USERNAME: ADMIN.username,
       ADMIN_PASSWORD: ADMIN.password,
       BASE_URL:       BASE,
+      OSRM_URL:       MOCK,
     },
   });
   server.stdout.on('data', d => { serverLog += d; });
@@ -840,6 +875,60 @@ const testLabBookings = async () => {
     (await put(`/api/patient/lab-bookings/${mri2.data._id}/cancel`, { token: tokens.patient })).status === 400);
 };
 
+// ─── Step 4 — True Cost Analysis ─────────────────────────────────────────────
+const testTrueCost = async () => {
+  section('True Cost Analysis');
+  const { haversineKm } = require('../utils/travel');
+
+  // A second lab that never sets a map pin
+  const reg = await post('/api/auth/register', { body: { name: 'Far Rep', email: 'far.e2e@example.com', password: 'secret123', role: 'lab', labName: 'No Pin Labs', location: 'Jhang' } });
+  await put(`/api/admin/registrations/${reg.data.user?.id}/approve`, { token: tokens.admin });
+  ids.lab2 = reg.data.user?.id;
+  tokens.lab2 = (await post('/api/auth/login', { body: { email: 'far.e2e@example.com', password: 'secret123' } })).data.token;
+  await post('/api/lab/tests', { token: tokens.lab2, body: { name: 'CBC', category: 'Blood', price: 900 } });
+
+  const labPin = { lat: 31.7167, lng: 72.9785 };
+  const patient = { lat: 31.4504, lng: 73.1350 };
+
+  check('an invalid map location is rejected (400)',
+    (await put('/api/lab/profile', { token: tokens.lab, body: { coordinates: { lat: 200, lng: 73 } } })).status === 400);
+  const pin = await put('/api/lab/profile', { token: tokens.lab, body: { coordinates: labPin } });
+  check('lab saves its map location', pin.status === 200 && pin.data.coordinates?.lat === labPin.lat && pin.data.jazzCash === '0301-7654321', pin.data);
+
+  const pub = await get('/api/public/tests');
+  check('public tests say which labs have a location',
+    pub.data.find(l => l.labId === ids.lab)?.hasLocation === true && pub.data.find(l => l.labId === ids.lab2)?.hasLocation === false, pub.data.map(l => [l.labName, l.hasLocation]));
+
+  check('true cost needs a location (400)', (await get('/api/public/true-cost')).status === 400);
+  check('an unknown travel mode is rejected (400)', (await get(`/api/public/true-cost?lat=${patient.lat}&lng=${patient.lng}&mode=plane`)).status === 400);
+
+  const roadKm = fakeRoadKm(patient, labPin);
+  const car = await get(`/api/public/true-cost?lat=${patient.lat}&lng=${patient.lng}&mode=car`);
+  const c1 = car.data.labs?.find(l => l.labId === ids.lab);
+  check('road distance and drive time come from the routing service',
+    car.status === 200 && c1?.source === 'road' && c1.distanceKm === Math.round(roadKm * 10) / 10 && c1.durationMin === Math.round(roadKm * 1.5), c1);
+  check('travel cost = km × 2 (round trip) × car rate (PKR 25)',
+    car.data.ratePerKm === 25 && c1?.travelCost === Math.round(roadKm * 2 * 25), [c1?.travelCost, Math.round(roadKm * 2 * 25)]);
+  check('a lab without a location has no travel cost',
+    car.data.labs.find(l => l.labId === ids.lab2)?.source === 'no_location' && car.data.labs.find(l => l.labId === ids.lab2)?.travelCost === null);
+
+  const bike = await get(`/api/public/true-cost?lat=${patient.lat}&lng=${patient.lng}`);
+  check('motorbike is the default mode (PKR 8/km) and all modes are listed',
+    bike.data.mode === 'motorbike' && bike.data.ratePerKm === 8 && bike.data.modes.map(m => m.key).join() === 'motorbike,car,ride' &&
+    bike.data.labs.find(l => l.labId === ids.lab)?.travelCost === Math.round(roadKm * 2 * 8), bike.data);
+
+  mock.osrmDown = true;
+  const down = await get(`/api/public/true-cost?lat=${patient.lat}&lng=${patient.lng}&mode=ride`);
+  mock.osrmDown = false;
+  const approxKm = haversineKm(patient, labPin) * 1.3;
+  const d1 = down.data.labs?.find(l => l.labId === ids.lab);
+  check('if routing fails, straight line × 1.3 is used and marked approximate',
+    down.status === 200 && d1?.source === 'approx' && d1.distanceKm === Math.round(approxKm * 10) / 10 && d1.travelCost === Math.round(approxKm * 2 * 50), d1);
+
+  const cleared = await put('/api/lab/profile', { token: tokens.lab2, body: { coordinates: null } });
+  check('a lab can clear its location', cleared.status === 200 && !cleared.data.coordinates?.lat, cleared.data);
+};
+
 const testDefaulterEscalation = async () => {
   section('Defaulter escalation (nightly job)');
   const Wallet = require('../models/Wallet');
@@ -946,6 +1035,7 @@ const main = async () => {
   await mongoose.connection.dropDatabase();
 
   try {
+    await startMock();
     await startServer();
     await testAccounts();
     await testCnicReview();
@@ -957,6 +1047,7 @@ const main = async () => {
     await testPlanReview();
     await testDownPaymentAndCompletion();
     await testLabBookings();
+    await testTrueCost();
     await testDefaulterEscalation();
     await testDueReminders();
     await testMisc();
@@ -965,6 +1056,7 @@ const main = async () => {
     console.error(err);
   } finally {
     server?.kill();
+    mockServer?.close();
     await mongoose.connection.dropDatabase();
     await mongoose.disconnect();
     for (const file of listUploads()) {

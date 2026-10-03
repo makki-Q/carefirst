@@ -24,6 +24,11 @@ const labProfileSchema = new mongoose.Schema(
     jazzCash:        { type: String, trim: true },
     easyPaisa:       { type: String, trim: true },
     isCharityPartner:{ type: Boolean, default: false },
+    // Map pin for True Cost Analysis (travel distance from the patient)
+    coordinates: {
+      lat: { type: Number, min: -90,  max: 90 },
+      lng: { type: Number, min: -180, max: 180 },
+    },
     tests:           [testSchema],
   },
   { timestamps: true }

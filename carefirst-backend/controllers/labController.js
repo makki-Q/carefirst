@@ -10,6 +10,7 @@ const { sendNotification } = require('../socket/notificationSocket');
 const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
 const { withPatientDetails } = require('../utils/patientProfiles');
 const { findLabPayment }     = require('../utils/installmentPlan');
+const { isLatLng }           = require('../utils/travel');
 
 // ─── GET /api/lab/profile ─────────────────────────────────────────────────────
 const getProfile = async (req, res) => {
@@ -25,9 +26,21 @@ const getProfile = async (req, res) => {
 const updateProfile = async (req, res) => {
   try {
     const { labName, location, phone, bankDetails, jazzCash, easyPaisa, isCharityPartner } = req.body;
+    const update = { labName, location, phone, bankDetails, jazzCash, easyPaisa, isCharityPartner };
+
+    // coordinates: { lat, lng } sets the map pin, null removes it
+    if (req.body.coordinates === null) {
+      update.$unset = { coordinates: 1 };
+    } else if (req.body.coordinates !== undefined) {
+      const lat = Number(req.body.coordinates?.lat);
+      const lng = Number(req.body.coordinates?.lng);
+      if (!isLatLng({ lat, lng })) return res.status(400).json({ message: 'Invalid map location' });
+      update.coordinates = { lat, lng };
+    }
+
     const profile = await LabProfile.findOneAndUpdate(
       { user: req.user._id },
-      { labName, location, phone, bankDetails, jazzCash, easyPaisa, isCharityPartner },
+      update,
       { new: true, runValidators: true }
     );
     res.json(profile);

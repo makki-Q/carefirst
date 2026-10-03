@@ -6,6 +6,8 @@ const User          = require('../models/User');
 const Appointment   = require('../models/Appointment');
 const mongoose      = require('mongoose');
 const { hasPaymentDetails } = require('../utils/installmentPlan');
+const { isLatLng, routeDistances } = require('../utils/travel');
+const { TRAVEL_MODES, DEFAULT_TRAVEL_MODE, TRIPS_PER_VISIT } = require('../config/travel');
 const {
   freeSlots, formatTime12, bookingDates, DEFAULT_CONSULTATION_MINUTES, BOOKING_WINDOW_DAYS,
 } = require('../utils/schedule');
@@ -16,7 +18,7 @@ router.get('/tests', async (req, res) => {
     const activeLabIds = await User.find({ role: 'lab', status: 'active' }).distinct('_id');
     const labs = await LabProfile.find({ user: { $in: activeLabIds } })
       .populate('user', 'name')
-      .select('labName location user tests isCharityPartner bankDetails jazzCash easyPaisa');
+      .select('labName location user tests isCharityPartner bankDetails jazzCash easyPaisa coordinates');
 
     const result = labs
       .filter(lab => lab.user && lab.tests.some(t => t.isActive))
@@ -27,6 +29,7 @@ router.get('/tests', async (req, res) => {
         isCharityPartner: lab.isCharityPartner,
         // Installment plans need the lab's payment details (down payment + installments go to the lab)
         acceptsInstallments: hasPaymentDetails(lab),
+        hasLocation:      isLatLng(lab.coordinates),
         tests: lab.tests
           .filter(t => t.isActive)
           .map(t => ({
@@ -73,6 +76,45 @@ router.get('/doctors', async (req, res) => {
       .sort((a, b) => a.name.localeCompare(b.name));
 
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/public/true-cost?lat=&lng=&mode= — travel distance, drive time and
+// round-trip travel cost from the patient's position to every active lab.
+// The position is used for this calculation only and is never stored.
+router.get('/true-cost', async (req, res) => {
+  try {
+    const origin = { lat: Number(req.query.lat), lng: Number(req.query.lng) };
+    if (!isLatLng(origin)) return res.status(400).json({ message: 'A valid location (lat, lng) is required' });
+
+    const mode = TRAVEL_MODES.find(m => m.key === (req.query.mode || DEFAULT_TRAVEL_MODE));
+    if (!mode) return res.status(400).json({ message: `mode must be one of: ${TRAVEL_MODES.map(m => m.key).join(', ')}` });
+
+    const activeLabIds = await User.find({ role: 'lab', status: 'active' }).distinct('_id');
+    const labs   = await LabProfile.find({ user: { $in: activeLabIds } }).select('user coordinates');
+    const placed = labs.filter(l => isLatLng(l.coordinates));
+    const routes = await routeDistances(origin, placed.map(l => ({ lat: l.coordinates.lat, lng: l.coordinates.lng })));
+
+    const byLab = {};
+    placed.forEach((l, i) => {
+      const r = routes[i];
+      byLab[l.user.toString()] = {
+        distanceKm:  Math.round(r.distanceKm * 10) / 10,
+        durationMin: Math.round(r.durationMin),
+        travelCost:  Math.round(r.distanceKm * TRIPS_PER_VISIT * mode.ratePerKm),
+        source:      r.source, // 'road' (OSRM) or 'approx' (straight line × road factor)
+      };
+    });
+
+    res.json({
+      mode:          mode.key,
+      ratePerKm:     mode.ratePerKm,
+      tripsPerVisit: TRIPS_PER_VISIT,
+      modes:         TRAVEL_MODES,
+      labs: labs.map(l => ({ labId: l.user, ...(byLab[l.user.toString()] || { distanceKm: null, travelCost: null, source: 'no_location' }) })),
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
