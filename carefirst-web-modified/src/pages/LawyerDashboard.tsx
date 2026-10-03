@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './LawyerDashboard.css';
 import { api, getSession, clearSession } from '../lib/api';
 import { getSocket } from '../lib/socket';
+import { ListenButton, UrduText } from '../components/Urdu';
 
 interface Installment {
   month: string;
@@ -27,6 +28,8 @@ interface Defaulter {
   defaultedOn: string;
   agreementDate: string;
   agreementText?: string; // exact text the patient accepted (plans created through the app)
+  agreementTextUrdu?: string;
+  walletId?: string;
   installments: Installment[];
 }
 
@@ -87,6 +90,7 @@ const LawyerDashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [currentPage, setCurrentPage] = useState('defaulters');
   const [selectedCase, setSelectedCase] = useState<Defaulter | null>(null);
+  const [agreementUrdu, setAgreementUrdu] = useState(false); // show the Urdu version of the agreement
   const [dateString, setDateString] = useState('');
 
   const { user: sessionUser } = getSession();
@@ -158,6 +162,8 @@ const LawyerDashboard = () => {
       defaultedOn:    c.escalatedAt ? new Date(c.escalatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—',
       agreementDate:  wallet.agreement?.acceptedAt ? new Date(wallet.agreement.acceptedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—',
       agreementText:  wallet.agreement?.text,
+      agreementTextUrdu: wallet.agreement?.textUrdu,
+      walletId:       wallet._id,
       installments:   (wallet.installments || []).map((inst: any, i: number) => ({
         month:      `Month ${i + 1}`,
         due:        inst.dueDate ? new Date(inst.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—',
@@ -469,15 +475,23 @@ const LawyerDashboard = () => {
                         <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                         Signed Legal Agreement
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        {selectedCase.agreementTextUrdu && selectedCase.walletId && <>
+                          <button className="dash-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.74rem' }} onClick={() => setAgreementUrdu(v => !v)}>
+                            {agreementUrdu ? 'English' : 'اردو'}
+                          </button>
+                          <ListenButton compact request={{ source: 'agreement', id: selectedCase.walletId }} />
+                        </>}
                         <span className="dash-badge dash-green"><span className="dash-badge-dot"></span>Signed {selectedCase.agreementDate}</span>
                       </div>
                     </div>
                     {selectedCase.agreementText ? (
                       <div className="law-agreement-body">
-                        <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '0.74rem', lineHeight: 1.55, margin: 0 }}>
-                          {selectedCase.agreementText}
-                        </pre>
+                        {agreementUrdu && selectedCase.agreementTextUrdu
+                          ? <UrduText text={selectedCase.agreementTextUrdu} />
+                          : <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '0.74rem', lineHeight: 1.55, margin: 0 }}>
+                              {selectedCase.agreementText}
+                            </pre>}
                       </div>
                     ) : (
                     <div className="law-agreement-body">

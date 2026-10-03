@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './DoctorDashboard.css';
 import { api, getSession, clearSession } from '../lib/api';
 import { getSocket } from '../lib/socket';
+import { ListenButton, UrduText } from '../components/Urdu';
 
 // ── Common tests, suggested on Prescribe Test along with what labs offer ──────
 const TESTS = [
@@ -1039,7 +1040,8 @@ const DoctorDashboard = () => {
                       </thead>
                       <tbody>
                         {filteredReports.map((r: any, i: number) => (
-                          <tr key={i} style={{ opacity: r.isRead ? 0.75 : 1 }}>
+                          <React.Fragment key={i}>
+                          <tr style={{ opacity: r.isRead ? 0.75 : 1 }}>
                             <td className="doc-report-id">{r._id?.toString().slice(-6).toUpperCase()}</td>
                             <td style={{ fontWeight: 600, color: 'var(--text)' }}>{r.patient?.name || '—'}</td>
                             <td>{r.testName || '—'}</td>
@@ -1055,6 +1057,22 @@ const DoctorDashboard = () => {
                               )}
                             </td>
                           </tr>
+                          {(r.summary || r.summaryUrdu) && (
+                            <tr>
+                              <td colSpan={6} style={{ padding: '8px 16px 14px', background: 'rgba(255,255,255,0.35)' }}>
+                                <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start', fontSize: '0.8rem' }}>
+                                  {r.summary && <div style={{ flex: '1 1 240px', color: 'var(--text-sub)' }}><strong>Lab summary:</strong> {r.summary}</div>}
+                                  {r.summaryUrdu && (
+                                    <div style={{ flex: '1 1 260px' }}>
+                                      <UrduText text={r.summaryUrdu} style={{ color: 'var(--text)' }} />
+                                      <div style={{ textAlign: 'right', marginTop: 4 }}><ListenButton compact request={{ source: 'report', id: r._id }} /></div>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                          </React.Fragment>
                         ))}
                       </tbody>
                     </table>

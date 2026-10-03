@@ -3,6 +3,7 @@ import './PatientDashboard.css';
 import { api, getSession, saveSession, clearSession, formatCnic } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import MapPicker, { currentPosition } from '../components/MapPicker';
+import { ListenButton, UrduText } from '../components/Urdu';
 
 // ── Upload limits (mirror carefirst-backend/middleware/upload.js) ─────────────
 const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png'];
@@ -167,6 +168,7 @@ const PatientDashboard = () => {
   const [uploadingKey, setUploadingKey]         = useState('');
   const [walletMsg, setWalletMsg]               = useState<{ ok: boolean; text: string } | null>(null);
   const [showAgreement, setShowAgreement]       = useState(false);
+  const [agreementLang, setAgreementLang]       = useState<'en' | 'ur'>('en');
 
   // ── Installment plan application ────────────────────────────────────────────
   const [planConfig, setPlanConfig]         = useState<any>(null); // fee, down-payment %, limit, CareFirst account
@@ -720,6 +722,45 @@ const PatientDashboard = () => {
       maxHeight: 380, overflow: 'auto', margin: 0, padding: '14px 16px', color: 'var(--text)',
       background: 'var(--bg-alt)', border: '1px solid var(--border-md)', borderRadius: 'var(--radius-xs)',
     }}>{text}</pre>
+  );
+
+  // Report summary from the lab: English, Urdu (machine-translated or lab-corrected) and Listen
+  const summaryBlock = (r: any) => (
+    <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+      {r.summary && (
+        <div style={{ flex: '1 1 240px', fontSize: '0.8rem', color: 'var(--text-sub)' }}>
+          <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', marginBottom: 3 }}>Summary from the lab</div>
+          {r.summary}
+        </div>
+      )}
+      {r.summaryUrdu && (
+        <div style={{ flex: '1 1 260px' }}>
+          <UrduText text={r.summaryUrdu} style={{ color: 'var(--text)' }} />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+            {r.summaryUrduSource === 'machine' && <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>Machine translated</span>}
+            <ListenButton compact request={{ source: 'report', id: r._id }} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  // Agreement with an English / Urdu switch; Listen reads the Urdu
+  const agreementView = (textEn: string, textUr: string | undefined, request: any) => (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        {pickChip('en', agreementLang === 'en', false, () => setAgreementLang('en'), 'English')}
+        {textUr && pickChip('ur', agreementLang === 'ur', false, () => setAgreementLang('ur'), <span style={{ fontFamily: "'Noto Nastaliq Urdu', serif" }}>اردو</span>)}
+        <span style={{ flex: 1 }} />
+        {textUr && <ListenButton request={request} />}
+      </div>
+      {agreementLang === 'ur' && textUr
+        ? <div style={{ maxHeight: 380, overflowY: 'auto', padding: '14px 18px', background: 'var(--bg-alt)', border: '1px solid var(--border-md)', borderRadius: 'var(--radius-xs)', color: 'var(--text)' }}>
+            <UrduText text={textUr} />
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 8 }}>The English text is the binding version.</div>
+          </div>
+        : agreementBox(textEn)}
+    </div>
   );
 
   const uploadButton = (key: string, label: string, onFile: (f?: File | null) => void) => (
@@ -1628,7 +1669,10 @@ const PatientDashboard = () => {
                               <td><span className={`pat-badge ${st.cls}`}><span className="pat-badge-dot"></span>{st.label}</span></td>
                               <td>
                                 {b.report?.reportUrl
-                                  ? <a href={b.report.reportUrl} target="_blank" rel="noreferrer" style={{ color: '#166534', fontWeight: 600, fontSize: '0.78rem' }}>View report</a>
+                                  ? <>
+                                      <a href={b.report.reportUrl} target="_blank" rel="noreferrer" style={{ color: '#166534', fontWeight: 600, fontSize: '0.78rem' }}>View report</a>
+                                      {b.report.summaryUrdu && <div style={{ marginTop: 4 }}><ListenButton compact request={{ source: 'report', id: b.report._id }} /></div>}
+                                    </>
                                   : <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>—</span>}
                               </td>
                               <td style={{ textAlign: 'right' }}>
@@ -1734,7 +1778,8 @@ const PatientDashboard = () => {
                     {terms && (
                       <div className="pat-card pat-fade-up" style={{ padding: '22px 24px' }}>
                         <div className="pat-card-title" style={{ marginBottom: 14 }}>Installment Plan Agreement</div>
-                        {agreementBox(terms.agreementText)}
+                        {agreementView(terms.agreementText, terms.agreementTextUrdu,
+                          { source: 'agreement-preview', labId: lab.labId, testId: test._id, guarantor: planRequestBody().guarantor })}
                         <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, margin: '16px 0', fontSize: '0.82rem', color: 'var(--text)', cursor: 'pointer' }}>
                           <input type="checkbox" checked={agreementAccepted} onChange={e => setAgreementAccepted(e.target.checked)} disabled={planBusy} style={{ marginTop: 3 }} />
                           <span>I have read this agreement, my guarantor has agreed to it, and I accept its terms.</span>
@@ -1795,7 +1840,8 @@ const PatientDashboard = () => {
                       {!loaded.reports ? emptyRow(6, 'Loading reports…')
                         : filteredReports.length === 0 ? emptyRow(6, reports.length === 0 ? 'No reports yet. Labs upload your results here after your test.' : 'No reports match this filter.')
                         : filteredReports.map((r: any) => (
-                        <tr key={r._id}>
+                        <React.Fragment key={r._id}>
+                        <tr>
                           <td className="pat-report-id">REP-{shortId(r._id)}</td>
                           <td>
                             <div style={{ fontWeight: 600, color: 'var(--text)' }}>{r.testName}</div>
@@ -1824,6 +1870,14 @@ const PatientDashboard = () => {
                             </div>
                           </td>
                         </tr>
+                        {(r.summary || r.summaryUrdu) && (
+                          <tr>
+                            <td colSpan={6} style={{ background: 'var(--bg-alt)', padding: '10px 18px 14px' }}>
+                              {summaryBlock(r)}
+                            </td>
+                          </tr>
+                        )}
+                        </React.Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -2178,7 +2232,7 @@ const PatientDashboard = () => {
                           {showAgreement ? 'Hide agreement' : 'View agreement'}
                         </button>
                       </div>
-                      {showAgreement && <div style={{ marginTop: 14 }}>{agreementBox(wallet.agreement.text)}</div>}
+                      {showAgreement && <div style={{ marginTop: 14 }}>{agreementView(wallet.agreement.text, wallet.agreement.textUrdu, { source: 'agreement', id: wallet._id })}</div>}
                     </div>
                   )}
                 </>

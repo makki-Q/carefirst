@@ -3,6 +3,7 @@ import './LabDashboard.css';
 import { api, getSession, clearSession } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import MapPicker, { currentPosition } from '../components/MapPicker';
+import { ListenButton, UrduText } from '../components/Urdu';
 
 const TENURE_OPTIONS = [15, 20, 25, 30];
 
@@ -71,6 +72,11 @@ const LabDashboard = () => {
   const [uploadTestName, setUploadTestName]   = useState('');
   const [uploadFile, setUploadFile]           = useState<File | null>(null);
   const [uploadNotes, setUploadNotes]         = useState('');
+  const [uploadSummary, setUploadSummary]     = useState('');  // plain-language summary → translated to Urdu
+  const [editSummaryId, setEditSummaryId]     = useState<string | null>(null);
+  const [summaryDraft, setSummaryDraft]       = useState({ summary: '', summaryUrdu: '' });
+  const [summaryBusy, setSummaryBusy]         = useState(false);
+  const [summaryMsg, setSummaryMsg]           = useState<{ ok: boolean; text: string } | null>(null);
   const [uploadLoading, setUploadLoading]     = useState(false);
   const [uploadMsg, setUploadMsg]             = useState('');
 
@@ -208,14 +214,39 @@ const LabDashboard = () => {
         fd.append('testName',  uploadTestName);
       }
       fd.append('notes',  uploadNotes);
+      if (uploadSummary.trim()) fd.append('summary', uploadSummary.trim());
       fd.append('report', uploadFile); // field name expected by POST /api/lab/reports/upload
       await api.upload('/lab/reports/upload', fd);
-      setUploadPatientId(''); setUploadTestName(''); setUploadNotes(''); setUploadFile(null); setUploadBookingId('');
+      setUploadPatientId(''); setUploadTestName(''); setUploadNotes(''); setUploadFile(null); setUploadBookingId(''); setUploadSummary('');
       setUploadMsg('Report uploaded successfully.');
       api.get('/lab/reports').then((d: any) => setReports(Array.isArray(d) ? d : [])).catch(() => {});
       loadBookings();
     } catch (err: any) { setUploadMsg(err.message || 'Upload failed.'); }
     finally { setUploadLoading(false); }
+  };
+
+  const startEditSummary = (r: any) => {
+    setEditSummaryId(r._id); setSummaryMsg(null);
+    setSummaryDraft({ summary: r.summary || '', summaryUrdu: r.summaryUrdu || '' });
+  };
+
+  // mode 'urdu': save the lab's Urdu correction · 'translate': save the English and translate it again
+  const saveSummary = async (r: any, mode: 'urdu' | 'translate') => {
+    setSummaryMsg(null); setSummaryBusy(true);
+    try {
+      const body = mode === 'urdu'
+        ? { summary: summaryDraft.summary, summaryUrdu: summaryDraft.summaryUrdu }
+        : { summary: summaryDraft.summary };
+      const d: any = await api.put(`/lab/reports/${r._id}/summary`, body);
+      setReports(prev => prev.map((x: any) => x._id === r._id ? { ...x, ...d.report, patient: x.patient } : x));
+      setSummaryDraft({ summary: d.report.summary || '', summaryUrdu: d.report.summaryUrdu || '' });
+      setSummaryMsg({ ok: true, text: mode === 'urdu' ? 'Urdu summary saved.' : 'Translated again — check the Urdu below.' });
+      if (mode === 'urdu') setEditSummaryId(null);
+    } catch (err: any) {
+      setSummaryMsg({ ok: false, text: err.message || 'Could not save the summary' });
+    } finally {
+      setSummaryBusy(false);
+    }
   };
 
   // action: 'sample-collected' | 'complete'
@@ -727,6 +758,16 @@ const LabDashboard = () => {
                 </div>
 
                 <div className="dash-form-group">
+                  <label className="dash-form-label">Summary for the patient</label>
+                  <textarea className="dash-form-input dash-form-textarea" style={{ minHeight: 70 }}
+                    placeholder="One or two plain sentences, e.g. &quot;Your blood count is normal. Haemoglobin is slightly low — discuss with your doctor.&quot;"
+                    value={uploadSummary} onChange={e => setUploadSummary(e.target.value)}></textarea>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 6 }}>
+                    Translated to Urdu automatically so the patient can read it and listen to it. You can correct the Urdu below after uploading.
+                  </div>
+                </div>
+
+                <div className="dash-form-group">
                   <label className="dash-form-label">Lab Technician Notes</label>
                   <textarea className="dash-form-input dash-form-textarea" placeholder="Add processing notes, flagged values, or remarks…" value={uploadNotes} onChange={e => setUploadNotes(e.target.value)}></textarea>
                 </div>
@@ -738,12 +779,79 @@ const LabDashboard = () => {
                 )}
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                  <button className="dash-btn-ghost" onClick={() => { setUploadPatientId(''); setUploadTestName(''); setUploadFile(null); setUploadNotes(''); setUploadMsg(''); setUploadBookingId(''); }}>Clear</button>
+                  <button className="dash-btn-ghost" onClick={() => { setUploadPatientId(''); setUploadTestName(''); setUploadFile(null); setUploadNotes(''); setUploadMsg(''); setUploadBookingId(''); setUploadSummary(''); }}>Clear</button>
                   <button className="dash-btn-primary accent" disabled={uploadLoading || !uploadFile || (!uploadBooking && (!uploadPatientId || !uploadTestName))} onClick={submitReport}>
                     <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
                     {uploadLoading ? 'Uploading…' : 'Submit Report'}
                   </button>
                 </div>
+              </div>
+
+              {/* Recent reports — review / correct the machine-translated Urdu summary */}
+              <div className="dash-card dash-fu dash-fu-2">
+                <div className="dash-card-header">
+                  <div className="dash-card-title">Recent Reports</div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Check the Urdu summary patients will read and hear</div>
+                </div>
+                {summaryMsg && (
+                  <div style={{ margin: '0 20px 10px', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: summaryMsg.ok ? '#f0fdf4' : '#fef2f2', color: summaryMsg.ok ? '#166534' : '#991b1b' }}>
+                    {summaryMsg.text}
+                  </div>
+                )}
+                {reports.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.84rem' }}>No reports uploaded yet.</div>
+                ) : reports.slice(0, 10).map((r: any) => (
+                  <div key={r._id} style={{ padding: '14px 20px', borderTop: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+                      <strong style={{ color: 'var(--text)' }}>{r.patient?.name || '—'}</strong>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-sub)' }}>{r.testName} · {new Date(r.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>
+                      <a href={r.reportUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.74rem', fontWeight: 600 }}>File ↗</a>
+                      <span style={{ flex: 1 }} />
+                      {r.summaryUrdu && editSummaryId !== r._id && <ListenButton compact request={{ source: 'report', id: r._id }} />}
+                      {editSummaryId !== r._id && (
+                        <button className="dash-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.74rem' }} onClick={() => startEditSummary(r)}>
+                          {r.summary ? 'Edit summary' : 'Add summary'}
+                        </button>
+                      )}
+                    </div>
+                    {editSummaryId === r._id ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+                        <div>
+                          <div className="dash-form-label">English</div>
+                          <textarea className="dash-form-input dash-form-textarea" style={{ minHeight: 80 }} value={summaryDraft.summary}
+                            onChange={e => setSummaryDraft(d => ({ ...d, summary: e.target.value }))} />
+                        </div>
+                        <div>
+                          <div className="dash-form-label">اردو</div>
+                          <textarea className="dash-form-input dash-form-textarea" dir="rtl" lang="ur"
+                            style={{ minHeight: 80, fontFamily: "'Noto Nastaliq Urdu', serif", lineHeight: 2 }} value={summaryDraft.summaryUrdu}
+                            onChange={e => setSummaryDraft(d => ({ ...d, summaryUrdu: e.target.value }))} />
+                        </div>
+                        <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                          <button className="dash-btn-ghost" disabled={summaryBusy} onClick={() => setEditSummaryId(null)}>Cancel</button>
+                          <button className="dash-btn-ghost" disabled={summaryBusy || !summaryDraft.summary.trim()} onClick={() => saveSummary(r, 'translate')}>Translate English again</button>
+                          <button className="dash-btn-primary accent" disabled={summaryBusy} onClick={() => saveSummary(r, 'urdu')}>
+                            {summaryBusy ? 'Saving…' : 'Save Urdu'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (r.summary || r.summaryUrdu) ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12, fontSize: '0.8rem', color: 'var(--text-sub)' }}>
+                        <div>{r.summary || <em>No English summary</em>}</div>
+                        <div>
+                          {r.summaryUrdu ? <UrduText text={r.summaryUrdu} style={{ color: 'var(--text)' }} /> : <em>Not translated yet — use Edit summary → Translate English again</em>}
+                          {r.summaryUrdu && (
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textAlign: 'right' }}>
+                              {r.summaryUrduSource === 'lab' ? 'Corrected by your lab' : 'Machine translated — please check'}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No summary — patients only get the file.</div>
+                    )}
+                  </div>
+                ))}
               </div>
             </section>
 
