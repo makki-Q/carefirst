@@ -1310,6 +1310,7 @@ const testCnicPicturesForLawyer = async () => {
   check("… but not those of a plan that isn't their case (404)", (await picture(tokens.lawyer, ids.plan, 'patient-front')).status === 404);
   const lawyerCase = (await get('/api/lawyer/defaulter-cases', { token: tokens.lawyer })).data.find(c => c.wallet?._id === ids.overdueWallet);
   check('the case gives the lawyer the wallet with its pictures', lawyerCase?.wallet?.cnicPictures?.guarantorBack, lawyerCase?.wallet);
+  check("the case names the plan's lab", lawyerCase?.wallet?.labName === users.lab.labName, lawyerCase?.wallet?.labName);
 };
 
 const testSlips = async () => {
@@ -1477,6 +1478,22 @@ const testAdminInsights = async () => {
   check('patients now see the saved account to pay the service fee',
     cfg.data.careFirstAccount?.accountNumber === 'PK36 MEZN 0001 2345 6789' && cfg.data.careFirstAccount?.jazzCash === '0301-7654321' &&
     cfg.data.careFirstAccount?.easyPaisa === '' && cfg.data.supportEmail === 'help@carefirst.pk', cfg.data);
+  // Lab earnings: only payments recorded on CareFirst, recomputed here from the database
+  const LabBooking = require('../models/LabBooking');
+  const pktMonth = (d) => new Date(new Date(d).getTime() + 5 * 3600000).toISOString().slice(0, 7);
+  const visits = await LabBooking.find({ lab: ids.lab, status: 'completed', paymentMethod: 'at_lab' }).lean();
+  const wallets = await Wallet.find({ lab: ids.lab }).lean();
+  let expected = visits.filter(v => v.visitDate.startsWith(thisMonth)).reduce((t, v) => t + v.price, 0);
+  for (const w of wallets) {
+    if (w.downPayment?.labApprovedAt && pktMonth(w.downPayment.labApprovedAt) === thisMonth) expected += w.downPayment.amount;
+    for (const i of w.installments || []) if (i.labApprovedAt && pktMonth(i.labApprovedAt) === thisMonth) expected += i.amount;
+  }
+  const earn = await get('/api/lab/earnings', { token: tokens.lab });
+  check('lab earnings = visits paid at the lab + plan payments it confirmed this month',
+    earn.status === 200 && expected > 0 && earn.data.total === expected && earn.data.entries.length >= earn.data.count, [earn.data.total, expected]);
+  check('another lab sees none of it', (await get('/api/lab/earnings', { token: tokens.lab2 })).data.total === 0);
+  check('only labs can see lab earnings (403)', (await get('/api/lab/earnings', { token: tokens.patient })).status === 403);
+
   check('only admins can change settings (403)', (await put('/api/admin/settings', { token: tokens.patient, body: { careFirstAccount: { jazzCash: '0300-1234567' } } })).status === 403);
 };
 

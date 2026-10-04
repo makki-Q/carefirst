@@ -5,7 +5,7 @@ const {
   getTests, addTest, updateTest, deleteTest,
   uploadReport, getReports, updateReportSummary, readReportAgain,
   getReceiptsPendingApproval, approveReceipt,
-  getNeedyPatients, markTestConducted, setCommunitySupport,
+  getNeedyPatients, markTestConducted, setCommunitySupport, getEarnings,
   getLabPatients,
   getBookings, markSampleCollected, completeBooking,
   getNotifications, markRead,
@@ -40,6 +40,9 @@ router.put('/receipts/:walletId/down-payment/approve',                    ...gua
 router.get('/needy-patients',                      ...guard, getNeedyPatients);
 router.put('/needy-patients/:id/mark-conducted',   ...guard, markTestConducted);
 router.put('/community-support',                   ...guard, setCommunitySupport); // join / leave
+
+// Payments recorded on CareFirst (visits paid at the lab + confirmed plan payments)
+router.get('/earnings', ...guard, getEarnings);
 
 // Bookings (patients' lab visits): confirmed → sample_collected → completed
 router.get('/bookings',                        ...guard, getBookings);

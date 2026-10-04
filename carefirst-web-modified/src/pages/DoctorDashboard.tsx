@@ -18,43 +18,6 @@ const TESTS = [
   'Blood Glucose (Fasting)',
 ];
 
-// ── Demo / fallback dummy data (used only when backend returns nothing) ────────
-const DUMMY_PROFILE_DATA = {
-  specialization: 'Cardiologist',
-  experience:     12,
-  bio:            'Consultant Cardiologist with 12+ years of clinical experience in interventional cardiology and cardiac imaging.',
-  rating:         4.8,
-};
-
-const DUMMY_FEE = 2500;
-
-const mkDate = (daysAgo: number) =>
-  new Date(Date.now() - daysAgo * 24 * 3600 * 1000).toISOString();
-
-const DUMMY_PRESCRIPTIONS = [
-  { _id: 'dp1', patient: { _id: 'pat1', name: 'Ayesha Raza' },   tests: [{ testName: 'CBC + Lipid Panel' }],        createdAt: mkDate(2)  },
-  { _id: 'dp2', patient: { _id: 'pat2', name: 'Omar Farooq' },   tests: [{ testName: 'Thyroid Profile' }],          createdAt: mkDate(5)  },
-  { _id: 'dp3', patient: { _id: 'pat3', name: 'Noor Fatima' },   tests: [{ testName: 'X-Ray Chest' }],              createdAt: mkDate(8)  },
-  { _id: 'dp4', patient: { _id: 'pat4', name: 'Hamza Tariq' },   tests: [{ testName: 'Blood Glucose (Fasting)' }],  createdAt: mkDate(12) },
-  { _id: 'dp5', patient: { _id: 'pat5', name: 'Sara Zainab' },   tests: [{ testName: 'MRI Brain' }],                createdAt: mkDate(18) },
-  { _id: 'dp6', patient: { _id: 'pat6', name: 'Bilal Ahmed' },   tests: [{ testName: 'Liver Function Test' }],      createdAt: mkDate(22) },
-  { _id: 'dp7', patient: { _id: 'pat7', name: 'Zara Hussain' },  tests: [{ testName: 'ECG / Electrocardiogram' }],  createdAt: mkDate(30) },
-];
-
-const DUMMY_REPORTS = [
-  { _id: 'dr1', patient: { name: 'Ayesha Raza' },  testName: 'Complete Blood Count',    labName: 'LifeCare Diagnostics', createdAt: mkDate(1),  reportUrl: '#' },
-  { _id: 'dr2', patient: { name: 'Omar Farooq' },  testName: 'Thyroid Profile',         labName: 'MedLab Plus',          createdAt: mkDate(4),  reportUrl: '#' },
-  { _id: 'dr3', patient: { name: 'Noor Fatima' },  testName: 'X-Ray Chest',             labName: 'CityScan & Labs',      createdAt: mkDate(7),  reportUrl: '#' },
-  { _id: 'dr4', patient: { name: 'Hamza Tariq' },  testName: 'Lipid Panel',             labName: 'LifeCare Diagnostics', createdAt: mkDate(11), reportUrl: null },
-  { _id: 'dr5', patient: { name: 'Sara Zainab' },  testName: 'MRI Brain',               labName: 'MedLab Plus',          createdAt: mkDate(15), reportUrl: '#' },
-];
-
-const DUMMY_NOTIFICATIONS = [
-  { _id: 'dn1', title: 'New Report Available',  message: "Ayesha Raza's CBC + Lipid Panel report has been uploaded by LifeCare Diagnostics. Review it in Patient Reports.", read: false, createdAt: mkDate(0) },
-  { _id: 'dn2', title: 'Report Ready',          message: "Omar Farooq's Thyroid Profile result is ready for review.",                                                         read: false, createdAt: mkDate(0) },
-  { _id: 'dn3', title: 'Schedule Reminder',     message: "You have consultations tomorrow from 09:00 AM – 01:00 PM. Please confirm availability.",                             read: true,  createdAt: mkDate(1) },
-];
-
 // ── Appointments (mirror carefirst-backend/utils/schedule.js) ─────────────────
 const DURATION_OPTIONS = [10, 15, 20, 30, 45, 60];
 const pktToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date()); // YYYY-MM-DD
@@ -113,9 +76,9 @@ const DoctorDashboard = () => {
   const [newSlotEnd, setNewSlotEnd]       = useState('13:00');
 
   const [profileForm, setProfileForm] = useState({
-    specialization: DUMMY_PROFILE_DATA.specialization,
-    experience:     String(DUMMY_PROFILE_DATA.experience),
-    bio:            DUMMY_PROFILE_DATA.bio,
+    specialization: '',
+    experience:     '',
+    bio:            '',
     clinicName:     '',
     clinicAddress:  '',
   });
@@ -167,9 +130,9 @@ const DoctorDashboard = () => {
     api.get('/doctor/profile').then((d: any) => {
       setDocProfile(d);
       setProfileForm({
-        specialization: d.profile?.specialization || DUMMY_PROFILE_DATA.specialization,
-        experience:     String(d.profile?.experience || DUMMY_PROFILE_DATA.experience),
-        bio:            d.profile?.bio             || DUMMY_PROFILE_DATA.bio,
+        specialization: d.profile?.specialization || '',
+        experience:     d.profile?.experience ? String(d.profile.experience) : '',
+        bio:            d.profile?.bio            || '',
         clinicName:     d.profile?.clinicName      || '',
         clinicAddress:  d.profile?.clinicAddress   || '',
       });
@@ -233,16 +196,6 @@ const DoctorDashboard = () => {
 
   const markNotifRead = async (notif: any) => {
     if (notif.read) return;
-    // Dummy notifications are read client-side only
-    if (notif._id?.startsWith('dn')) {
-      setNotifications(prev =>
-        prev.length > 0
-          ? prev.map((n: any) => n._id === notif._id ? { ...n, read: true } : n)
-          : DUMMY_NOTIFICATIONS.map((n: any) => n._id === notif._id ? { ...n, read: true } : n)
-      );
-      setNotifBadge(prev => Math.max(0, prev - 1));
-      return;
-    }
     try {
       await api.put(`/doctor/notifications/${notif._id}/read`, {});
       setNotifications(prev => prev.map((n: any) => n._id === notif._id ? { ...n, read: true } : n));
@@ -355,16 +308,16 @@ const DoctorDashboard = () => {
   const navigate  = (page: string) => { setCurrentPage(page); setShowNotifDropdown(false); };
 
   // ── Display variables (real data if available, dummy fallback otherwise) ─────
-  const displaySpec   = docProfile?.profile?.specialization || DUMMY_PROFILE_DATA.specialization;
-  const displayExp    = docProfile?.profile?.experience     || DUMMY_PROFILE_DATA.experience;
-  const displayBio    = docProfile?.profile?.bio            || DUMMY_PROFILE_DATA.bio;
-  const displayRating = docProfile?.profile?.rating > 0 ? docProfile.profile.rating : DUMMY_PROFILE_DATA.rating;
-  const displayFee    = consultationFee > 0 ? consultationFee : DUMMY_FEE;
+  // Only the doctor's own data — a new account starts empty
+  const displaySpec   = docProfile?.profile?.specialization || 'Doctor';
+  const displayExp    = docProfile?.profile?.experience || 0;
+  const displayRating = docProfile?.profile?.rating > 0 ? Number(docProfile.profile.rating).toFixed(1) : 'New';
+  const feeLabel      = consultationFee > 0 ? `PKR ${consultationFee.toLocaleString()}` : 'Not set';
 
-  const displayPrescriptions = prescriptions.length > 0 ? prescriptions : DUMMY_PRESCRIPTIONS;
-  const displayReports       = reports.length       > 0 ? reports       : DUMMY_REPORTS;
-  const displayNotifications = notifications.length > 0 ? notifications  : DUMMY_NOTIFICATIONS;
-  const displayNotifBadge    = notifications.length > 0 ? notifBadge    : DUMMY_NOTIFICATIONS.filter(n => !n.read).length;
+  const displayPrescriptions = prescriptions;
+  const displayReports       = reports;
+  const displayNotifications = notifications;
+  const displayNotifBadge    = notifBadge;
 
   // Patients come from appointments
   const uniquePatientCount = myPatients.length;
@@ -461,7 +414,7 @@ const DoctorDashboard = () => {
             <button className={`doc-nav-item ${currentPage === 'reports' ? 'active' : ''}`} onClick={() => navigate('reports')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
               Patient Reports
-              {displayPrescriptions.length > 0 && <span className="doc-nav-badge">{displayPrescriptions.length}</span>}
+              {displayReports.length > 0 && <span className="doc-nav-badge">{displayReports.length}</span>}
             </button>
 
             <div className="doc-nav-label">Account</div>
@@ -574,7 +527,7 @@ const DoctorDashboard = () => {
                     </div>
                     <div className="doc-hero-pills">
                       
-                      <div className="doc-hero-pill doc-red">Fee: PKR {displayFee.toLocaleString()}</div>
+                      <div className="doc-hero-pill doc-red">Fee: {feeLabel}</div>
                     </div>
                   </div>
                   <div className="doc-hero-stats">
@@ -632,7 +585,7 @@ const DoctorDashboard = () => {
                   <div className="doc-stat-top">
                     <div>
                       <div className="doc-stat-label">Consultation Fee</div>
-                      <div className="doc-stat-value" style={{ fontSize: '1.4rem' }}>PKR {displayFee.toLocaleString()}</div>
+                      <div className="doc-stat-value" style={{ fontSize: '1.4rem' }}>{feeLabel}</div>
                     </div>
                     <div className="doc-stat-icon">
                       <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
@@ -657,6 +610,11 @@ const DoctorDashboard = () => {
                       <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
                     </div>
                   </div>
+                  {displayPrescriptions.length === 0 && (
+                    <div style={{ padding: '22px 20px', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                      No prescriptions yet. You can prescribe tests once an appointment has started.
+                    </div>
+                  )}
                   {displayPrescriptions.slice(0, 5).map((p: any, idx: number) => (
                     <div className="doc-patient-item" key={idx}>
                       <div className="doc-patient-row1">
@@ -806,7 +764,7 @@ const DoctorDashboard = () => {
               <div className="doc-fee-section doc-fade-up doc-fade-up-4">
                 <div className="doc-fee-info">
                   <div className="doc-label">Consultation Fee</div>
-                  <div className="doc-fee-value"><span className="doc-fee-currency">PKR </span>{displayFee.toLocaleString()}</div>
+                  <div className="doc-fee-value">{consultationFee > 0 ? <><span className="doc-fee-currency">PKR </span>{consultationFee.toLocaleString()}</> : 'Not set'}</div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -1045,7 +1003,9 @@ const DoctorDashboard = () => {
               <div className="doc-card doc-fade-up doc-fade-up-2">
                 {filteredReports.length === 0 ? (
                   <div style={{ padding: '32px 24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-                    No reports match your search criteria.
+                    {displayReports.length === 0
+                      ? 'No reports yet. Reports appear here when a lab uploads results for a patient you prescribed tests for.'
+                      : 'No reports match your search criteria.'}
                   </div>
                 ) : (
                   <div className="doc-table-wrap">

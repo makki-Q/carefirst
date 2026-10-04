@@ -29,6 +29,7 @@ const LabDashboard = () => {
   const [tests, setTests]             = useState<any[]>([]);
   const [reports, setReports]         = useState<any[]>([]);
   const [needyPats, setNeedyPats]     = useState<any[]>([]);
+  const [earnings, setEarnings]       = useState<any>(null); // payments recorded on CareFirst (GET /lab/earnings)
   const [notifications, setNotifications] = useState<any[]>([]);
   const [notifBadge, setNotifBadge]   = useState(0);
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
@@ -40,6 +41,9 @@ const LabDashboard = () => {
   const [slipQuery, setSlipQuery]           = useState(''); // check a patient's slip number
   const [bookingMsg, setBookingMsg]   = useState<{ ok: boolean; text: string } | null>(null);
   const [uploadBookingId, setUploadBookingId] = useState('');
+
+  const loadEarnings = () =>
+    api.get('/lab/earnings').then((d: any) => setEarnings(d)).catch(() => {});
 
   const loadBookings = () =>
     api.get('/lab/bookings').then((d: any) => setBookings(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => setBookingsLoaded(true));
@@ -103,6 +107,7 @@ const LabDashboard = () => {
     api.get('/lab/reports').then((d: any) => setReports(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/lab/needy-patients').then((d: any) => setNeedyPats(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
+    loadEarnings();
     loadBookings();
     api.get('/lab/patients').then((d: any) => setLabPatients(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/lab/notifications').then((d: any) => {
@@ -293,6 +298,7 @@ const LabDashboard = () => {
     try {
       const d: any = await api.put(`/lab/bookings/${b._id}/${action}`, {});
       setBookings(prev => prev.map(x => x._id === b._id ? d.booking : x));
+      if (action === 'complete') loadEarnings();
     } catch (err: any) { setBookingMsg({ ok: false, text: err.message || 'Update failed' }); }
   };
 
@@ -306,6 +312,7 @@ const LabDashboard = () => {
     try {
       await api.put(`/lab/receipts/${walletId}/${path}/approve`, {});
       api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
+      loadEarnings();
     } catch (err: any) { alertDialog(err.message || 'Could not confirm the receipt'); }
   };
 
@@ -575,8 +582,8 @@ const LabDashboard = () => {
                 {[
                   { label: 'Visits Today', value: String(visitsToday.length), icon: <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>, trend: `${openBookings.length} open booking${openBookings.length === 1 ? '' : 's'}` },
                   { label: 'Pending Upload', value: String(awaitingReport.length), icon: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>, trend: 'Samples collected, no report yet' },
-                  { label: 'Revenue Today', value: 'PKR 48k', icon: <><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></>, trend: '+12% from avg' },
-                  { label: 'Avg Time up', value: '3.2 hrs', icon: <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>, trend: '-0.4 hrs improved' },
+                  { label: 'Received This Month', value: earnings ? `PKR ${earnings.total.toLocaleString()}` : '—', icon: <><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></>, trend: earnings ? `${earnings.count} payment${earnings.count === 1 ? '' : 's'} recorded on CareFirst` : 'Loading…' },
+                  { label: 'Reports This Month', value: String(reports.filter((r: any) => (r.createdAt || '').slice(0, 7) === new Date().toISOString().slice(0, 7)).length), icon: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></>, trend: `${reports.length} report${reports.length === 1 ? '' : 's'} uploaded in total` },
                 ].map((s, i) => (
                   <div className="dash-stat-card" key={i}>
                     <div className="dash-stat-top">
@@ -1130,55 +1137,67 @@ const LabDashboard = () => {
               <div className="dash-page-header dash-fu">
                 <div className="dash-page-title">Revenue</div>
                 <div className="dash-page-rule"></div>
-                <div className="dash-page-subtitle">Earnings summary and transaction history</div>
+                <div className="dash-page-subtitle">Payments recorded on CareFirst — visits paid at your lab and installment-plan payments you confirmed</div>
               </div>
 
-              <div className="lab-revenue-hero dash-fu dash-fu-1">
-                <div className="lab-revenue-inner">
-                  <div>
-                    <div className="lab-revenue-label">Total Revenue (This Month)</div>
-                    <div className="lab-revenue-amount"><span className="lab-revenue-currency">PKR</span>1,24,800</div>
-                  </div>
-                  <div className="lab-revenue-stats">
-                    <div className="lab-rev-stat"><div className="rv">4,812</div><div className="rl">Tests Completed</div></div>
-                    <div style={{ width: 1, height: 44, background: 'rgba(255,255,255,0.10)' }}></div>
-                    <div className="lab-rev-stat"><div className="rv">PKR 25.9</div><div className="rl">Avg Per Test</div></div>
-                    <div style={{ width: 1, height: 44, background: 'rgba(255,255,255,0.10)' }}></div>
-                    <div className="lab-rev-stat"><div className="rv">+18%</div><div className="rl">vs Last Month</div></div>
-                  </div>
-                </div>
-              </div>
+              {(() => {
+                const fmt = (n: number) => n.toLocaleString();
+                const total = earnings?.total || 0;
+                const prev = earnings?.previousTotal || 0;
+                const change = prev === 0 ? (total > 0 ? 'New' : '—') : `${total >= prev ? '+' : ''}${Math.round(((total - prev) / prev) * 100)}%`;
+                const thisMonth = earnings?.month || '';
+                const monthName = thisMonth ? new Date(`${thisMonth}-01T00:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
+                return (
+                  <>
+                    <div className="lab-revenue-hero dash-fu dash-fu-1">
+                      <div className="lab-revenue-inner">
+                        <div>
+                          <div className="lab-revenue-label">Received in {monthName || 'this month'}</div>
+                          <div className="lab-revenue-amount"><span className="lab-revenue-currency">PKR</span>{fmt(total)}</div>
+                        </div>
+                        <div className="lab-revenue-stats">
+                          <div className="lab-rev-stat"><div className="rv">{earnings?.visitsCompleted ?? 0}</div><div className="rl">Visits Paid at Lab</div></div>
+                          <div style={{ width: 1, height: 44, background: 'rgba(255,255,255,0.10)' }}></div>
+                          <div className="lab-rev-stat"><div className="rv">{earnings?.planPayments ?? 0}</div><div className="rl">Plan Payments</div></div>
+                          <div style={{ width: 1, height: 44, background: 'rgba(255,255,255,0.10)' }}></div>
+                          <div className="lab-rev-stat"><div className="rv">{change}</div><div className="rl">vs Last Month</div></div>
+                        </div>
+                      </div>
+                    </div>
 
-              <div className="dash-card dash-fu dash-fu-2">
-                <div className="dash-card-header">
-                  <div className="dash-card-title">
-                    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                    Transaction Ledger
-                  </div>
-                </div>
-                <div className="dash-table-wrap">
-                  <table>
-                    <thead><tr><th>TXN ID</th><th>Patient</th><th>Test</th><th>Date</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
-                    <tbody>
-                      {[
-                        { id: 'TXN-301', p: 'Ayesha Raza', t: 'CBC + Lipid', d: 'May 1, 2024', a: 2100 },
-                        { id: 'TXN-300', p: 'Bilal Ahmed', t: 'Thyroid Profile', d: 'Apr 30, 2024', a: 1800 },
-                        { id: 'TXN-299', p: 'Zara Khan', t: 'HbA1c', d: 'Apr 29, 2024', a: 1600 },
-                        { id: 'TXN-298', p: 'Omar Farooq', t: 'Urinalysis', d: 'Apr 28, 2024', a: 500 },
-                        { id: 'TXN-297', p: 'Sara Imran', t: 'Lipid + Glucose', d: 'Apr 27, 2024', a: 1750 },
-                      ].map((r, i) => (
-                        <tr key={i}>
-                          <td className="dash-mono">{r.id}</td>
-                          <td style={{ fontWeight: 600, color: 'var(--text)' }}>{r.p}</td>
-                          <td>{r.t}</td>
-                          <td>{r.d}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 700, color: '#166534' }}>+ PKR {r.a.toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                    <div className="dash-card dash-fu dash-fu-2">
+                      <div className="dash-card-header">
+                        <div className="dash-card-title">
+                          <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                          Payments — this month and last month
+                        </div>
+                      </div>
+                      <div className="dash-table-wrap">
+                        <table>
+                          <thead><tr><th>Date</th><th>Patient</th><th>Test</th><th>Payment</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
+                          <tbody>
+                            {!earnings ? (
+                              <tr><td colSpan={5} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                            ) : earnings.entries.length === 0 ? (
+                              <tr><td colSpan={5} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                                No payments recorded yet. Completed visits paid at your lab and plan payments you confirm under Receipts appear here.
+                              </td></tr>
+                            ) : earnings.entries.map((r: any, i: number) => (
+                              <tr key={i}>
+                                <td style={{ whiteSpace: 'nowrap' }}>{new Date(r.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                                <td style={{ fontWeight: 600, color: 'var(--text)' }}>{r.patient}</td>
+                                <td>{r.testName}</td>
+                                <td style={{ fontSize: '0.78rem', color: 'var(--text-sub)' }}>{r.detail}</td>
+                                <td style={{ textAlign: 'right', fontWeight: 700, color: '#166534', whiteSpace: 'nowrap' }}>+ PKR {fmt(r.amount)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </section>
 
             {/* ══ NEEDY PATIENTS ════════════════════════════════ */}

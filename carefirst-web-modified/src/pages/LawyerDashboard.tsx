@@ -16,6 +16,7 @@ interface Installment {
 
 interface Defaulter {
   id: string;
+  escalatedAt?: string; // when the case reached the lawyer
   patient: { name: string; cnic: string; phone: string; address: string };
   guarantor: { name: string; cnic: string; relation: string; phone: string; address?: string };
   test: string;
@@ -35,58 +36,6 @@ interface Defaulter {
   installments: Installment[];
 }
 
-const DEFAULTERS: Defaulter[] = [
-  {
-    id: 'DEF-001',
-    patient:   { name: 'Fatima Zahra',  cnic: '35202-1234567-8', phone: '+92 300 1234567', address: 'House 12, Street 4, Gulberg III, Lahore' },
-    guarantor: { name: 'Ahmed Zahra',   cnic: '35202-9876543-2', relation: 'Father', phone: '+92 311 9876543' },
-    test: 'MRI Brain', lab: 'MedLab Plus',
-    totalAmount: 12000, downPayment: 3000, serviceFee: 500,
-    paidAmount: 5000, remainingAmount: 7000,
-    overdueBy: '18 days', defaultedOn: 'Apr 14, 2024', agreementDate: 'Jan 20, 2024',
-    installments: [
-      { month: 'Feb 2024', due: 'Feb 15', amount: 2000, paid: true,  paidOn: 'Feb 14', verifiedBy: 'Admin' },
-      { month: 'Mar 2024', due: 'Mar 15', amount: 2000, paid: true,  paidOn: 'Mar 16', verifiedBy: 'Admin' },
-      { month: 'Apr 2024', due: 'Apr 15', amount: 2000, paid: false, paidOn: null,     verifiedBy: null },
-      { month: 'May 2024', due: 'May 15', amount: 2000, paid: false, paidOn: null,     verifiedBy: null },
-      { month: 'Jun 2024', due: 'Jun 15', amount: 2000, paid: false, paidOn: null,     verifiedBy: null },
-      { month: 'Jul 2024', due: 'Jul 15', amount: 2000, paid: false, paidOn: null,     verifiedBy: null },
-    ],
-  },
-  {
-    id: 'DEF-002',
-    patient:   { name: 'Hamza Tariq',   cnic: '35201-5554321-0', phone: '+92 333 5554321', address: 'Flat 3B, DHA Phase 4, Lahore' },
-    guarantor: { name: 'Tariq Mehmood', cnic: '35201-1112233-4', relation: 'Father', phone: '+92 321 1112233' },
-    test: 'Kidney Dialysis Package', lab: 'LifeCare Diagnostics',
-    totalAmount: 45000, downPayment: 10000, serviceFee: 1000,
-    paidAmount: 22000, remainingAmount: 23000,
-    overdueBy: '32 days', defaultedOn: 'Mar 31, 2024', agreementDate: 'Dec 5, 2023',
-    installments: [
-      { month: 'Jan 2024', due: 'Jan 10', amount: 7000, paid: true,  paidOn: 'Jan 9',  verifiedBy: 'Admin' },
-      { month: 'Feb 2024', due: 'Feb 10', amount: 7000, paid: true,  paidOn: 'Feb 11', verifiedBy: 'Admin' },
-      { month: 'Mar 2024', due: 'Mar 10', amount: 7000, paid: true,  paidOn: 'Mar 12', verifiedBy: 'Admin' },
-      { month: 'Apr 2024', due: 'Apr 10', amount: 7000, paid: false, paidOn: null,     verifiedBy: null },
-      { month: 'May 2024', due: 'May 10', amount: 7000, paid: false, paidOn: null,     verifiedBy: null },
-      { month: 'Jun 2024', due: 'Jun 10', amount: 7000, paid: false, paidOn: null,     verifiedBy: null },
-      { month: 'Jul 2024', due: 'Jul 10', amount: 3000, paid: false, paidOn: null,     verifiedBy: null },
-    ],
-  },
-  {
-    id: 'DEF-003',
-    patient:   { name: 'Noor Bibi',     cnic: '35203-7778889-5', phone: '+92 345 7778889', address: 'Village Chak 22, Sheikhupura, Punjab' },
-    guarantor: { name: 'Bashir Ahmed',  cnic: '35203-3334445-1', relation: 'Husband', phone: '+92 300 3334445' },
-    test: 'CT Scan Abdomen', lab: 'CityScan & Labs',
-    totalAmount: 18000, downPayment: 4500, serviceFee: 750,
-    paidAmount: 4500, remainingAmount: 13500,
-    overdueBy: '9 days', defaultedOn: 'Apr 23, 2024', agreementDate: 'Feb 10, 2024',
-    installments: [
-      { month: 'Mar 2024', due: 'Mar 20', amount: 4500, paid: true,  paidOn: 'Mar 19', verifiedBy: 'Admin' },
-      { month: 'Apr 2024', due: 'Apr 20', amount: 4500, paid: false, paidOn: null,     verifiedBy: null },
-      { month: 'May 2024', due: 'May 20', amount: 4500, paid: false, paidOn: null,     verifiedBy: null },
-      { month: 'Jun 2024', due: 'Jun 20', amount: 4500, paid: false, paidOn: null,     verifiedBy: null },
-    ],
-  },
-];
 
 const LawyerDashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -96,7 +45,14 @@ const LawyerDashboard = () => {
   const [dateString, setDateString] = useState('');
 
   const { user: sessionUser } = getSession();
-  const [cases, setCases]               = useState<Defaulter[]>(DEFAULTERS);
+  const [cases, setCases]               = useState<Defaulter[]>([]);
+  // Case with the most days since it reached the lawyer, and paid vs total owed across cases
+  const longest = cases
+    .filter(c => c.escalatedAt)
+    .map(c => ({ c, days: Math.floor((Date.now() - new Date(c.escalatedAt as string).getTime()) / 86400000) }))
+    .sort((a, b) => b.days - a.days)[0] || null;
+  const owedTotal = cases.reduce((t, c) => t + c.totalAmount, 0);
+  const recoveryRate = owedTotal > 0 ? Math.round((cases.reduce((t, c) => t + c.paidAmount, 0) / owedTotal) * 100) : null;
   const [notifications, setNotifications] = useState<any[]>([]);
   const [notifBadge, setNotifBadge]     = useState(0);
 
@@ -107,9 +63,7 @@ const LawyerDashboard = () => {
 
   useEffect(() => {
     api.get('/lawyer/defaulter-cases').then((d: any) => {
-      if (Array.isArray(d) && d.length > 0) {
-        setCases(d.map((c: any) => mapApiCase(c)));
-      }
+      setCases(Array.isArray(d) ? d.map((c: any) => mapApiCase(c)) : []);
     }).catch(() => {});
     api.get('/lawyer/notifications').then((d: any) => {
       const arr = Array.isArray(d) ? d : [];
@@ -154,13 +108,14 @@ const LawyerDashboard = () => {
       },
       guarantor:      { name: wallet.guarantor?.name || '—', cnic: wallet.guarantor?.cnic || '—', relation: wallet.guarantor?.relation || '—', phone: wallet.guarantor?.phone || '—', address: wallet.guarantor?.address || '—' },
       test:           wallet.testName || '—',
-      lab:            typeof wallet.lab === 'object' ? wallet.lab?.name || '—' : '—',
+      lab:            wallet.labName || (typeof wallet.lab === 'object' ? wallet.lab?.name : '') || '—',
       totalAmount:    total,
       downPayment:    wallet.downPayment?.amount || 0,
       serviceFee:     wallet.serviceFee?.amount || 0,
       paidAmount:     total - rem,
       remainingAmount: rem,
-      overdueBy:      c.missedInstallments?.length ? `${c.missedInstallments.length} installments` : '—',
+      overdueBy:      c.missedInstallments > 0 ? `${c.missedInstallments} installment${c.missedInstallments === 1 ? '' : 's'}` : '—',
+      escalatedAt:    c.escalatedAt,
       defaultedOn:    c.escalatedAt ? new Date(c.escalatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—',
       agreementDate:  wallet.agreement?.acceptedAt ? new Date(wallet.agreement.acceptedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—',
       agreementText:  wallet.agreement?.text,
@@ -326,19 +281,19 @@ const LawyerDashboard = () => {
                   <div className="dash-stat-top">
                     <div>
                       <div className="dash-stat-label">Longest Overdue</div>
-                      <div className="dash-stat-value">32 days</div>
+                      <div className="dash-stat-value">{longest ? `${longest.days} day${longest.days === 1 ? '' : 's'}` : '—'}</div>
                     </div>
                     <div className="dash-stat-icon">
                       <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                     </div>
                   </div>
-                  <div className="dash-stat-trend down"><span>Hamza Tariq · DEF-002</span></div>
+                  <div className="dash-stat-trend down"><span>{longest ? `${longest.c.patient.name} · ${longest.c.id}` : 'No cases yet'}</span></div>
                 </div>
                 <div className="dash-stat-card">
                   <div className="dash-stat-top">
                     <div>
                       <div className="dash-stat-label">Avg Recovery Rate</div>
-                      <div className="dash-stat-value">41%</div>
+                      <div className="dash-stat-value">{recoveryRate === null ? '—' : `${recoveryRate}%`}</div>
                     </div>
                     <div className="dash-stat-icon">
                       <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>

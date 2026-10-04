@@ -1,6 +1,19 @@
 const DefaulterCase = require('../models/DefaulterCase');
 const Notification  = require('../models/Notification');
+const LabProfile    = require('../models/LabProfile');
 const { withPatientDetails } = require('../utils/patientProfiles');
+
+// Adds wallet.labName (the lab's registered name) to cases with a populated wallet
+const withLabNames = async (cases) => {
+  const labIds = cases.map(c => c.wallet?.lab?._id || c.wallet?.lab).filter(Boolean);
+  const names = {};
+  (await LabProfile.find({ user: { $in: labIds } }).select('user labName').lean())
+    .forEach(p => { names[p.user.toString()] = p.labName; });
+  return cases.map(c => {
+    const labId = (c.wallet?.lab?._id || c.wallet?.lab)?.toString();
+    return c.wallet ? { ...c, wallet: { ...c.wallet, labName: names[labId] || '' } } : c;
+  });
+};
 
 // ─── GET /api/lawyer/defaulter-cases ─────────────────────────────────────────
 const getDefaulterCases = async (req, res) => {
@@ -9,7 +22,7 @@ const getDefaulterCases = async (req, res) => {
       .populate('patient', 'name email phone')
       .populate('wallet')
       .sort({ escalatedAt: -1 });
-    res.json(await withPatientDetails(cases));
+    res.json(await withLabNames(await withPatientDetails(cases)));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -25,7 +38,7 @@ const getDefaulterCaseById = async (req, res) => {
         populate: { path: 'lab', select: 'name email' },
       });
     if (!c) return res.status(404).json({ message: 'Case not found or not assigned to you' });
-    const [withDetails] = await withPatientDetails([c]);
+    const [withDetails] = await withLabNames(await withPatientDetails([c]));
     res.json(withDetails);
   } catch (err) {
     res.status(500).json({ message: err.message });

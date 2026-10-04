@@ -418,6 +418,63 @@ const getNeedyPatients = async (req, res) => {
   }
 };
 
+// ─── GET /api/lab/earnings ───────────────────────────────────────────────────
+// Money the lab received that is recorded on CareFirst (CareFirst never holds it):
+//   - completed visits paid at the lab (test price, on the visit date)
+//   - down payments and installments the lab confirmed (on the confirmation date)
+// → { month, total, count, previousTotal, entries[] (newest first, this + last month) }
+const PKT_OFFSET = 5 * 60 * 60 * 1000;
+const monthOf = (d) => new Date(new Date(d).getTime() + PKT_OFFSET).toISOString().slice(0, 7);
+const getEarnings = async (req, res) => {
+  try {
+    const month = monthOf(new Date());
+    const [y, m] = month.split('-').map(Number);
+    const prev = new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7);
+    const since = new Date(Date.UTC(y, m - 2, 1) - PKT_OFFSET); // start of last month (PKT)
+
+    const [visits, wallets] = await Promise.all([
+      LabBooking.find({ lab: req.user._id, status: 'completed', paymentMethod: 'at_lab', visitDate: { $gte: `${prev}-01` } })
+        .populate('patient', 'name').select('patient testName price visitDate slipNumber').lean(),
+      Wallet.find({ lab: req.user._id, $or: [{ 'downPayment.labApprovedAt': { $gte: since } }, { 'installments.labApprovedAt': { $gte: since } }] })
+        .populate('patient', 'name').select('patient testName downPayment installments').lean(),
+    ]);
+
+    const entries = [];
+    for (const v of visits) {
+      entries.push({ kind: 'visit', at: new Date(`${v.visitDate}T12:00:00+05:00`), patient: v.patient?.name || '—', testName: v.testName,
+        detail: `Visit paid at the lab · slip ${v.slipNumber || '—'}`, amount: Math.round(v.price || 0) });
+    }
+    for (const w of wallets) {
+      if (w.downPayment?.labApprovedAt && w.downPayment.labApprovedAt >= since) {
+        entries.push({ kind: 'downPayment', at: w.downPayment.labApprovedAt, patient: w.patient?.name || '—', testName: w.testName,
+          detail: 'Down payment (installment plan)', amount: w.downPayment.amount || 0 });
+      }
+      for (const inst of w.installments || []) {
+        if (inst.labApprovedAt && inst.labApprovedAt >= since) {
+          entries.push({ kind: 'installment', at: inst.labApprovedAt, patient: w.patient?.name || '—', testName: w.testName,
+            detail: `Installment #${inst.number} (installment plan)`, amount: inst.amount || 0 });
+        }
+      }
+    }
+    entries.sort((a, b) => new Date(b.at) - new Date(a.at));
+
+    const inMonth = entries.filter(e => monthOf(e.at) === month);
+    const total = inMonth.reduce((sum, e) => sum + e.amount, 0);
+    const previousTotal = entries.filter(e => monthOf(e.at) === prev).reduce((sum, e) => sum + e.amount, 0);
+    res.json({
+      month,
+      total,
+      count: inMonth.length,
+      visitsCompleted: inMonth.filter(e => e.kind === 'visit').length,
+      planPayments: inMonth.filter(e => e.kind !== 'visit').length,
+      previousTotal,
+      entries,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── PUT /api/lab/community-support ──────────────────────────────────────────
 // Body: { join: true | false }. Joining takes effect at once (admins are told);
 // leaving is refused while assigned patients still wait for their test.
@@ -553,7 +610,7 @@ module.exports = {
   getTests, addTest, updateTest, deleteTest,
   uploadReport, getReports, updateReportSummary, readReportAgain,
   getReceiptsPendingApproval, approveReceipt,
-  getNeedyPatients, markTestConducted, setCommunitySupport,
+  getNeedyPatients, markTestConducted, setCommunitySupport, getEarnings,
   getLabPatients,
   getBookings, markSampleCollected, completeBooking,
   getNotifications, markRead,
