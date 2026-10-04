@@ -257,7 +257,7 @@ const PatientDashboard = () => {
     socket.emit('join', uid);
     socket.on('notification:new', (n: any) => {
       setNotifications(prev => [n, ...prev]);
-      if (n.type === 'test_report_uploaded') { loadReports(); loadCommunity(); }
+      if (n.type === 'test_report_uploaded' || n.type === 'report_summary_ready') { loadReports(); loadCommunity(); }
       if (n.type === 'prescription_issued')  { loadPrescriptions(); loadAppointments(); }
       if (n.type?.startsWith('appointment_')) loadAppointments();
       if (n.type?.startsWith('lab_booking_') || n.type === 'test_report_uploaded') loadLabBookings();
@@ -725,25 +725,97 @@ const PatientDashboard = () => {
   );
 
   // Report summary from the lab: English, Urdu (machine-translated or lab-corrected) and Listen
-  const summaryBlock = (r: any) => (
-    <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-      {r.summary && (
-        <div style={{ flex: '1 1 240px', fontSize: '0.8rem', color: 'var(--text-sub)' }}>
-          <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', marginBottom: 3 }}>Summary from the lab</div>
-          {r.summary}
-        </div>
-      )}
-      {r.summaryUrdu && (
-        <div style={{ flex: '1 1 260px' }}>
-          <UrduText text={r.summaryUrdu} style={{ color: 'var(--text)' }} />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-            {r.summaryUrduSource === 'machine' && <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>Machine translated</span>}
-            <ListenButton compact request={{ source: 'report', id: r._id }} />
+  const summaryBlock = (r: any) => {
+    const auto = r.autoRead || {};
+    const findings: any[] = auto.findings || [];
+    const flagged = findings.filter(f => ['high', 'low', 'abnormal'].includes(f.status));
+    const reading = ['pending', 'processing'].includes(auto.status);
+    const seeDoctor = flagged.length > 0 || auto.kind === 'narrative' || auto.status === 'failed';
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {reading && (
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Reading your report… the summary will appear here in a moment.</div>
+        )}
+        {(r.summary || r.summaryUrdu) && (
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            {r.summary && (
+              <div style={{ flex: '1 1 240px', fontSize: '0.8rem', color: 'var(--text-sub)' }}>
+                <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', marginBottom: 3 }}>
+                  {r.summarySource === 'auto' ? 'Automatic summary' : 'Summary from the lab'}
+                </div>
+                {r.summary}
+              </div>
+            )}
+            {r.summaryUrdu && (
+              <div style={{ flex: '1 1 260px' }}>
+                <UrduText text={r.summaryUrdu} style={{ color: 'var(--text)' }} />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                  {r.summaryUrduSource === 'machine' && <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>Machine translated</span>}
+                  <ListenButton compact request={{ source: 'report', id: r._id }} />
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-      )}
-    </div>
-  );
+        )}
+
+        {findings.length > 0 && (() => {
+          const rowsFor = (list: any[]) => (
+            <table style={{ marginTop: 6, width: '100%' }}>
+              <thead><tr><th>Test</th><th>Your result</th><th>Normal range (from the report)</th><th>Status</th></tr></thead>
+              <tbody>
+                {list.map((f: any, i: number) => {
+                  const badge = f.status === 'high' ? ['High', 'pat-badge-red'] : f.status === 'low' ? ['Low', 'pat-badge-red']
+                    : f.status === 'abnormal' ? ['Not normal', 'pat-badge-red'] : f.status === 'normal' ? ['Normal', 'pat-badge-green'] : ['Ask your doctor', 'pat-badge-amber'];
+                  return (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 600, color: 'var(--text)' }}>{f.name}</td>
+                      <td>{[f.result, f.unit && !String(f.result).includes(f.unit) ? f.unit : ''].filter(Boolean).join(' ')}</td>
+                      <td style={{ color: 'var(--text-muted)' }}>{f.range || '—'}</td>
+                      <td><span className={`pat-badge ${badge[1]}`}><span className="pat-badge-dot"></span>{badge[0]}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          );
+          // Flagged results are always shown; the full list is one click away
+          return (
+            <div style={{ fontSize: '0.78rem' }}>
+              {flagged.length > 0 && (
+                <>
+                  <div style={{ color: 'var(--text-sub)', fontWeight: 600 }}>{flagged.length} of {findings.length} results outside the normal range</div>
+                  {rowsFor(flagged)}
+                </>
+              )}
+              <details style={{ marginTop: 6 }}>
+                <summary style={{ cursor: 'pointer', color: 'var(--text-sub)', fontWeight: 600 }}>
+                  {flagged.length ? `Show all ${findings.length} results` : `${findings.length} results read from the report`}
+                </summary>
+                {rowsFor(findings)}
+              </details>
+            </div>
+          );
+        })()}
+
+        {!reading && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '10px 14px', borderRadius: 10, fontSize: '0.8rem',
+            background: seeDoctor ? '#fef2f2' : '#f0fdf4', border: `1px solid ${seeDoctor ? '#fecaca' : '#bbf7d0'}`, color: seeDoctor ? '#991b1b' : '#166534',
+          }}>
+            <span style={{ flex: 1, minWidth: 220 }}>
+              {auto.status === 'failed'
+                ? "We couldn't read this report automatically. Please share it with your doctor and visit them."
+                : seeDoctor
+                  ? <><strong>Please share this report with your doctor and visit them</strong> to discuss these results.</>
+                  : 'Share this report with your doctor at your next visit.'}
+              {r.summarySource === 'auto' && <span style={{ display: 'block', fontSize: '0.7rem', opacity: 0.8, marginTop: 2 }}>Created automatically from your report — always check the original report.</span>}
+            </span>
+            {seeDoctor && <button type="button" className="pat-btn-primary pat-red" style={{ padding: '6px 14px', fontSize: '0.78rem' }} onClick={() => navigate('findDoctors')}>Book a doctor</button>}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Agreement with an English / Urdu switch; Listen reads the Urdu
   const agreementView = (textEn: string, textUr: string | undefined, request: any) => (
@@ -1870,7 +1942,7 @@ const PatientDashboard = () => {
                             </div>
                           </td>
                         </tr>
-                        {(r.summary || r.summaryUrdu) && (
+                        {(r.summary || r.summaryUrdu || r.autoRead?.status && r.autoRead.status !== 'skipped') && (
                           <tr>
                             <td colSpan={6} style={{ background: 'var(--bg-alt)', padding: '10px 18px 14px' }}>
                               {summaryBlock(r)}

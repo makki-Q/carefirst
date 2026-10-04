@@ -13,7 +13,8 @@ const saveVoice = (v: string) => { try { localStorage.setItem(VOICE_KEY, v); } c
 
 // Keep left-to-right runs (CNICs, phone numbers, amounts, Latin names) in their own
 // direction inside Urdu — otherwise "35202-1234567-1" displays as "1-1234567-35202"
-const LTR_RUN = /[0-9][0-9,.\-/]*[0-9]|[A-Za-z][A-Za-z0-9 .,'\-]*[A-Za-z0-9]/g;
+// (a number with its unit "222 mg/dL", a number like a CNIC, or a Latin word run "Dengue NS1 Antigen")
+const LTR_RUN = /[0-9][0-9,.]*\s*[A-Za-zµ%][A-Za-z0-9µ%/^.]*|[0-9][0-9,.\-/]*[0-9]|[A-Za-z][A-Za-z0-9 .,'\-/^]*[A-Za-z0-9]/g;
 const isolateLtr = (text: string) => text.replace(LTR_RUN, m => `⁦${m}⁩`);
 
 // Right-to-left Urdu block in a Nastaliq font

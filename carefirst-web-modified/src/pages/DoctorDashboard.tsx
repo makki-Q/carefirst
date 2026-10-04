@@ -1057,11 +1057,24 @@ const DoctorDashboard = () => {
                               )}
                             </td>
                           </tr>
-                          {(r.summary || r.summaryUrdu) && (
+                          {(r.summary || r.summaryUrdu || r.autoRead?.findings?.length > 0) && (
                             <tr>
                               <td colSpan={6} style={{ padding: '8px 16px 14px', background: 'rgba(255,255,255,0.35)' }}>
+                                {(() => {
+                                  const flagged = (r.autoRead?.findings || []).filter((f: any) => ['high', 'low', 'abnormal'].includes(f.status));
+                                  return flagged.length > 0 && (
+                                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8, fontSize: '0.74rem' }}>
+                                      <strong style={{ color: 'var(--text)' }}>Outside range:</strong>
+                                      {flagged.map((f: any, i: number) => (
+                                        <span key={i} style={{ padding: '2px 8px', borderRadius: 10, background: '#fee2e2', color: '#991b1b', fontWeight: 600 }}>
+                                          {f.name} {f.result}{f.unit && !String(f.result).includes(f.unit) ? ` ${f.unit}` : ''} ({f.status === 'abnormal' ? 'not normal' : f.status}{f.range ? `; ${f.range}` : ''})
+                                        </span>
+                                      ))}
+                                    </div>
+                                  );
+                                })()}
                                 <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start', fontSize: '0.8rem' }}>
-                                  {r.summary && <div style={{ flex: '1 1 240px', color: 'var(--text-sub)' }}><strong>Lab summary:</strong> {r.summary}</div>}
+                                  {r.summary && <div style={{ flex: '1 1 240px', color: 'var(--text-sub)' }}><strong>{r.summarySource === 'auto' ? 'Automatic summary:' : 'Lab summary:'}</strong> {r.summary}</div>}
                                   {r.summaryUrdu && (
                                     <div style={{ flex: '1 1 260px' }}>
                                       <UrduText text={r.summaryUrdu} style={{ color: 'var(--text)' }} />

@@ -218,11 +218,27 @@ const LabDashboard = () => {
       fd.append('report', uploadFile); // field name expected by POST /api/lab/reports/upload
       await api.upload('/lab/reports/upload', fd);
       setUploadPatientId(''); setUploadTestName(''); setUploadNotes(''); setUploadFile(null); setUploadBookingId(''); setUploadSummary('');
-      setUploadMsg('Report uploaded successfully.');
-      api.get('/lab/reports').then((d: any) => setReports(Array.isArray(d) ? d : [])).catch(() => {});
+      setUploadMsg('Report uploaded successfully. It is being read now — the automatic summary appears under Recent Reports.');
+      const refresh = () => api.get('/lab/reports').then((d: any) => setReports(Array.isArray(d) ? d : [])).catch(() => {});
+      refresh();
+      [4000, 10000, 20000, 40000].forEach(ms => setTimeout(refresh, ms)); // automatic reading runs in the background
       loadBookings();
     } catch (err: any) { setUploadMsg(err.message || 'Upload failed.'); }
     finally { setUploadLoading(false); }
+  };
+
+  const [readingId, setReadingId] = useState<string | null>(null);
+  const readAgain = async (r: any) => {
+    setSummaryMsg(null); setReadingId(r._id);
+    try {
+      const d: any = await api.post(`/lab/reports/${r._id}/read-again`, {});
+      setReports(prev => prev.map((x: any) => x._id === r._id ? { ...x, ...d.report, patient: x.patient } : x));
+      setSummaryMsg({ ok: d.report.autoRead?.status === 'ready', text: d.message });
+    } catch (err: any) {
+      setSummaryMsg({ ok: false, text: err.message || 'Could not read the report' });
+    } finally {
+      setReadingId(null);
+    }
   };
 
   const startEditSummary = (r: any) => {
@@ -806,7 +822,23 @@ const LabDashboard = () => {
                       <strong style={{ color: 'var(--text)' }}>{r.patient?.name || '—'}</strong>
                       <span style={{ fontSize: '0.8rem', color: 'var(--text-sub)' }}>{r.testName} · {new Date(r.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>
                       <a href={r.reportUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.74rem', fontWeight: 600 }}>File ↗</a>
+                      {(() => {
+                        const a = r.autoRead || {};
+                        const flagged = (a.findings || []).filter((f: any) => ['high', 'low', 'abnormal'].includes(f.status)).length;
+                        const [label, cls] =
+                          ['pending', 'processing'].includes(a.status) ? ['Reading report…', 'dash-blue']
+                          : a.status === 'failed' ? ["Couldn't read automatically", 'dash-red']
+                          : a.status === 'ready' && a.kind === 'table' ? [flagged ? `${flagged} of ${a.findings.length} outside range` : `${a.findings.length} results, all in range`, flagged ? 'dash-amber' : 'dash-green']
+                          : a.status === 'ready' && a.kind === 'narrative' ? ['Written report — sent to doctor', 'dash-gray']
+                          : a.status === 'ready' ? ['No results found', 'dash-gray'] : [null, ''];
+                        return label && <span className={`dash-badge ${cls}`}><span className="dash-badge-dot"></span>{label}</span>;
+                      })()}
                       <span style={{ flex: 1 }} />
+                      {['failed', 'ready'].includes(r.autoRead?.status) && editSummaryId !== r._id && (
+                        <button className="dash-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.74rem' }} disabled={readingId === r._id} onClick={() => readAgain(r)}>
+                          {readingId === r._id ? 'Reading…' : 'Read again'}
+                        </button>
+                      )}
                       {r.summaryUrdu && editSummaryId !== r._id && <ListenButton compact request={{ source: 'report', id: r._id }} />}
                       {editSummaryId !== r._id && (
                         <button className="dash-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.74rem' }} onClick={() => startEditSummary(r)}>
@@ -842,13 +874,14 @@ const LabDashboard = () => {
                           {r.summaryUrdu ? <UrduText text={r.summaryUrdu} style={{ color: 'var(--text)' }} /> : <em>Not translated yet — use Edit summary → Translate English again</em>}
                           {r.summaryUrdu && (
                             <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textAlign: 'right' }}>
-                              {r.summaryUrduSource === 'lab' ? 'Corrected by your lab' : 'Machine translated — please check'}
+                              {r.summarySource === 'auto' ? 'Automatic summary — already shown to the patient'
+                                : r.summaryUrduSource === 'lab' ? 'Corrected by your lab' : 'Machine translated — please check'}
                             </div>
                           )}
                         </div>
                       </div>
                     ) : (
-                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No summary — patients only get the file.</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{['pending', 'processing'].includes(r.autoRead?.status) ? 'The automatic summary will appear here when the report has been read.' : 'No summary — patients only get the file.'}</div>
                     )}
                   </div>
                 ))}
