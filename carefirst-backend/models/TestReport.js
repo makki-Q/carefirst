@@ -13,8 +13,27 @@ const testReportSchema = new mongoose.Schema(
     // The Urdu version is machine-translated (Azure) and can be corrected by the lab.
     summary:             { type: String, trim: true },
     summaryUrdu:         { type: String, trim: true },
-    summaryUrduSource:   { type: String, enum: ['machine', 'lab'] },
+    summaryUrduSource:   { type: String, enum: ['machine', 'lab', 'auto'] },
     summaryUrduEditedAt: { type: Date },
+    // Who wrote the summary: the lab, or the automatic report reader (never overwrites the lab's)
+    summarySource:       { type: String, enum: ['lab', 'auto'] },
+
+    // Automatic reading of the report file (Azure Document Intelligence → reportInterpreter)
+    autoRead: {
+      status:   { type: String, enum: ['pending', 'processing', 'ready', 'failed', 'skipped'] },
+      kind:     { type: String, enum: ['table', 'narrative', 'unreadable'] },
+      findings: [{
+        _id: false,
+        name: String, result: String, unit: String, range: String,
+        normalLow: Number, normalHigh: Number,
+        status: { type: String, enum: ['high', 'low', 'abnormal', 'normal', 'unknown'] },
+        basis:  String,
+      }],
+      pages:      Number,
+      totalPages: Number,
+      error:      String,
+      readAt:     Date,
+    },
     isRead:    { type: Boolean, default: false },
   },
   { timestamps: true }

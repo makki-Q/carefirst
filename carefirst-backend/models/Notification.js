@@ -19,6 +19,7 @@ const NOTIFICATION_TYPES = [
   'lab_booking_created',     // patient booked a lab visit (to lab + patient)
   'lab_booking_cancelled',   // patient cancelled a lab visit
   'lab_booking_updated',     // lab collected the sample / completed the booking
+  'report_summary_ready',    // automatic report summary is ready for the patient
   'defaulter_escalated',     // case moved to lawyer
   'test_report_uploaded',    // lab uploaded patient's result
   'prescription_issued',     // doctor issued a prescription

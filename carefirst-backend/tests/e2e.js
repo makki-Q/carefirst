@@ -54,7 +54,9 @@ const call = async (method, urlPath, { token, body, files, raw } = {}) => {
     payload = new FormData();
     Object.entries(body || {}).forEach(([k, v]) => payload.append(k, v));
     Object.entries(files).forEach(([field, names]) => {
-      names.forEach(name => payload.append(field, new Blob([PNG]), name));
+      names.forEach(item => typeof item === 'string'
+        ? payload.append(field, new Blob([PNG]), item)
+        : payload.append(field, new Blob([item.data]), item.name));
     });
   } else if (raw !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -86,7 +88,8 @@ const listUploads = () => new Set(
 const http = require('http');
 const MOCK_PORT = 5098;
 const MOCK      = `http://127.0.0.1:${MOCK_PORT}`;
-const mock = { osrmDown: false, osrmCalls: 0, translatorDown: false, translations: 0, speechDown: false, speechCalls: 0, lastSsml: '' };
+const mock = { osrmDown: false, osrmCalls: 0, translatorDown: false, translations: 0, speechDown: false, speechCalls: 0, lastSsml: '',
+  docIntelResult: null, docIntelCalls: 0, docIntelOps: {} }; // docIntelResult null → the reading fails
 let mockServer;
 const AUDIO_DIR = path.join(require('os').tmpdir(), `carefirst-e2e-audio-${process.pid}`);
 
@@ -110,6 +113,19 @@ const handleMock = async (req, res) => {
     mock.translations++;
     return send(200, JSON.parse(body).map(item => ({ translations: [{ text: `[ur] ${item.Text}`, to: 'ur' }] })));
   }
+
+  // Azure Document Intelligence: returns mock.docIntelResult for every page group
+  if (req.method === 'POST' && url.pathname === '/documentintelligence/documentModels/prebuilt-layout:analyze') {
+    if (req.headers['ocp-apim-subscription-key'] !== 'test-docintel-key') return send(401, { error: 'bad key' });
+    mock.docIntelCalls++;
+    if (!mock.docIntelResult) return send(500, { error: 'down' });
+    const id = mock.docIntelCalls;
+    mock.docIntelOps[id] = mock.docIntelResult;
+    res.writeHead(202, { 'Operation-Location': `${MOCK}/docintel-ops/${id}` });
+    return res.end();
+  }
+  const op = url.pathname.match(/^\/docintel-ops\/(\d+)$/);
+  if (op) return send(200, { status: 'succeeded', analyzeResult: mock.docIntelOps[op[1]] });
 
   // Azure Speech: fake MP3 bytes
   if (req.method === 'POST' && url.pathname === '/cognitiveservices/v1') {
@@ -152,6 +168,12 @@ const startServer = async () => {
       ADMIN_PASSWORD: ADMIN.password,
       BASE_URL:       BASE,
       OSRM_URL:       MOCK,
+      // Pinned so local .env changes (fee, rates) never change what the tests expect
+      SERVICE_FEE_PKR:       '500',
+      DOWN_PAYMENT_PERCENT:  '20',
+      TRAVEL_RATE_MOTORBIKE: '8',
+      TRAVEL_RATE_CAR:       '25',
+      TRAVEL_RATE_RIDE:      '50',
       // Fake Azure — overrides the real keys in .env so tests never spend quota
       AZURE_TRANSLATOR_KEY:      'test-translator-key',
       AZURE_TRANSLATOR_REGION:   'test',
@@ -160,6 +182,9 @@ const startServer = async () => {
       AZURE_SPEECH_REGION:       'test',
       AZURE_SPEECH_ENDPOINT:     MOCK,
       AUDIO_CACHE_DIR:           AUDIO_DIR,
+      AZURE_DOCINTEL_KEY:        'test-docintel-key',
+      AZURE_DOCINTEL_ENDPOINT:   MOCK,
+      AZURE_DOCINTEL_POLL_MS:    '20',
     },
   });
   server.stdout.on('data', d => { serverLog += d; });
@@ -1097,6 +1122,90 @@ const testUrdu = async () => {
   check('if the speech service fails, a clear 502 is returned', down.status === 502 && down.json, down);
 };
 
+// ─── Automatic report summary (fake Document Intelligence) ───────────────────
+const CBC_LAYOUT = {
+  content: 'CBC Report\nPatient Name: Test\nAge/Sex: 30 Year(s)/Female',
+  tables: [{
+    rowCount: 4, columnCount: 4,
+    cells: [
+      ['TEST', 'NORMAL VALUE', 'UNIT', '44202-20-06 20-Jun-2019'],
+      ['Hb', '11.5 - 16', 'g/dl', '8.8'],
+      ['Platelet Count', '150 - 400', 'x10^9/l', '295'],
+      ['WBC Count (TLC)', '4 - 11', 'x10^9/l', '6.6'],
+    ].flatMap((row, ri) => row.map((content, ci) => ({ rowIndex: ri, columnIndex: ci, content, ...(ri === 0 ? { kind: 'columnHeader' } : {}) }))),
+  }],
+};
+const NARRATIVE_LAYOUT = { content: 'Histopathology Report\nGross: received in formalin are two soft tissue pieces measuring 1.5 cm. '.repeat(5), tables: [] };
+
+const testAutoSummary = async () => {
+  section('Automatic report summary');
+  const { PDFDocument } = require('pdf-lib');
+  const reportOf = async (id) => (await get('/api/patient/reports', { token: tokens.patient })).data.find(r => r._id === id);
+  const waitRead = async (id) => {
+    for (let i = 0; i < 100; i++) {
+      const r = await reportOf(id);
+      if (r && !['pending', 'processing'].includes(r.autoRead?.status)) return r;
+      await new Promise(res => setTimeout(res, 50));
+    }
+    return reportOf(id);
+  };
+  const upload = (body, file = 'cbc.png') =>
+    post('/api/lab/reports/upload', { token: tokens.lab, body: { patientId: ids.patient, testName: 'CBC', ...body }, files: { report: [file] } });
+
+  mock.docIntelResult = CBC_LAYOUT;
+  const up = await upload({});
+  check('upload answers straight away; the reading runs in the background', up.status === 201 && up.data.autoRead?.status === 'pending', up.data.autoRead);
+  const r = await waitRead(up.data._id);
+  check('the report is read and compared with the printed ranges',
+    r.autoRead.status === 'ready' && r.autoRead.kind === 'table' && r.autoRead.findings.length === 3 &&
+    r.autoRead.findings.find(f => f.name === 'Hb').status === 'low', r.autoRead);
+  check('the patient gets an automatic English summary that sends them to their doctor',
+    r.summarySource === 'auto' && r.summary.includes('Hb 8.8 g/dl (low; normal 11.5 to 16)') && r.summary.includes('share this report with your doctor and visit them'), r.summary);
+  check('… and an Urdu one written from the template (no machine translation)',
+    r.summaryUrduSource === 'auto' && r.summaryUrdu.includes('ہیموگلوبن 8.8 g/dl') && r.summaryUrdu.includes('اپنے ڈاکٹر'), r.summaryUrdu);
+  const notifs = await get('/api/patient/notifications', { token: tokens.patient });
+  check('the patient is notified that the summary is ready',
+    notifs.data.some(n => n.type === 'report_summary_ready' && n.meta?.reportId === up.data._id && n.message.includes('1 result is outside the normal range')), notifs.data[0]);
+  const audio = await post('/api/tts', { token: tokens.patient, body: { source: 'report', id: up.data._id } });
+  check('the patient can listen to the automatic Urdu summary', audio.status === 200 && mock.lastSsml.includes('ہیموگلوبن'), audio.status);
+
+  const own = await upload({ summary: 'Mild anaemia, please see your doctor.' });
+  const ownRead = await waitRead(own.data._id);
+  check("a lab-written summary is kept; the reading only adds the results table",
+    ownRead.autoRead.status === 'ready' && ownRead.summarySource === 'lab' && ownRead.summary === 'Mild anaemia, please see your doctor.' && ownRead.autoRead.findings.length === 3, ownRead);
+
+  // A 3-page PDF goes to Document Intelligence in two pieces (the free tier reads 2 pages per request)
+  const doc = await PDFDocument.create();
+  [1, 2, 3].forEach(() => doc.addPage([200, 200]));
+  const callsBefore = mock.docIntelCalls;
+  const pdf = await upload({}, { name: 'three-pages.pdf', data: Buffer.from(await doc.save()) });
+  const pdfRead = await waitRead(pdf.data._id);
+  check('a 3-page PDF is read in two requests, every page included',
+    pdfRead.autoRead.status === 'ready' && mock.docIntelCalls - callsBefore === 2 && pdfRead.autoRead.pages === 3 && pdfRead.autoRead.totalPages === 3, [mock.docIntelCalls - callsBefore, pdfRead.autoRead]);
+
+  mock.docIntelResult = NARRATIVE_LAYOUT;
+  const written = await waitRead((await upload({}, 'biopsy.png')).data._id);
+  check('a written report is not summarised — the patient is sent to their doctor',
+    written.autoRead.kind === 'narrative' && written.summary.includes('A doctor needs to explain it'), written.summary);
+
+  mock.docIntelResult = null;
+  const failed = await waitRead((await upload({}, 'blurry.png')).data._id);
+  check('if the report cannot be read, it says so and adds no summary',
+    failed.autoRead.status === 'failed' && !failed.summary && !failed.summaryUrdu, failed.autoRead);
+  check('… so there is nothing to listen to (409)',
+    (await post('/api/tts', { token: tokens.patient, body: { source: 'report', id: failed._id } })).status === 409);
+
+  mock.docIntelResult = CBC_LAYOUT;
+  const again = await post(`/api/lab/reports/${failed._id}/read-again`, { token: tokens.lab });
+  check('the lab can read it again once the service works',
+    again.status === 200 && again.data.report.autoRead.status === 'ready' && again.data.report.summarySource === 'auto', again.data.report?.autoRead);
+  check('another lab cannot (404)', (await post(`/api/lab/reports/${failed._id}/read-again`, { token: tokens.lab2 })).status === 404);
+
+  const doctorView = (await get('/api/doctor/reports', { token: tokens.doctor })).data.find(x => x._id === up.data._id);
+  check("the patient's doctor sees the results table too", doctorView?.autoRead?.findings?.length === 3, doctorView?.autoRead);
+  mock.docIntelResult = null;
+};
+
 const testDueReminders = async () => {
   section('Due-soon reminders (nightly job)');
   const Wallet = require('../models/Wallet');
@@ -1175,6 +1284,7 @@ const main = async () => {
     await testTrueCost();
     await testDefaulterEscalation();
     await testUrdu();
+    await testAutoSummary();
     await testDueReminders();
     await testMisc();
   } catch (err) {

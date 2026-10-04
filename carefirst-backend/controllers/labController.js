@@ -12,6 +12,8 @@ const { withPatientDetails } = require('../utils/patientProfiles');
 const { findLabPayment }     = require('../utils/installmentPlan');
 const { isLatLng }           = require('../utils/travel');
 const { translateToUrdu }     = require('../utils/azure');
+const { processReport, processReportInBackground } = require('../utils/reportPipeline');
+const { docIntelConfigured } = require('../utils/reportReader');
 
 // ─── GET /api/lab/profile ─────────────────────────────────────────────────────
 const getProfile = async (req, res) => {
@@ -166,7 +168,8 @@ const uploadReport = async (req, res) => {
       reportUrl,
       notes,
       booking: booking?._id,
-      ...(summary && { summary }),
+      ...(summary && { summary, summarySource: 'lab' }),
+      autoRead: { status: docIntelConfigured() ? 'pending' : 'skipped' },
       ...(summaryUrdu && { summaryUrdu, summaryUrduSource: 'machine' }),
     });
 
@@ -188,6 +191,8 @@ const uploadReport = async (req, res) => {
     });
     sendNotification(patientId.toString(), notif);
 
+    // Read the file in the background → automatic summary for the patient (decision 9)
+    if (docIntelConfigured()) processReportInBackground(report._id);
     res.status(201).json(report);
   } catch (err) {
     removeUploadedFiles(req);
@@ -212,7 +217,11 @@ const updateReportSummary = async (req, res) => {
       return res.status(400).json({ message: 'Send summary and/or summaryUrdu' });
     }
 
-    if (summary !== undefined) report.summary = summary || undefined;
+    if (summary !== undefined) {
+      report.summary = summary || undefined;
+      report.summarySource = summary ? 'lab' : undefined;
+    }
+    if (summaryUrdu && !report.summarySource) report.summarySource = 'lab';
     if (summaryUrdu !== undefined) {
       report.summaryUrdu         = summaryUrdu || undefined;
       report.summaryUrduSource   = summaryUrdu ? 'lab' : undefined;
@@ -230,6 +239,24 @@ const updateReportSummary = async (req, res) => {
 
     await report.populate('patient', 'name email');
     res.json({ message: 'Summary updated', report });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── POST /api/lab/reports/:id/read-again ────────────────────────────────────
+// Re-runs the automatic reading (e.g. after it failed); waits for the result
+const readReportAgain = async (req, res) => {
+  try {
+    if (!docIntelConfigured()) return res.status(503).json({ message: 'Automatic report reading is not set up on this server' });
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Report not found' });
+    const existing = await TestReport.findOne({ _id: req.params.id, lab: req.user._id }).select('autoRead');
+    if (!existing) return res.status(404).json({ message: 'Report not found' });
+    if (['pending', 'processing'].includes(existing.autoRead?.status)) return res.status(409).json({ message: 'This report is being read right now' });
+
+    const report = await processReport(existing._id);
+    await report.populate('patient', 'name email');
+    res.json({ message: report.autoRead.status === 'ready' ? 'Report read' : 'The report could not be read', report });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -476,7 +503,7 @@ const markRead = async (req, res) => {
 module.exports = {
   getProfile, updateProfile,
   getTests, addTest, updateTest, deleteTest,
-  uploadReport, getReports, updateReportSummary,
+  uploadReport, getReports, updateReportSummary, readReportAgain,
   getReceiptsPendingApproval, approveReceipt,
   getNeedyPatients, markTestConducted,
   getLabPatients,
