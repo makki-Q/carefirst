@@ -37,10 +37,13 @@ const getProfile = async (req, res) => {
 // ─── PUT /api/doctor/profile ──────────────────────────────────────────────────
 const updateProfile = async (req, res) => {
   try {
-    const { specialization, experience, bio } = req.body;
+    const { specialization, experience, bio, clinicName, clinicAddress } = req.body;
+    const update = { specialization, experience: Number(experience), bio };
+    if (clinicName !== undefined)    update.clinicName    = clinicName;
+    if (clinicAddress !== undefined) update.clinicAddress = clinicAddress;
     const profile = await DoctorProfile.findOneAndUpdate(
       { user: req.user._id },
-      { specialization, experience: Number(experience), bio },
+      update,
       { new: true, runValidators: true, upsert: true }
     );
     res.json(profile);

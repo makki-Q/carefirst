@@ -9,7 +9,7 @@ const communityApplicationSchema = new mongoose.Schema(
     status:          { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
     rejectionReason: { type: String, trim: true },
     slip: {
-      slipId:      String,
+      slipId:      String, // e.g. CS-7KQ4-M9XD (utils/slips.js); printed on the PDF slip
       generatedAt: Date,
     },
     testConducted: { type: Boolean, default: false },

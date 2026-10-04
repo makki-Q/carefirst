@@ -10,6 +10,7 @@ const multer    = require('multer');
 const connectDB              = require('./config/db');
 const { initSocket }         = require('./socket/notificationSocket');
 const { startDefaulterJob }  = require('./jobs/defaulterJob');
+const { backfillSlipNumbers } = require('./utils/slips');
 
 const authRoutes   = require('./routes/auth');
 const adminRoutes  = require('./routes/admin');
@@ -82,5 +83,8 @@ connectDB().then(() => {
     console.log(`\nCareFirst API running on http://localhost:${PORT}`);
     console.log(`Socket.IO ready`);
     startDefaulterJob();
+    backfillSlipNumbers()
+      .then(n => n && console.log(`[Slips] Gave ${n} earlier booking(s) a slip number`))
+      .catch(err => console.error('[Slips] backfill failed:', err.message));
   });
 });

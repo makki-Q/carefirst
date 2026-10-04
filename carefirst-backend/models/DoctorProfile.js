@@ -21,6 +21,9 @@ const doctorProfileSchema = new mongoose.Schema(
     availability:    [availabilitySchema],
     consultationDuration: { type: Number, default: 20, min: 5, max: 120 },
     bio:             { type: String, trim: true },
+    // Where patients go for the (physical) appointment — printed on the appointment slip
+    clinicName:      { type: String, trim: true, maxlength: 100 },
+    clinicAddress:   { type: String, trim: true, maxlength: 200 },
     rating:          { type: Number, default: 0, min: 0, max: 5 },
   },
   { timestamps: true }

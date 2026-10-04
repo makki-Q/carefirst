@@ -563,7 +563,9 @@ const testCommunitySupport = async () => {
     adminList.data[0]?.patient?.cnic === '35202-1234567-9', adminList.data);
 
   const approve = await put(`/api/admin/community-applications/${app.data._id}/approve`, { token: tokens.admin, body: { assignedLabId: ids.lab } });
-  check('admin approves and generates a slip', approve.status === 200 && approve.data.application.slip?.slipId, approve);
+  check('admin approves and generates a slip', approve.status === 200 && /^CS-[2-9A-Z]{4}-[2-9A-Z]{4}$/.test(approve.data.application.slip?.slipId), approve);
+  ids.communityApp = app.data._id;
+  ids.communitySlip = approve.data.application.slip.slipId;
 
   const needy = await get('/api/lab/needy-patients', { token: tokens.lab });
   check('lab sees needy patient with CNIC', needy.data[0]?.patient?.cnic === '35202-1234567-9', needy.data);
@@ -900,6 +902,7 @@ const testLabBookings = async () => {
     post('/api/patient/lab-bookings', { token, body: { labId: ids.lab, testId: ids.cbcTest, visitDate: tomorrow, ...body } });
 
   const cbc = await book({});
+  ids.cbcBooking = cbc.data._id;
   check('patient books a test visit → confirmed, pay at the lab',
     cbc.status === 201 && cbc.data.status === 'confirmed' && cbc.data.paymentMethod === 'at_lab' &&
     cbc.data.price === 1500 && cbc.data.labName === 'E2E Diagnostics', cbc);
@@ -924,6 +927,7 @@ const testLabBookings = async () => {
     mri.status === 201 && mri.data.paymentMethod === 'installment' && mri.data.wallet === ids.plan, mri);
   check('one plan covers one booking (409)', (await book({ testId: ids.mriTest, walletId: ids.plan })).status === 409);
 
+  ids.cancelledBooking = mri.data._id;
   const cancelMri = await put(`/api/patient/lab-bookings/${mri.data._id}/cancel`, { token: tokens.patient });
   check('patient cancels before the visit date', cancelMri.status === 200 && cancelMri.data.booking.status === 'cancelled', cancelMri);
   check('lab is told about the cancellation',
@@ -1280,6 +1284,79 @@ const testCnicPicturesForLawyer = async () => {
   check('the case gives the lawyer the wallet with its pictures', lawyerCase?.wallet?.cnicPictures?.guarantorBack, lawyerCase?.wallet);
 };
 
+const testSlips = async () => {
+  section('Slips (PDF)');
+  const { PDFDocument } = require('pdf-lib');
+  const SLIP = (prefix) => new RegExp(`^${prefix}-[2-9A-Z]{4}-[2-9A-Z]{4}$`);
+  const slip = (token, p) => fetch(`${BASE}/api/documents/slips/${p}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  const pdfOf = async (res) => {
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (res.status !== 200 || !/application\/pdf/.test(res.headers.get('content-type')) || bytes.subarray(0, 4).toString() !== '%PDF') return null;
+    return PDFDocument.load(bytes);
+  };
+
+  // Slip numbers on every booking, visible to the lab / doctor for checking
+  const appts = (await get('/api/patient/appointments', { token: tokens.patient })).data;
+  const live = appts.find(a => a.status !== 'cancelled');
+  const cancelledAppt = appts.find(a => a.status === 'cancelled');
+  check('every appointment has a slip number', appts.length > 0 && appts.every(a => SLIP('AP').test(a.slipNumber)), appts.map(a => a.slipNumber));
+  const docAppts = (await get('/api/doctor/appointments', { token: tokens.doctor })).data;
+  check('the doctor sees the same slip number', docAppts.find(a => a._id === live._id)?.slipNumber === live.slipNumber);
+  const labBookings = (await get('/api/lab/bookings', { token: tokens.lab })).data;
+  const cbc = labBookings.find(b => b._id === ids.cbcBooking);
+  check('lab bookings have slip numbers the lab can see', SLIP('LB').test(cbc?.slipNumber), cbc);
+  const needy = (await get('/api/lab/needy-patients', { token: tokens.lab })).data;
+  check('the assigned lab sees the community slip number', needy.some(n => n.slip?.slipId === ids.communitySlip), needy);
+
+  // Appointment slip
+  const apptPdf = await pdfOf(await slip(tokens.patient, `appointment/${live._id}`));
+  check('the patient downloads a one-page appointment slip PDF', apptPdf?.getPageCount() === 1 && apptPdf.getTitle().includes(live.slipNumber), apptPdf?.getTitle());
+  check('the doctor can download it too', (await pdfOf(await slip(tokens.doctor, `appointment/${live._id}`))) !== null);
+  check('an admin can download it too', (await pdfOf(await slip(tokens.admin, `appointment/${live._id}`))) !== null);
+  check('another patient cannot (404)', (await slip(tokens.patient2, `appointment/${live._id}`)).status === 404);
+  check('a lab cannot (404)', (await slip(tokens.lab, `appointment/${live._id}`)).status === 404);
+  check('signed-out users cannot (401)', (await slip(null, `appointment/${live._id}`)).status === 401);
+  check('a cancelled appointment has no slip (409)', cancelledAppt && (await slip(tokens.patient, `appointment/${cancelledAppt._id}`)).status === 409);
+  check('unknown ids return 404', (await slip(tokens.admin, 'appointment/123')).status === 404);
+
+  // Lab visit slip
+  const labPdf = await pdfOf(await slip(tokens.patient, `lab-booking/${ids.cbcBooking}`));
+  check('the patient downloads a lab visit slip PDF', labPdf?.getPageCount() === 1 && labPdf.getTitle().includes(cbc.slipNumber), labPdf?.getTitle());
+  const dl = await slip(tokens.lab, `lab-booking/${ids.cbcBooking}`);
+  check('the lab can download it, as a named attachment',
+    /attachment; filename="CareFirst-slip-LB-/.test(dl.headers.get('content-disposition')) && (await pdfOf(dl)) !== null, dl.headers.get('content-disposition'));
+  check('another lab cannot (404)', (await slip(tokens.lab2, `lab-booking/${ids.cbcBooking}`)).status === 404);
+  check('a doctor cannot (404)', (await slip(tokens.doctor, `lab-booking/${ids.cbcBooking}`)).status === 404);
+  check('a cancelled visit has no slip (409)', (await slip(tokens.patient, `lab-booking/${ids.cancelledBooking}`)).status === 409);
+
+  // Community support slip with the uploaded documents after it
+  const commPdf = await pdfOf(await slip(tokens.patient, `community/${ids.communityApp}`));
+  check('the community slip has the slip page + the 2 uploaded documents',
+    commPdf?.getPageCount() === 3 && commPdf.getTitle().includes(ids.communitySlip), commPdf?.getPageCount());
+  check('the assigned lab can download it', (await pdfOf(await slip(tokens.lab, `community/${ids.communityApp}`))) !== null);
+  check('another lab cannot (404)', (await slip(tokens.lab2, `community/${ids.communityApp}`)).status === 404);
+  check('another patient cannot (404)', (await slip(tokens.patient2, `community/${ids.communityApp}`)).status === 404);
+
+  // Bookings from before slips existed get a number at startup
+  const Appointment = require('../models/Appointment');
+  const { backfillSlipNumbers } = require('../utils/slips');
+  const { insertedId } = await Appointment.collection.insertOne({
+    patient: new mongoose.Types.ObjectId(ids.patient), doctor: new mongoose.Types.ObjectId(ids.doctor),
+    date: '2026-01-05', time: '09:00', startsAt: new Date('2026-01-05T04:00:00Z'), durationMinutes: 30, status: 'completed',
+  });
+  await backfillSlipNumbers();
+  check('older bookings get a slip number', SLIP('AP').test((await Appointment.findById(insertedId).lean()).slipNumber));
+  await Appointment.deleteOne({ _id: insertedId });
+
+  // Clinic address (printed on the appointment slip)
+  const clinic = await put('/api/doctor/profile', { token: tokens.doctor, body: { specialization: 'Cardiology', experience: 10, clinicName: 'Heart Care Clinic', clinicAddress: '12 College Road, Chiniot' } });
+  check('the doctor sets a clinic name and address', clinic.status === 200 && clinic.data.clinicAddress === '12 College Road, Chiniot', clinic.data);
+  const pubDoc = (await get('/api/public/doctors')).data.find(d => d.doctorId === ids.doctor);
+  check('Find Doctors shows the clinic', pubDoc?.clinicName === 'Heart Care Clinic' && pubDoc?.clinicAddress === '12 College Road, Chiniot', pubDoc);
+  const withClinic = (await get('/api/patient/appointments', { token: tokens.patient })).data.find(a => a._id === live._id);
+  check("the patient's appointment shows where the clinic is", withClinic?.doctorClinic === 'Heart Care Clinic, 12 College Road, Chiniot', withClinic?.doctorClinic);
+};
+
 const testDueReminders = async () => {
   section('Due-soon reminders (nightly job)');
   const Wallet = require('../models/Wallet');
@@ -1356,6 +1433,7 @@ const main = async () => {
     await testDownPaymentAndCompletion();
     await testLabBookings();
     await testTrueCost();
+    await testSlips();
     await testDefaulterEscalation();
     await testCnicPicturesForLawyer();
     await testUrdu();

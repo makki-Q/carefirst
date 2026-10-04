@@ -10,7 +10,7 @@ const CommunityApplication  = require('../models/CommunityApplication');
 const mongoose              = require('mongoose');
 const generateToken         = require('../utils/generateToken');
 const { sendNotification }  = require('../socket/notificationSocket');
-const { v4: uuid }          = require('crypto');
+const { newSlipNumber, SLIP_PREFIX } = require('../utils/slips');
 const { getPatientProfileMap, withPatientDetails } = require('../utils/patientProfiles');
 const { splitInstallments, buildSchedule, findLabPayment } = require('../utils/installmentPlan');
 
@@ -512,7 +512,7 @@ const approveCommunityApplication = async (req, res) => {
     if (!app)                    return res.status(404).json({ message: 'Application not found' });
     if (app.status !== 'pending') return res.status(400).json({ message: 'Application already reviewed' });
 
-    const slipId = `SLP-${Date.now().toString().slice(-6)}`;
+    const slipId = newSlipNumber(SLIP_PREFIX.community);
     app.status      = 'approved';
     app.assignedLab = assignedLabId;
     app.reviewedAt  = new Date();
@@ -523,7 +523,7 @@ const approveCommunityApplication = async (req, res) => {
     const notif = await Notification.create({
       recipient: app.patient._id,
       title:     'Community Support Approved',
-      message:   `Your community support application has been approved. Slip ID: ${slipId}. Visit the assigned lab to proceed.`,
+      message:   `Your community support application has been approved. Slip ${slipId}: download it from Community Support and take it to the assigned lab with your CNIC.`,
       type:      'community_approved',
       meta:      { applicationId: app._id, slipId },
     });

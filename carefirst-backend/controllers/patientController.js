@@ -482,15 +482,19 @@ const apptWhen = (a) => {
   return `${day}, ${formatTime12(a.time)}`;
 };
 
-// Adds doctorSpecialization and the prescription written in each appointment
+// Adds doctorSpecialization, doctorClinic and the prescription written in each appointment
 const enrichAppointments = async (appts) => {
   const doctorIds = [...new Set(appts.map(a => a.doctor?._id?.toString()).filter(Boolean))];
   const [profiles, prescriptions] = await Promise.all([
-    DoctorProfile.find({ user: { $in: doctorIds } }).select('user specialization'),
+    DoctorProfile.find({ user: { $in: doctorIds } }).select('user specialization clinicName clinicAddress'),
     Prescription.find({ appointment: { $in: appts.map(a => a._id) } }),
   ]);
   const spec = {};
-  profiles.forEach(p => { spec[p.user.toString()] = p.specialization; });
+  const clinic = {};
+  profiles.forEach(p => {
+    spec[p.user.toString()] = p.specialization;
+    clinic[p.user.toString()] = [p.clinicName, p.clinicAddress].filter(Boolean).join(', ');
+  });
   const rx = {};
   prescriptions.forEach(p => { rx[p.appointment.toString()] = p; });
   return appts.map(a => {
@@ -498,6 +502,7 @@ const enrichAppointments = async (appts) => {
     return {
       ...obj,
       doctorSpecialization: spec[obj.doctor?._id?.toString()] || '',
+      doctorClinic:         clinic[obj.doctor?._id?.toString()] || '',
       prescription: rx[obj._id.toString()] || null,
     };
   });

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { withSlipNumber, SLIP_PREFIX } = require('../utils/slips');
 
 // A physical clinic visit. Auto-confirmed when booked; the fee is paid at the clinic.
 const appointmentSchema = new mongoose.Schema(
@@ -28,5 +29,6 @@ appointmentSchema.index(
   { unique: true, partialFilterExpression: { status: 'confirmed' }, name: 'one_confirmed_booking_per_slot' }
 );
 appointmentSchema.index({ patient: 1, startsAt: -1 });
+appointmentSchema.plugin(withSlipNumber(SLIP_PREFIX.appointment)); // slipNumber, printed on the PDF slip
 
 module.exports = mongoose.model('Appointment', appointmentSchema);

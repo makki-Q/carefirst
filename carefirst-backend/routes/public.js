@@ -69,6 +69,8 @@ router.get('/doctors', async (req, res) => {
           consultationFee: p.consultationFee || 0,
           rating:          p.rating || 0,
           bio:             p.bio || '',
+          clinicName:      p.clinicName || '',
+          clinicAddress:   p.clinicAddress || '',
           availableDays:   p.availability.filter(a => a.slots.length > 0).map(a => a.day),
           consultationDuration: p.consultationDuration || DEFAULT_CONSULTATION_MINUTES,
         };

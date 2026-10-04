@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { withSlipNumber, SLIP_PREFIX } = require('../utils/slips');
 
 // A patient's visit to a lab for one test. Auto-confirmed; paid at the lab or
 // through one of the patient's installment plans for that test.
@@ -25,5 +26,6 @@ const labBookingSchema = new mongoose.Schema(
 
 labBookingSchema.index({ lab: 1, visitDate: 1 });
 labBookingSchema.index({ patient: 1, createdAt: -1 });
+labBookingSchema.plugin(withSlipNumber(SLIP_PREFIX.labBooking)); // slipNumber, printed on the PDF slip
 
 module.exports = mongoose.model('LabBooking', labBookingSchema);
