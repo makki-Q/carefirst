@@ -3,6 +3,7 @@ import './LawyerDashboard.css';
 import { api, getSession, clearSession } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { ListenButton, UrduText } from '../components/Urdu';
+import { CnicPictureGallery } from '../components/CnicPictures';
 
 interface Installment {
   month: string;
@@ -16,7 +17,7 @@ interface Installment {
 interface Defaulter {
   id: string;
   patient: { name: string; cnic: string; phone: string; address: string };
-  guarantor: { name: string; cnic: string; relation: string; phone: string };
+  guarantor: { name: string; cnic: string; relation: string; phone: string; address?: string };
   test: string;
   lab: string;
   totalAmount: number;
@@ -30,6 +31,7 @@ interface Defaulter {
   agreementText?: string; // exact text the patient accepted (plans created through the app)
   agreementTextUrdu?: string;
   walletId?: string;
+  cnicPictures?: Record<string, string>; // patient + guarantor CNIC pictures sent with the application
   installments: Installment[];
 }
 
@@ -148,9 +150,9 @@ const LawyerDashboard = () => {
         name:    c.patient?.name || '—',
         cnic:    c.patient?.cnic || '—',
         phone:   c.patient?.phone || '—',
-        address: [c.patient?.address, c.patient?.city].filter(Boolean).join(', ') || '—',
+        address: wallet.patientAddress || [c.patient?.address, c.patient?.city].filter(Boolean).join(', ') || '—',
       },
-      guarantor:      { name: wallet.guarantor?.name || '—', cnic: wallet.guarantor?.cnic || '—', relation: wallet.guarantor?.relation || '—', phone: wallet.guarantor?.phone || '—' },
+      guarantor:      { name: wallet.guarantor?.name || '—', cnic: wallet.guarantor?.cnic || '—', relation: wallet.guarantor?.relation || '—', phone: wallet.guarantor?.phone || '—', address: wallet.guarantor?.address || '—' },
       test:           wallet.testName || '—',
       lab:            typeof wallet.lab === 'object' ? wallet.lab?.name || '—' : '—',
       totalAmount:    total,
@@ -164,6 +166,7 @@ const LawyerDashboard = () => {
       agreementText:  wallet.agreement?.text,
       agreementTextUrdu: wallet.agreement?.textUrdu,
       walletId:       wallet._id,
+      cnicPictures:   wallet.cnicPictures,
       installments:   (wallet.installments || []).map((inst: any, i: number) => ({
         month:      `Month ${i + 1}`,
         due:        inst.dueDate ? new Date(inst.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—',
@@ -458,6 +461,7 @@ const LawyerDashboard = () => {
                           { l: 'CNIC', v: selectedCase.guarantor.cnic },
                           { l: 'Relation', v: selectedCase.guarantor.relation },
                           { l: 'Phone', v: selectedCase.guarantor.phone },
+                          ...(selectedCase.guarantor.address ? [{ l: 'Address', v: selectedCase.guarantor.address }] : []),
                         ].map((r, i) => (
                           <div key={i} style={{ display: 'flex', gap: 12, fontSize: '0.825rem' }}>
                             <span style={{ width: 90, color: 'var(--text-muted)', fontWeight: 600, flexShrink: 0 }}>{r.l}</span>
@@ -514,6 +518,22 @@ const LawyerDashboard = () => {
                     </div>
                     )}
                   </div>
+
+                  {/* CNIC pictures sent with the application */}
+                  {selectedCase.walletId && (
+                    <div className="dash-card dash-fu dash-fu-2" style={{ marginBottom: 20 }}>
+                      <div className="dash-card-header">
+                        <div className="dash-card-title">
+                          <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="8" cy="11" r="2.5"/><path d="M14 9h5M14 13h5M5 17h6"/></svg>
+                          CNIC Pictures — Patient &amp; Guarantor
+                        </div>
+                      </div>
+                      <div style={{ padding: '16px 22px' }}>
+                        <CnicPictureGallery walletId={selectedCase.walletId} pictures={selectedCase.cnicPictures}
+                          patientName={selectedCase.patient.name} guarantorName={selectedCase.guarantor.name} />
+                      </div>
+                    </div>
+                  )}
 
                   {/* Wallet Breakdown */}
                   <div className="dash-card dash-fu dash-fu-3">

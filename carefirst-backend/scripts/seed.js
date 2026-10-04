@@ -32,6 +32,7 @@ const {
 } = require('../utils/legalAgreementTemplate');
 const { SERVICE_FEE, GRACE_DAYS } = require('../config/installments');
 const { AUDIO_DIR } = require('../config/azure');
+const { CNIC_DIR } = require('../middleware/upload');
 
 const PASSWORD = 'password123';
 const DAY = 24 * 60 * 60 * 1000;
@@ -83,6 +84,28 @@ const saveFile = (folder, title, lines) => {
 const receipt = (who, what, amount, to) =>
   saveFile('receipts', `Payment receipt - ${what}`, [`Paid by: ${who}`, `Paid to: ${to}`, `Amount: PKR ${amount.toLocaleString('en-US')}`, `Date: ${today}`, 'Reference: DEMO-' + Math.floor(Math.random() * 1e6)]);
 
+// A clearly fake CNIC card picture (PNG) in the private CNIC folder → file name
+const cnicCard = async (name, cnic, side, address) => {
+  const sharp = require('sharp');
+  const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const lines = side === 'front'
+    ? [['Name', name], ['Identity Number', cnic], ['Country of Stay', 'Pakistan']]
+    : [['Address', address || '—'], ['Identity Number', cnic]];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400">
+    <rect width="640" height="400" rx="24" fill="#e8f3ec"/>
+    <rect x="0" y="0" width="640" height="70" rx="24" fill="#1f6f43"/>
+    <text x="28" y="45" font-family="Arial" font-size="24" font-weight="bold" fill="#fff">PAKISTAN · NATIONAL IDENTITY CARD (${side.toUpperCase()})</text>
+    ${side === 'front' ? '<rect x="470" y="100" width="140" height="170" rx="10" fill="#c9d8cf"/><circle cx="540" cy="160" r="38" fill="#a9bdb1"/><rect x="495" y="205" width="90" height="50" rx="25" fill="#a9bdb1"/>' : ''}
+    ${lines.map(([label, value], i) => `<text x="32" y="${120 + i * 70}" font-family="Arial" font-size="16" fill="#4b6355">${esc(label)}</text>
+    <text x="32" y="${146 + i * 70}" font-family="Arial" font-size="24" font-weight="bold" fill="#10251a">${esc(value)}</text>`).join('')}
+    <text x="320" y="370" text-anchor="middle" font-family="Arial" font-size="20" font-weight="bold" fill="#c9372c">DEMO PICTURE — NOT A REAL CNIC</text>
+  </svg>`;
+  fs.mkdirSync(CNIC_DIR, { recursive: true });
+  const file = `seed-${++fileCount}-cnic-${cnic.replace(/\D/g, '')}-${side}.png`;
+  await sharp(Buffer.from(svg)).png().toFile(path.join(CNIC_DIR, file));
+  return file;
+};
+
 const clearFolder = (dir) => {
   if (!fs.existsSync(dir)) return 0;
   let n = 0;
@@ -133,14 +156,21 @@ const makePlan = async ({ patientKey, labKey, testName, guarantor, state, approv
   const { downPayment, installments } = planAmounts(total, test.installmentCount);
 
   const input = {
-    patient, patientCnic: profile.cnic, guarantor, labName: labProfile.labName, testName: test.name,
+    patient, patientCnic: profile.cnic, patientAddress: profile.address, guarantor, labName: labProfile.labName, testName: test.name,
     totalAmount: total, downPayment, installments, tenureDays: test.installmentTenureDays,
     serviceFee: SERVICE_FEE, graceDays: GRACE_DAYS,
   };
   const wallet = new Wallet({
     patient: patient._id, lab: users[labKey]._id, labTest: test._id, testName: test.name,
     totalAmount: total, installmentCount: installments.length, installmentTenureDays: test.installmentTenureDays,
-    downPayment: { amount: downPayment }, serviceFee: { amount: SERVICE_FEE }, guarantor,
+    downPayment: { amount: downPayment }, serviceFee: { amount: SERVICE_FEE },
+    patientCnic: profile.cnic, patientAddress: profile.address, guarantor,
+    cnicPictures: {
+      patientFront:   await cnicCard(patient.name, profile.cnic, 'front'),
+      patientBack:    await cnicCard(patient.name, profile.cnic, 'back', profile.address),
+      guarantorFront: await cnicCard(guarantor.name, guarantor.cnic, 'front'),
+      guarantorBack:  await cnicCard(guarantor.name, guarantor.cnic, 'back', guarantor.address),
+    },
     agreement: { text: generateInstallmentAgreement(input), textUrdu: generateInstallmentAgreementUrdu(input), acceptedAt: daysAgo(approvedDaysAgo + 1) },
     status: 'pending_approval',
   });
@@ -171,7 +201,7 @@ const seed = async () => {
   console.log(`Resetting database "${dbName}"…`);
   await mongoose.connection.dropDatabase();
   for (const model of Object.values(mongoose.models)) await model.syncIndexes();
-  const removed = clearFolder(UPLOADS) + clearFolder(AUDIO_DIR);
+  const removed = clearFolder(UPLOADS) + clearFolder(AUDIO_DIR) + clearFolder(CNIC_DIR);
   console.log(`Removed ${removed} uploaded / cached file(s).`);
 
   // ── Admin ──
@@ -253,7 +283,7 @@ const seed = async () => {
     { key: 'ayesha', name: 'Ayesha Khan',     cnic: '35202-1234567-1', city: 'Chiniot',    cnicStatus: 'verified' },
     { key: 'bilal',  name: 'Bilal Ahmed',     cnic: '33100-2345678-3', city: 'Faisalabad', cnicStatus: 'unverified' },
     { key: 'sana',   name: 'Sana Javed',      cnic: '33202-3456789-2', city: 'Jhang',      cnicStatus: 'rejected', cnicRejectionReason: 'The CNIC number does not match the name on NADRA records.' },
-    { key: 'usman',  name: 'Usman Tariq',     cnic: '33103-4567890-5', city: 'Faisalabad', cnicStatus: 'verified' },
+    { key: 'usman',  name: 'Usman Tariq',     cnic: '33103-4567890-5', city: 'Faisalabad', cnicStatus: 'unverified' },
     { key: 'fatima', name: 'Fatima Noor',     cnic: '35202-5678901-4', city: 'Chiniot',    cnicStatus: 'verified' },
     { key: 'hamza',  name: 'Hamza Ali',       cnic: '35201-6789012-7', city: 'Chiniot',    cnicStatus: 'verified' },
     { key: 'zainab', name: 'Zainab Bibi',     cnic: '33104-7890123-6', city: 'Faisalabad', cnicStatus: 'verified' },
@@ -290,9 +320,9 @@ const seed = async () => {
     startsAt: pktInstant(addDays(today, -3), '10:15') });
 
   // ── Installment plans in every state ──
-  const g = (name, cnic, relation) => ({ name, cnic, phone: '0300-9876543', relation, address: 'Chiniot' });
+  const g = (name, cnic, relation) => ({ name, cnic, phone: '0300-9876543', relation, address: 'House 5, Satellite Town, Chiniot' });
 
-  // Usman: application waiting for admin review
+  // Usman: application waiting for admin review (CNIC not verified yet — the admin checks the pictures)
   const usmanPlan = await makePlan({ patientKey: 'usman', labKey: 'chiniot', testName: 'MRI Brain', state: 'pending_approval', approvedDaysAgo: 0,
     guarantor: g('Tariq Mehmood', '33103-1112223-1', 'Father') });
   await usmanPlan.wallet.save();
@@ -340,7 +370,8 @@ const seed = async () => {
     patient: users.imran._id, wallet: imranPlan.wallet._id, assignedLawyer: users.lawyer._id,
     missedInstallments: 1, totalOverdue: missed.amount, escalatedAt,
     legalAgreementText: generateLegalAgreement({
-      patient: users.imran, guarantor: imranPlan.wallet.guarantor, testName: imranPlan.wallet.testName,
+      patient: users.imran, patientCnic: imranPlan.wallet.patientCnic, patientAddress: imranPlan.wallet.patientAddress,
+      guarantor: imranPlan.wallet.guarantor, hasCnicPictures: true, testName: imranPlan.wallet.testName,
       totalAmount: imranPlan.wallet.totalAmount, remainingBalance: imranPlan.wallet.remainingBalance, escalatedAt,
     }),
   });
@@ -422,7 +453,7 @@ const seed = async () => {
   row('Ayesha Khan', 'ayesha@carefirst.test', 'clean start: prescription (CBC, MRI) → Find labs, True Cost, apply, book; report with Urdu summary');
   row('Bilal Ahmed', 'bilal@carefirst.test', 'CNIC unverified (admin verifies); appointment with Dr. Sara in progress');
   row('Sana Javed', 'sana@carefirst.test', 'CNIC rejected — correct it in Profile');
-  row('Usman Tariq', 'usman@carefirst.test', 'installment application under review; appointment tomorrow');
+  row('Usman Tariq', 'usman@carefirst.test', 'installment application under review (CNIC not verified yet: approving it verifies the CNIC); appointment tomorrow');
   row('Fatima Noor', 'fatima@carefirst.test', 'plan approved, fee screenshot uploaded; appointment cancelled by doctor');
   row('Hamza Ali', 'hamza@carefirst.test', 'active plan: down payment awaiting lab; CT scan sample collected; installment due in 3 days');
   row('Zainab Bibi', 'zainab@carefirst.test', 'active plan: installment #1 awaiting admin; CBC visit today; community slip approved');

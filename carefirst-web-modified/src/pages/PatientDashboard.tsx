@@ -4,11 +4,19 @@ import { api, getSession, saveSession, clearSession, formatCnic } from '../lib/a
 import { getSocket } from '../lib/socket';
 import MapPicker, { currentPosition } from '../components/MapPicker';
 import { ListenButton, UrduText } from '../components/Urdu';
+import { CnicPicturePicker, CnicPictureGallery, checkCnicPicture } from '../components/CnicPictures';
 
 // ── Upload limits (mirror carefirst-backend/middleware/upload.js) ─────────────
 const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png'];
 const MAX_FILE_MB        = 10;
 const MAX_COMMUNITY_DOCS = 5;
+// [upload field, label, what the error message calls it]
+const CNIC_PICTURE_SLOTS: [string, string, string][] = [
+  ['patientCnicFront',   'Your CNIC — front',      'the front of your CNIC'],
+  ['patientCnicBack',    'Your CNIC — back',       'the back of your CNIC'],
+  ['guarantorCnicFront', 'Guarantor CNIC — front', "the front of the guarantor's CNIC"],
+  ['guarantorCnicBack',  'Guarantor CNIC — back',  "the back of the guarantor's CNIC"],
+];
 
 const validateFile = (file: File): string | null => {
   const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
@@ -174,6 +182,8 @@ const PatientDashboard = () => {
   const [planConfig, setPlanConfig]         = useState<any>(null); // fee, down-payment %, limit, CareFirst account
   const [planTarget, setPlanTarget]         = useState<{ lab: any; test: any } | null>(null);
   const [guarantorForm, setGuarantorForm]   = useState({ name: '', cnic: '', phone: '', relation: '', address: '' });
+  const [planAddress, setPlanAddress]       = useState('');  // the patient's own address for the agreement
+  const [cnicFiles, setCnicFiles]           = useState<Record<string, File | null>>({}); // the four CNIC pictures
   const [planPreview, setPlanPreview]       = useState<any>(null);  // terms + agreementText from the server
   const [agreementAccepted, setAgreementAccepted] = useState(false);
   const [planBusy, setPlanBusy]             = useState(false);
@@ -429,6 +439,8 @@ const PatientDashboard = () => {
   const startPlanApplication = (lab: any, test: any) => {
     setPlanTarget({ lab, test });
     setGuarantorForm({ name: '', cnic: '', phone: '', relation: '', address: '' });
+    setPlanAddress(profile?.address || '');
+    setCnicFiles({});
     setPlanPreview(null);
     setAgreementAccepted(false);
     setPlanMsg(null);
@@ -441,10 +453,23 @@ const PatientDashboard = () => {
     if (planPreview) { setPlanPreview(null); setAgreementAccepted(false); }
   };
 
+  const updatePlanAddress = (value: string) => {
+    setPlanAddress(value);
+    if (planPreview) { setPlanPreview(null); setAgreementAccepted(false); } // it is in the agreement too
+  };
+
+  const chooseCnicPicture = (field: string, file: File | null) => {
+    const problem = checkCnicPicture(file);
+    if (problem) { setPlanMsg({ ok: false, text: problem }); return; }
+    setPlanMsg(null);
+    setCnicFiles(prev => ({ ...prev, [field]: file }));
+  };
+
   const planRequestBody = () => ({
-    labId:     planTarget?.lab.labId,
-    testId:    planTarget?.test._id,
-    guarantor: { ...guarantorForm, cnic: formatCnic(guarantorForm.cnic) || guarantorForm.cnic },
+    labId:          planTarget?.lab.labId,
+    testId:         planTarget?.test._id,
+    patientAddress: planAddress,
+    guarantor:      { ...guarantorForm, cnic: formatCnic(guarantorForm.cnic) || guarantorForm.cnic },
   });
 
   const reviewAgreement = async (e: React.FormEvent) => {
@@ -457,6 +482,10 @@ const PatientDashboard = () => {
     if (gCnic === profile?.cnic)        { setPlanMsg({ ok: false, text: 'The guarantor must be someone other than you' }); return; }
     if (!/^\+?\d{10,13}$/.test(g.phone.replace(/[\s-]/g, ''))) { setPlanMsg({ ok: false, text: "Enter the guarantor's phone number (e.g. 03001234567)" }); return; }
     if (!g.relation.trim())             { setPlanMsg({ ok: false, text: 'Enter how the guarantor is related to you' }); return; }
+    if (!g.address.trim())              { setPlanMsg({ ok: false, text: "Enter the guarantor's home address" }); return; }
+    if (!planAddress.trim())            { setPlanMsg({ ok: false, text: 'Enter your home address' }); return; }
+    const missingPicture = CNIC_PICTURE_SLOTS.find(([field]) => !cnicFiles[field]);
+    if (missingPicture)                 { setPlanMsg({ ok: false, text: `Add a picture of ${missingPicture[2]}` }); return; }
 
     setPlanBusy(true);
     try {
@@ -474,9 +503,10 @@ const PatientDashboard = () => {
     setPlanMsg(null);
     setPlanBusy(true);
     try {
-      const created: any = await api.post('/patient/installment-plans', {
-        ...planRequestBody(), acceptAgreement: true, agreementText: planPreview.agreementText,
-      });
+      const fd = new FormData();
+      fd.append('data', JSON.stringify({ ...planRequestBody(), acceptAgreement: true, agreementText: planPreview.agreementText }));
+      CNIC_PICTURE_SLOTS.forEach(([field]) => { if (cnicFiles[field]) fd.append(field, cnicFiles[field] as File); });
+      const created: any = await api.upload('/patient/installment-plans', fd);
       setWallets(prev => [created, ...prev]);
       setSelectedWalletId(created._id);
       setPlanTarget(null);
@@ -662,7 +692,7 @@ const PatientDashboard = () => {
 
   // Why a test can't be applied for right now (null = can apply)
   const planBlocker = (lab: any) =>
-    !cnicVerified                  ? 'Your CNIC must be verified first'
+    cnicStatus === 'rejected'      ? 'Correct your CNIC on your Profile page first'
     : !lab.acceptsInstallments     ? 'This lab has not added payment details yet'
     : openPlanCount >= maxOpenPlans ? `You already have ${maxOpenPlans} open installment plans`
     : null;
@@ -868,7 +898,7 @@ const PatientDashboard = () => {
         {cnicStatus === 'rejected' ? (
           <><strong>Your CNIC could not be verified.</strong> {profile.cnicRejectionReason} <a style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => navigate('profile')}>Update it in your profile</a> to resubmit.</>
         ) : (
-          <><strong>CNIC verification pending.</strong> An admin will verify your CNIC ({profile.cnic}). Community support and installment plans unlock once it's verified.</>
+          <><strong>CNIC verification pending.</strong> An admin will verify your CNIC ({profile.cnic}). Community support unlocks once it's verified. You can already apply for an installment plan — the admin checks your CNIC pictures with the application.</>
         )}
       </div>
     </div>
@@ -1766,7 +1796,7 @@ const PatientDashboard = () => {
               <div className="pat-page-header pat-fade-up">
                 <div className="pat-page-title">Apply for Installments</div>
                 <div className="pat-page-title-rule"></div>
-                <div className="pat-page-subtitle">Add a guarantor, read the agreement and submit — CareFirst reviews every application</div>
+                <div className="pat-page-subtitle">Add a guarantor and CNIC pictures, read the agreement and submit — CareFirst reviews every application</div>
               </div>
 
               {!planTarget ? (
@@ -1831,9 +1861,26 @@ const PatientDashboard = () => {
                           ))}
                         </div>
                         <div className="pat-form-section">
-                          <label className="pat-form-label" htmlFor="g-address">Address <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
+                          <label className="pat-form-label" htmlFor="g-address">Guarantor's home address</label>
                           <input id="g-address" className="pat-form-input" type="text" placeholder="House, street, city"
                             value={guarantorForm.address} onChange={e => updateGuarantor('address', e.target.value)} disabled={planBusy} />
+                        </div>
+                        <div className="pat-form-section">
+                          <label className="pat-form-label" htmlFor="p-address">Your home address</label>
+                          <input id="p-address" className="pat-form-input" type="text" placeholder="House, street, city"
+                            value={planAddress} onChange={e => updatePlanAddress(e.target.value)} disabled={planBusy} />
+                        </div>
+
+                        <div className="pat-card-title" style={{ margin: '8px 0 6px' }}>CNIC pictures</div>
+                        <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: 14 }}>
+                          Clear photos of the front and back of your CNIC ({profile?.cnic}) and your guarantor's. CareFirst checks them before approving the plan;
+                          only you, CareFirst's admin and — if the plan goes into default — CareFirst's lawyer can see them. JPG or PNG, up to 10 MB each.
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 14, marginBottom: 18 }}>
+                          {CNIC_PICTURE_SLOTS.map(([field, label]) => (
+                            <CnicPicturePicker key={field} label={label} file={cnicFiles[field]}
+                              onChange={f => chooseCnicPicture(field, f)} disabled={planBusy} />
+                          ))}
                         </div>
                         {!terms && (
                           <div style={{ display: 'flex', gap: 10 }}>
@@ -1851,7 +1898,7 @@ const PatientDashboard = () => {
                       <div className="pat-card pat-fade-up" style={{ padding: '22px 24px' }}>
                         <div className="pat-card-title" style={{ marginBottom: 14 }}>Installment Plan Agreement</div>
                         {agreementView(terms.agreementText, terms.agreementTextUrdu,
-                          { source: 'agreement-preview', labId: lab.labId, testId: test._id, guarantor: planRequestBody().guarantor })}
+                          { source: 'agreement-preview', labId: lab.labId, testId: test._id, patientAddress: planAddress, guarantor: planRequestBody().guarantor })}
                         <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, margin: '16px 0', fontSize: '0.82rem', color: 'var(--text)', cursor: 'pointer' }}>
                           <input type="checkbox" checked={agreementAccepted} onChange={e => setAgreementAccepted(e.target.checked)} disabled={planBusy} style={{ marginTop: 3 }} />
                           <span>I have read this agreement, my guarantor has agreed to it, and I accept its terms.</span>
@@ -2026,7 +2073,7 @@ const PatientDashboard = () => {
                   <div style={{ fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>No installment plans yet</div>
                   <div style={{ fontSize: '0.84rem', color: 'var(--text-muted)', maxWidth: 460, margin: '0 auto' }}>
                     Tests you can pay for in installments have an "Apply for installments" button in <a style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => navigate('bookTests')}>Book Tests</a>.
-                    {!cnicVerified && ' Your CNIC must be verified before you can use an installment plan.'}
+                    {cnicStatus === 'rejected' && ' Correct your CNIC on your Profile page before applying.'}
                   </div>
                 </div>
               ) : wallet && (
@@ -2304,7 +2351,13 @@ const PatientDashboard = () => {
                           {showAgreement ? 'Hide agreement' : 'View agreement'}
                         </button>
                       </div>
-                      {showAgreement && <div style={{ marginTop: 14 }}>{agreementView(wallet.agreement.text, wallet.agreement.textUrdu, { source: 'agreement', id: wallet._id })}</div>}
+                      {showAgreement && (
+                        <div style={{ marginTop: 14 }}>
+                          {agreementView(wallet.agreement.text, wallet.agreement.textUrdu, { source: 'agreement', id: wallet._id })}
+                          <div className="pat-card-title" style={{ margin: '18px 0 10px' }}>CNIC pictures you sent</div>
+                          <CnicPictureGallery walletId={wallet._id} pictures={wallet.cnicPictures} patientName="You" guarantorName={wallet.guarantor?.name || 'Guarantor'} />
+                        </div>
+                      )}
                     </div>
                   )}
                 </>

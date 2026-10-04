@@ -29,7 +29,7 @@ export const UrduText = ({ text, maxHeight, style }: { text: string; maxHeight?:
 // What to read: a stored agreement or report, or the agreement preview before applying
 export type SpeechSource =
   | { source: 'agreement' | 'report'; id: string }
-  | { source: 'agreement-preview'; labId: string; testId: string; guarantor: any };
+  | { source: 'agreement-preview'; labId: string; testId: string; patientAddress: string; guarantor: any };
 
 // "Listen in Urdu" with play / pause / stop and a voice choice.
 // The server only ever speaks text it stores or generates itself.

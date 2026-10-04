@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './AdminDashboard.css';
 import { api, getSession, clearSession } from '../lib/api';
 import { getSocket } from '../lib/socket';
+import { CnicPictureGallery } from '../components/CnicPictures';
 
 const ROLE_FILTERS = ['All', 'Patients', 'CNIC Review', 'Doctors', 'Labs', 'Lawyers'];
 
@@ -206,7 +207,7 @@ const AdminDashboard = () => {
   };
 
   const approvePlan = async (walletId: string) => {
-    if (!window.confirm('Approve this installment plan? The patient will be asked to pay the service fee.')) return;
+    if (!window.confirm("Approve this installment plan? Only approve if the CNIC pictures match the details. This also verifies the patient's CNIC, and the patient will be asked to pay the service fee.")) return;
     try {
       const d: any = await api.put(`/admin/wallets/${walletId}/approve`, {});
       replaceWallet(d.wallet);
@@ -1051,12 +1052,13 @@ const AdminDashboard = () => {
                               <td style={{ fontSize: '0.78rem' }}>
                                 <div style={{ fontWeight: 600 }}>{w.guarantor?.name} <span style={{ fontWeight: 400, color: 'var(--text-sub)' }}>({w.guarantor?.relation})</span></div>
                                 <div className="dash-mono" style={{ color: 'var(--text-muted)' }}>{w.guarantor?.cnic} · {w.guarantor?.phone}</div>
+                                {w.guarantor?.address && <div style={{ color: 'var(--text-muted)' }}>{w.guarantor.address}</div>}
                               </td>
                               <td style={{ fontSize: '0.78rem' }}>{shortDate(w.createdAt)}</td>
                               <td style={{ textAlign: 'right' }}>
                                 <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                                   <button className="dash-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.72rem' }} onClick={() => setOpenAgreementId(openAgreementId === w._id ? null : w._id)}>
-                                    {openAgreementId === w._id ? 'Hide' : 'Agreement'}
+                                    {openAgreementId === w._id ? 'Hide' : 'CNICs & agreement'}
                                   </button>
                                   <button className="adm-approve-btn" onClick={() => approvePlan(w._id)}>Approve</button>
                                   <button className="adm-reject-btn" onClick={() => { setPlanRejectingId(w._id); setPlanRejectReason(''); }}>Reject</button>
@@ -1066,6 +1068,15 @@ const AdminDashboard = () => {
                             {openAgreementId === w._id && (
                               <tr>
                                 <td colSpan={6} style={{ background: 'var(--glass-bg)', padding: '12px 20px' }}>
+                                  <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>CNIC pictures</div>
+                                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: 10 }}>
+                                    Check that they match — patient: {w.patient?.name}, <span className="dash-mono">{w.patientCnic || w.patient?.cnic}</span>{w.patientAddress ? `, ${w.patientAddress}` : ''} ·
+                                    guarantor: {w.guarantor?.name}, <span className="dash-mono">{w.guarantor?.cnic}</span>. Click a picture to open it full size.
+                                    {w.patient?.cnicStatus !== 'verified' && " Approving also verifies the patient's CNIC."}
+                                  </div>
+                                  <div style={{ marginBottom: 16 }}>
+                                    <CnicPictureGallery walletId={w._id} pictures={w.cnicPictures} patientName={w.patient?.name || 'Patient'} guarantorName={w.guarantor?.name || 'Guarantor'} />
+                                  </div>
                                   <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: 6 }}>
                                     Accepted by the patient on {w.agreement?.acceptedAt ? new Date(w.agreement.acceptedAt).toLocaleString('en-GB') : '—'}
                                   </div>
