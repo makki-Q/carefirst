@@ -10,7 +10,7 @@ const text = (value) => (typeof value === 'string' ? value.trim() : '');
 
 module.exports = {
   // Paid to CareFirst (not the lab), only when a patient opts into a plan
-  SERVICE_FEE:          Math.round(number(process.env.SERVICE_FEE_PKR, 500)),
+  SERVICE_FEE:          Math.round(number(process.env.SERVICE_FEE_PKR, 250)),
   // Share of the test price paid to the lab up front when the plan activates
   DOWN_PAYMENT_PERCENT: number(process.env.DOWN_PAYMENT_PERCENT, 20, 100),
 

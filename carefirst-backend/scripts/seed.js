@@ -403,7 +403,7 @@ const seed = async () => {
 
   // ── A few notifications so every inbox has something ──
   await notify(users.admin, 'plan_submitted', 'New Installment Plan Application', 'Usman Tariq applied to pay for MRI Brain at Chiniot Diagnostics in installments.', { walletId: usmanPlan.wallet._id });
-  await notify(users.admin, 'service_fee_uploaded', 'Service Fee Receipt Uploaded', 'Fatima Noor uploaded the PKR 500 service fee receipt for the MRI Brain plan.', { walletId: fatimaPlan.wallet._id });
+  await notify(users.admin, 'service_fee_uploaded', 'Service Fee Receipt Uploaded', `Fatima Noor uploaded the PKR ${SERVICE_FEE} service fee receipt for the MRI Brain plan.`, { walletId: fatimaPlan.wallet._id });
   await notify(users.admin, 'receipt_lab_approved', 'Receipt Ready for Verification', 'Lab confirmed receipt for Zainab Bibi — installment #1. Please verify.', { walletId: zainabPlan.wallet._id });
   await notify(users.admin, 'community_submitted', 'New Community Support Application', 'Rashid Mehmood applied for community support for "MRI Brain".', { applicationId: rashidApp._id });
   await notify(users.chiniot, 'receipt_uploaded', 'New Payment Receipt', 'Hamza Ali uploaded a receipt for the down payment — CT Scan Abdomen. Please confirm you received the payment.', { walletId: hamzaPlan.wallet._id, payment: 'down_payment' });

@@ -16,7 +16,7 @@ In Git Bash, `node`/`npm` are not on PATH — use `"/c/Program Files/nodejs/node
 ## Backend (`carefirst-backend/`)
 
 - `server.js` — wires middleware, routes, Socket.IO, 404 handler; on DB connect starts the cron job. Serves `uploads/` statically.
-- `config/installments.js` — Step 2 settings from `.env`: `SERVICE_FEE` (`SERVICE_FEE_PKR`, default 500), `DOWN_PAYMENT_PERCENT` (default 20), `CAREFIRST_ACCOUNT` (`CAREFIRST_BANK_NAME/ACCOUNT_TITLE/ACCOUNT_NUMBER/JAZZCASH/EASYPAISA`), plus constants `MAX_OPEN_PLANS` 2, `GRACE_DAYS` 3, `REMINDER_DAYS` [3, 1].
+- `config/installments.js` — Step 2 settings from `.env`: `SERVICE_FEE` (`SERVICE_FEE_PKR`, default 250), `DOWN_PAYMENT_PERCENT` (default 20), `CAREFIRST_ACCOUNT` (`CAREFIRST_BANK_NAME/ACCOUNT_TITLE/ACCOUNT_NUMBER/JAZZCASH/EASYPAISA`), plus constants `MAX_OPEN_PLANS` 2, `GRACE_DAYS` 3, `REMINDER_DAYS` [3, 1].
 - `config/db.js` — Mongo connect + seeds one `admin` user if none exists.
 - `middleware/auth.js` — `protect` (Bearer JWT → `req.user`), `requireRole(...roles)`, `requireActive` (status must be `active`). Routers use a `guard = [protect, requireRole(x), requireActive]` array.
 - `middleware/upload.js` — multer disk storage into `uploads/{reports,receipts,community-docs}`; pdf/jpg/png, 10 MB.
@@ -113,7 +113,7 @@ Principles from the proposal that every feature must respect:
    - **Apply:** patient with a verified CNIC picks an installment-enabled test, enters guarantor details, reads and accepts the legal agreement (text + acceptance time stored) → wallet `pending_approval`. Pending applications count toward the **max 2 open plans** per patient (open = `pending_approval`, `awaiting_fee` — approved, fee not yet verified — `active` or `defaulter`).
    - **Guarantor:** name, phone and relation required; CNIC required, valid and different from the patient's; address optional.
    - **Admin approves or rejects** (rejection needs a reason; patient notified). No lab acceptance step.
-   - **Service fee:** PKR 500 (`SERVICE_FEE_PKR`), paid to CareFirst's account (`CAREFIRST_*` in `.env`). Patient uploads a screenshot; **admin verifies it directly** (no lab step).
+   - **Service fee:** PKR 250 (`SERVICE_FEE_PKR`; changed from 500 on 2026-10-04), paid to CareFirst's account (`CAREFIRST_*` in `.env`). Patient uploads a screenshot; **admin verifies it directly** (no lab step).
    - **Activation:** once the fee is verified the wallet becomes `active` and the schedule is generated: down payment = 20% of the test price (`DOWN_PAYMENT_PERCENT`, whole rupees), the rest split into `installmentCount` installments, whole rupees with the remainder on the last one. **Tenure is the gap between installments**; the first installment is due one tenure after activation. The lab is notified.
    - **Down payment and installments** use the same receipt chain: patient uploads a screenshot → lab confirms → admin verifies. The patient sees the lab's own payment details from `LabProfile` (bankDetails, jazzCash, easyPaisa). A lab with no payment details cannot receive applications and is prompted to add them.
    - **Balance:** `remainingBalance = totalAmount − verified down payment − paid installments` (the service fee is separate). `completed` = fee verified + down payment verified + all installments paid.
