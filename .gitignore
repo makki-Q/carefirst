@@ -16,6 +16,9 @@ carefirst-backend/uploads/
 # Generated Urdu audio cache (private, regenerated on demand)
 carefirst-backend/storage/
 
+# Sample lab reports used to develop report reading (may contain real patient data)
+lab-reports/
+
 # Logs
 *.log
 npm-debug.log*
