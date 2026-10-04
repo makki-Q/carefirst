@@ -151,8 +151,6 @@
 }
 
 
-/* ── Stacked cards on a page (e.g. Wallet Management) get breathing room ── */
-.dash-page-section > .dash-card + .dash-card { margin-top: 22px; }
 
 /* ── Row actions: details button on top, approve / reject below ── */
 .adm-action-stack {

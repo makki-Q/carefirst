@@ -868,3 +868,7 @@
 
 /* ── Sign-out red item ───────────────────────────────────────── */
 .dash-nav-item.danger { color: #c9372c; }
+
+/* Cards stacked on a page get breathing room (margins collapse, so a card's own
+   bottom margin is not doubled) */
+.dash-page-section > .dash-card + .dash-card { margin-top: 22px; }

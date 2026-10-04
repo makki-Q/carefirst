@@ -1403,7 +1403,7 @@ const PatientDashboard = () => {
                   <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
                     {travelBusy ? 'Calculating road distances…'
                       : !myPos ? 'Share your location or drop a pin to see travel costs. Your location is only used for this calculation and is not saved.'
-                      : <>Distances {anyApprox ? 'are partly approximate (route service unavailable)' : 'are by road'} · travel cost = km × 2 × {pkr(travel?.ratePerKm ?? 0)}/km · labs are sorted by {testSearch ? `true cost for "${testSearch}"` : 'travel cost'}.</>}
+                      : anyApprox ? 'Some distances are approximate — the route service is unavailable right now.' : null}
                   </div>
                 </div>
               )}

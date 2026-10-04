@@ -837,3 +837,7 @@
 }
 .doc-empty-state svg { margin: 0 auto 16px; display: block; opacity: 0.3; }
 .doc-empty-state p { font-size: 0.875rem; }
+
+/* Cards stacked on a page get breathing room (margins collapse, so a card's own
+   bottom margin is not doubled) */
+.doc-page-section > .doc-card + .doc-card { margin-top: 22px; }

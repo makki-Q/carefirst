@@ -1438,3 +1438,7 @@
   font-weight: 700;
   font-size: 0.845rem;
 }
+
+/* Cards stacked on a page get breathing room (margins collapse, so a card's own
+   bottom margin is not doubled) */
+.pat-page-section > :is(.pat-card, .pat-wallet-summary) + :is(.pat-card, .pat-wallet-summary) { margin-top: 22px; }
