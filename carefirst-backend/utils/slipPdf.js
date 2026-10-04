@@ -92,11 +92,15 @@ const drawSlipPage = (pdf, fonts, slip) => {
 
   // Instructions
   if (slip.notes?.length) {
-    const lines = slip.notes.flatMap(n => wrap(regular, 9.5, `•  ${n}`, width - 2 * MARGIN - 28));
+    // hanging indent: the bullet sits left, wrapped lines start under the text
+    const lines = slip.notes.flatMap(n => wrap(regular, 9.5, n, width - 2 * MARGIN - 44).map((l, i) => ({ l, first: i === 0 })));
     const boxH = lines.length * 13 + 32;
     page.drawRectangle({ x: MARGIN, y: y - boxH + 10, width: width - 2 * MARGIN, height: boxH, borderColor: LINE, borderWidth: 1 });
     text('PLEASE NOTE', MARGIN + 14, y - 8, { size: 8, font: bold, color: MUTED });
-    lines.forEach((l, i) => text(l, MARGIN + 14, y - 26 - i * 13, { size: 9.5 }));
+    lines.forEach(({ l, first }, i) => {
+      if (first) text('•', MARGIN + 14, y - 26 - i * 13, { size: 9.5 });
+      text(l, MARGIN + 26, y - 26 - i * 13, { size: 9.5 });
+    });
     y -= boxH + 10;
   }
 

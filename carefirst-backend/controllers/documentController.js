@@ -199,7 +199,8 @@ const getCommunitySlip = async (req, res) => {
     }
 
     const { rows: patient, profile } = await patientRows(app.patient);
-    const address = [profile?.address, profile?.city].filter(Boolean).join(', ');
+    const city = profile?.city && !(profile.address || '').toLowerCase().includes(profile.city.toLowerCase()) ? profile.city : '';
+    const address = [profile?.address, city].filter(Boolean).join(', ');
     const docs = app.documents || [];
     const lab = app.assignedLab ? await labRows(app.assignedLab) : [['Laboratory', '—']];
 

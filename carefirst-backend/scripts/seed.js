@@ -33,6 +33,7 @@ const {
 const { SERVICE_FEE, GRACE_DAYS } = require('../config/installments');
 const { AUDIO_DIR } = require('../config/azure');
 const { CNIC_DIR } = require('../middleware/upload');
+const { newSlipNumber, SLIP_PREFIX } = require('../utils/slips');
 
 const PASSWORD = 'password123';
 const DAY = 24 * 60 * 60 * 1000;
@@ -255,9 +256,11 @@ const seed = async () => {
   // ── Doctors ──
   const doctors = [
     { key: 'sara',  name: 'Dr. Sara Malik',  email: 'dr.sara@carefirst.test',  specialization: 'Cardiology', experience: 12, fee: 2000, duration: 20,
-      days: week, slots: ['09:00 AM – 01:00 PM', '05:00 PM – 08:00 PM'], bio: 'Consultant cardiologist, Allied Hospital Faisalabad. Heart health, hypertension and chest pain.' },
+      days: week, slots: ['09:00 AM – 01:00 PM', '05:00 PM – 08:00 PM'], bio: 'Consultant cardiologist, Allied Hospital Faisalabad. Heart health, hypertension and chest pain.',
+      clinicName: 'Heart Care Clinic', clinicAddress: '12 College Road, Chiniot' },
     { key: 'ahmed', name: 'Dr. Ahmed Raza',  email: 'dr.ahmed@carefirst.test', specialization: 'General Physician', experience: 8, fee: 1000, duration: 15,
-      days: week.slice(0, 5), slots: ['10:00 AM – 02:00 PM'], bio: 'Family physician in Chiniot — fever, infections, diabetes follow-ups.' },
+      days: week.slice(0, 5), slots: ['10:00 AM – 02:00 PM'], bio: 'Family physician in Chiniot — fever, infections, diabetes follow-ups.',
+      clinicName: 'Raza Family Clinic', clinicAddress: 'Near Government Hospital, Jhang Road, Chiniot' },
     { key: 'hina',  name: 'Dr. Hina Qureshi', email: 'dr.hina@carefirst.test', specialization: 'Gynaecology', experience: 10, fee: 2500, duration: 30,
       days: ['Tuesday', 'Thursday', 'Saturday'], slots: ['04:00 PM – 07:00 PM'], bio: 'Gynaecologist and obstetrician with a focus on antenatal care.' },
   ];
@@ -265,6 +268,7 @@ const seed = async () => {
     await createUser(d.key, { name: d.name, email: d.email, role: 'doctor', phone: '0300-0000000' });
     await DoctorProfile.create({
       user: users[d.key]._id, specialization: d.specialization, experience: d.experience, consultationFee: d.fee, consultationDuration: d.duration, bio: d.bio,
+      clinicName: d.clinicName, clinicAddress: d.clinicAddress,
       availability: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         .map(day => ({ day, slots: d.days.includes(day) ? d.slots.map(time => ({ time })) : [] })),
     });
@@ -429,7 +433,7 @@ const seed = async () => {
   const zainabApp = await CommunityApplication.create({
     patient: users.zainab._id, testRequired: 'Thyroid Profile', status: 'approved', assignedLab: users.chiniot._id,
     documents: [saveFile('community-docs', 'Utility bill - Zainab Bibi', ['Gas bill: PKR 1,100'])],
-    slip: { slipId: 'SLP-' + String(Date.now()).slice(-6), generatedAt: daysAgo(2) }, reviewedAt: daysAgo(2), reviewedBy: users.admin._id,
+    slip: { slipId: newSlipNumber(SLIP_PREFIX.community), generatedAt: daysAgo(2) }, reviewedAt: daysAgo(2), reviewedBy: users.admin._id,
   });
 
   // ── A few notifications so every inbox has something ──
@@ -443,7 +447,7 @@ const seed = async () => {
   await notify(users.ayesha, 'prescription_issued', 'New Prescription Issued', 'Dr. Sara Malik prescribed CBC and MRI Brain. Use "Find labs" in My Reports to book them.');
   await notify(users.ayesha, 'test_report_uploaded', 'Test Report Ready', 'Your CBC report from Faisalabad City Lab is ready, with an Urdu summary you can listen to.');
   await notify(users.sana, 'cnic_rejected', 'CNIC Not Verified', 'The CNIC number does not match the name on NADRA records. Please correct your CNIC from your profile.');
-  await notify(users.zainab, 'community_approved', 'Community Support Approved', `Your community support application has been approved. Slip ID: ${zainabApp.slip.slipId}.`);
+  await notify(users.zainab, 'community_approved', 'Community Support Approved', `Your community support application has been approved. Slip ${zainabApp.slip.slipId}: download it from Community Support and take it to the assigned lab with your CNIC.`);
 
   // ── Summary ──
   const row = (who, login, what) => console.log(`  ${who.padEnd(24)} ${login.padEnd(34)} ${what}`);
