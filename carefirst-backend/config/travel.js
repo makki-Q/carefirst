@@ -8,9 +8,9 @@ const rate = (value, fallback) => {
 module.exports = {
   // How the patient travels → PKR per km (one way; travel cost counts the round trip)
   TRAVEL_MODES: [
-    { key: 'motorbike', label: 'Motorbike',              ratePerKm: rate(process.env.TRAVEL_RATE_MOTORBIKE, 8) },
-    { key: 'car',       label: 'Car',                    ratePerKm: rate(process.env.TRAVEL_RATE_CAR, 25) },
-    { key: 'ride',      label: 'Rickshaw / ride-hailing', ratePerKm: rate(process.env.TRAVEL_RATE_RIDE, 50) },
+    { key: 'motorbike', label: 'Motorbike',              ratePerKm: rate(process.env.TRAVEL_RATE_MOTORBIKE, 10) },
+    { key: 'car',       label: 'Car',                    ratePerKm: rate(process.env.TRAVEL_RATE_CAR, 35) },
+    { key: 'ride',      label: 'Rickshaw / ride-hailing', ratePerKm: rate(process.env.TRAVEL_RATE_RIDE, 55) },
   ],
   DEFAULT_TRAVEL_MODE: 'motorbike',
   TRIPS_PER_VISIT: 2,  // there and back
