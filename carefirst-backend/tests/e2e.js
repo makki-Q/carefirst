@@ -1425,6 +1425,61 @@ const testDueReminders = async () => {
   check('the 1-day reminder follows the 3-day one', sent.length === 3 && sent.filter(n => n.meta.installmentNumber === 1).length === 2, sent);
 };
 
+const testAdminInsights = async () => {
+  section('Admin dashboard, reports & settings (real data)');
+  const User = require('../models/User');
+  const TestReport = require('../models/TestReport');
+  const Wallet = require('../models/Wallet');
+
+  // Platform Reports: counted from the database for a Pakistan calendar month
+  const rep = await get('/api/admin/reports', { token: tokens.admin });
+  const row = (k) => rep.data.rows?.find(r => r.key === k);
+  const thisMonth = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 7);
+  check('reports default to the current month and list months to pick', rep.status === 200 && rep.data.month === thisMonth && rep.data.months?.[0] === thisMonth, rep.data.month);
+  check('new patients this month are counted', row('patients')?.count === await User.countDocuments({ role: 'patient' }), row('patients'));
+  check('reports uploaded this month are counted', row('reports')?.count === await TestReport.countDocuments({}), row('reports'));
+  const feesVerified = await Wallet.countDocuments({ 'serviceFee.adminVerified': true });
+  check('service fees verified show the count and the PKR received',
+    feesVerified > 0 && row('serviceFees')?.count === feesVerified && row('serviceFees').details === `PKR ${(feesVerified * 500).toLocaleString('en-US')}` &&
+    rep.data.cards.find(c => c.key === 'serviceFees')?.count === feesVerified * 500, row('serviceFees'));
+  check('community support and defaulter cases are counted', row('community')?.count >= 1 && row('defaulters')?.count >= 1, [row('community'), row('defaulters')]);
+  check('nothing claims revenue or donations', !JSON.stringify(rep.data).match(/donation|revenue/i));
+  check('a bad or future month falls back to this month',
+    (await get('/api/admin/reports?month=2026-13', { token: tokens.admin })).data.month === thisMonth &&
+    (await get('/api/admin/reports?month=2999-01', { token: tokens.admin })).data.month === thisMonth);
+  const last = await get('/api/admin/reports?month=2025-01', { token: tokens.admin });
+  check('an earlier month is counted separately (nothing happened then)', last.data.month === '2025-01' && last.data.rows.every(r => r.count === 0), last.data.rows);
+  check('only admins can see reports (403)', (await get('/api/admin/reports', { token: tokens.lab })).status === 403);
+
+  // Dashboard overview
+  const ov = await get('/api/admin/overview', { token: tokens.admin });
+  check('dashboard totals come from the database',
+    ov.status === 200 && ov.data.totals.patient === await User.countDocuments({ role: 'patient' }) &&
+    ov.data.totals.users === await User.countDocuments({ role: { $ne: 'admin' } }), ov.data.totals);
+  const times = (ov.data.activity || []).map(a => new Date(a.at).getTime());
+  check('recent activity is real and newest first',
+    times.length > 0 && times.every((t, i) => i === 0 || times[i - 1] >= t) && ov.data.activity.every(a => a.who && a.text), ov.data.activity);
+
+  // Settings: CareFirst account for service fees
+  const before = await get('/api/admin/settings', { token: tokens.admin });
+  check('settings start from the .env values (not saved yet)', before.status === 200 && before.data.saved === false && before.data.supportEmail, before.data);
+  const save = (body) => put('/api/admin/settings', { token: tokens.admin, body });
+  check('at least one way to pay is required (400)', (await save({ careFirstAccount: {} })).status === 400);
+  check('a bank account needs a bank name and title (400)', (await save({ careFirstAccount: { accountNumber: 'PK36SCBL0000001123456702' } })).status === 400);
+  check('wallet numbers must look like 0300-1234567 (400)', (await save({ careFirstAccount: { jazzCash: '12345' } })).status === 400);
+  check('the support email must be valid (400)', (await save({ careFirstAccount: { jazzCash: '0300-1234567' }, supportEmail: 'nope' })).status === 400);
+  const saved = await save({
+    careFirstAccount: { bankName: 'Meezan Bank', accountTitle: 'CareFirst Health', accountNumber: 'PK36 MEZN 0001 2345 6789', jazzCash: '0301-7654321', easyPaisa: '' },
+    supportEmail: 'Help@CareFirst.pk',
+  });
+  check('the admin saves the CareFirst account', saved.status === 200 && saved.data.saved === true && saved.data.careFirstAccount.bankName === 'Meezan Bank' && saved.data.supportEmail === 'help@carefirst.pk', saved.data);
+  const cfg = await get('/api/patient/installment-plans/config', { token: tokens.patient });
+  check('patients now see the saved account to pay the service fee',
+    cfg.data.careFirstAccount?.accountNumber === 'PK36 MEZN 0001 2345 6789' && cfg.data.careFirstAccount?.jazzCash === '0301-7654321' &&
+    cfg.data.careFirstAccount?.easyPaisa === '' && cfg.data.supportEmail === 'help@carefirst.pk', cfg.data);
+  check('only admins can change settings (403)', (await put('/api/admin/settings', { token: tokens.patient, body: { careFirstAccount: { jazzCash: '0300-1234567' } } })).status === 403);
+};
+
 const testMisc = async () => {
   section('Notifications & error handling');
   const readAll = await put('/api/patient/notifications/read-all', { token: tokens.patient });
@@ -1467,6 +1522,7 @@ const main = async () => {
     await testUrdu();
     await testAutoSummary();
     await testDueReminders();
+    await testAdminInsights();
     await testMisc();
   } catch (err) {
     failures.push(`crashed: ${err.message}`);

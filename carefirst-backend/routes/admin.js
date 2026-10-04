@@ -11,12 +11,19 @@ const {
   getCommunityApplications, approveCommunityApplication, rejectCommunityApplication, getPartnerLabs,
   getNotifications, markNotificationRead,
 } = require('../controllers/adminController');
+const { getReports, getOverview, getSettings, updateSettings } = require('../controllers/adminInsightsController');
 const { protect, requireRole } = require('../middleware/auth');
 
 const guard = [protect, requireRole('admin')];
 
 // Auth (no guard needed — hardcoded credential check inside controller)
 router.post('/login', adminLogin);
+
+// Dashboard, Platform Reports and Settings (real data)
+router.get('/overview', ...guard, getOverview);
+router.get('/reports',  ...guard, getReports);   // ?month=YYYY-MM
+router.get('/settings', ...guard, getSettings);
+router.put('/settings', ...guard, updateSettings); // CareFirst account for service fees, support email
 
 // Registrations
 router.get('/registrations',                  ...guard, getRegistrations);

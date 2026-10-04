@@ -18,12 +18,13 @@ const {
 const { normalizeCnic }    = require('../utils/cnic');
 const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
 const { CNIC_PICTURES }    = require('../middleware/upload');
+const { getPlatformSettings } = require('../utils/platformSettings');
 const { generateInstallmentAgreement, generateInstallmentAgreementUrdu } = require('../utils/legalAgreementTemplate');
 const {
   OPEN_PLAN_STATUSES, labPaymentDetails, hasPaymentDetails, planAmounts, findLabPayment,
 } = require('../utils/installmentPlan');
 const {
-  SERVICE_FEE, DOWN_PAYMENT_PERCENT, MAX_OPEN_PLANS, GRACE_DAYS, CAREFIRST_ACCOUNT,
+  SERVICE_FEE, DOWN_PAYMENT_PERCENT, MAX_OPEN_PLANS, GRACE_DAYS,
 } = require('../config/installments');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -284,18 +285,21 @@ const getWallets = async (req, res) => {
 
 // ─── GET /api/patient/installment-plans/config ────────────────────────────────
 // Fee, down-payment rule, plan limit and CareFirst's account for the service fee
+// (the account the admin saved on Settings, else .env)
 const getInstallmentConfig = async (req, res) => {
   try {
-    const [profile, openPlans] = await Promise.all([
+    const [profile, openPlans, settings] = await Promise.all([
       PatientProfile.findOne({ user: req.user._id }).select('cnicStatus'),
       Wallet.countDocuments({ patient: req.user._id, status: { $in: OPEN_PLAN_STATUSES } }),
+      getPlatformSettings(),
     ]);
     res.json({
       serviceFee:         SERVICE_FEE,
       downPaymentPercent: DOWN_PAYMENT_PERCENT,
       maxOpenPlans:       MAX_OPEN_PLANS,
       graceDays:          GRACE_DAYS,
-      careFirstAccount:   CAREFIRST_ACCOUNT,
+      careFirstAccount:   settings.careFirstAccount,
+      supportEmail:       settings.supportEmail,
       openPlans,
       cnicStatus:         profile?.cnicStatus || 'unverified',
     });
