@@ -214,7 +214,7 @@ const seed = async () => {
   await LabProfile.create({
     user: users.chiniot._id, labName: 'Chiniot Diagnostics', location: 'Railway Road, Chiniot', licenseNumber: 'PHC-LAB-1021', phone: '0476-331122',
     bankDetails: { bankName: 'HBL', accountNumber: 'PK12HABB0001234567890123' }, jazzCash: '0301-7654321', easyPaisa: '0345-7654321',
-    isCharityPartner: true, coordinates: { lat: 31.7200, lng: 72.9800 },
+    isCharityPartner: true, charityPartnerSince: daysAgo(30), coordinates: { lat: 31.7200, lng: 72.9800 },
     tests: [
       { name: 'CBC', category: 'Haematology', price: 1200 },
       { name: 'Lipid Profile', category: 'Biochemistry', price: 2200 },
@@ -468,8 +468,8 @@ const seed = async () => {
   row('Dr. Ahmed Raza', 'dr.ahmed@carefirst.test', 'General Physician · Mon–Fri 10–2 · 15 min');
   row('Dr. Hina Qureshi', 'dr.hina@carefirst.test', 'Gynaecology · Tue/Thu/Sat 4–7 · 30 min');
   row('LABS', '', '');
-  row('Chiniot Diagnostics', 'lab.chiniot@carefirst.test', 'pin + payment set; charity partner; Hamza / Zainab work waiting');
-  row('Faisalabad City Lab', 'lab.faisalabad@carefirst.test', 'pin + payment set; cheaper but ~35 km from Chiniot');
+  row('Chiniot Diagnostics', 'lab.chiniot@carefirst.test', 'pin + payment set; Community Support partner (Zainab waiting); Hamza work waiting');
+  row('Faisalabad City Lab', 'lab.faisalabad@carefirst.test', 'pin + payment set; cheaper but ~35 km from Chiniot; not in Community Support (can join from Needy Patients)');
   row('Jhang Medical Lab', 'lab.jhang@carefirst.test', 'NO pin, NO payment details (warnings, installments blocked)');
   row('LAWYER', 'lawyer@carefirst.test', 'Adv. Tariq Shah — Imran\'s defaulter case');
   row('PENDING (admin approves)', 'dr.kamran@ / lab.sargodha@ / lawyer.nadia@ (carefirst.test)', '');

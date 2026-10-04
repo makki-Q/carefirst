@@ -153,7 +153,24 @@ const LabDashboard = () => {
     try {
       await api.put(`/lab/needy-patients/${id}/mark-conducted`, {});
       setNeedyPats(prev => prev.map(p => p._id === id ? { ...p, testConducted: true } : p));
-    } catch {}
+    } catch (err: any) { alertDialog(err.message || 'Could not mark the test conducted'); }
+  };
+
+  // Join / leave Community Support (take care of needy patients the admin assigns)
+  const [partnerBusy, setPartnerBusy] = useState(false);
+  const setCommunitySupport = async (join: boolean) => {
+    const ok = await confirmDialog(join
+      ? 'Join Community Support? CareFirst\'s admin can then assign you needy patients whose financial need was checked, and you conduct their tests. CareFirst does not collect or pass on donations.'
+      : 'Leave Community Support? You will not be assigned new needy patients.',
+      join ? { confirmLabel: 'Join Community Support' } : { danger: true, confirmLabel: 'Leave' });
+    if (!ok) return;
+    setPartnerBusy(true);
+    try {
+      const d: any = await api.put('/lab/community-support', { join });
+      setLabProfile((prev: any) => ({ ...prev, profile: d.profile }));
+    } catch (err: any) {
+      alertDialog(err.message || 'Could not update Community Support');
+    } finally { setPartnerBusy(false); }
   };
 
   const addTest = async () => {
@@ -1172,8 +1189,46 @@ const LabDashboard = () => {
                 <div className="dash-page-subtitle">Community Support approved patients assigned to your lab — conduct tests as per authorization slip</div>
               </div>
 
+              {(() => {
+                const partner = Boolean(labProfile?.profile?.isCharityPartner);
+                const waiting = needyPats.filter((p: any) => !p.testConducted).length;
+                return (
+                  <div className="dash-card dash-fu" style={{ padding: '18px 22px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                    <div style={{ maxWidth: 640 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                        <div className="dash-card-title" style={{ margin: 0 }}>Community Support</div>
+                        {partner
+                          ? <span className="dash-badge dash-green"><span className="dash-badge-dot"></span>Partner lab</span>
+                          : <span className="dash-badge dash-gray"><span className="dash-badge-dot"></span>Not joined</span>}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-sub)', lineHeight: 1.55 }}>
+                        {partner
+                          ? <>You take care of needy patients the CareFirst admin assigns to you{labProfile?.profile?.charityPartnerSince ? ` (partner since ${new Date(labProfile.profile.charityPartnerSince).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })})` : ''}. Their financial need has been checked by the admin; conduct the test on their slip and mark it conducted.
+                              {waiting > 0 && <> You can leave once the {waiting} waiting test{waiting === 1 ? ' is' : 's are'} conducted.</>}</>
+                          : <>Join to take care of needy patients who cannot afford a test. The admin checks each patient's documents and assigns approved patients to partner labs; you conduct the test for them. CareFirst does not collect or pass on donations.</>}
+                      </div>
+                    </div>
+                    {partner ? (
+                      <button className="dash-btn-ghost" disabled={partnerBusy || waiting > 0} onClick={() => setCommunitySupport(false)}
+                        title={waiting > 0 ? 'Conduct the waiting tests first' : 'Stop receiving needy patients'}
+                        style={waiting > 0 || partnerBusy ? { opacity: 0.5, cursor: 'not-allowed' } : {}}>
+                        Leave Community Support
+                      </button>
+                    ) : (
+                      <button className="dash-btn-primary accent" disabled={partnerBusy || !labProfile} onClick={() => setCommunitySupport(true)}>
+                        Join Community Support
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
+
               <div className="dash-fu dash-fu-1" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16, marginBottom: 24 }}>
-                {needyPats.length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: 16 }}>No community support patients assigned to your lab yet.</div>}
+                {needyPats.length === 0 && (
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: 16 }}>
+                    {labProfile?.profile?.isCharityPartner ? 'No community support patients assigned to your lab yet.' : 'Join Community Support above to be assigned needy patients.'}
+                  </div>
+                )}
                 {needyPats.map((p: any) => {
                   const conducted = p.testConducted || p.status === 'conducted';
                   return (

@@ -13,12 +13,6 @@ const CNIC_BADGE: Record<string, { cls: string; label: string }> = {
   rejected:   { cls: 'dash-red',   label: 'Rejected' },
 };
 
-const DONATION_LABS = [
-  { name: 'LifeCare Diagnostics', location: 'Gulberg III, Lahore', bank: 'HBL — 0001-2345-678', jazz: '0300-1234567', easypaisa: '0333-1234567', charity: true },
-  { name: 'MedLab Plus',          location: 'DHA Phase 5, Lahore', bank: 'MCB — 0002-3456-789', jazz: '0311-9876543', easypaisa: '—',           charity: true },
-  { name: 'CityScan & Labs',       location: 'Johar Town, Lahore',  bank: 'UBL — 0003-4567-890', jazz: '0321-5556677', easypaisa: '0321-5556677', charity: false },
-];
-
 const DEFAULT_SETTINGS = {
   supportEmail: 'support@carefirst.pk',
 };
@@ -45,7 +39,7 @@ const AdminDashboard = () => {
   const [rejectReason, setRejectReason]       = useState('');
   const [notifications, setNotifications]     = useState<any[]>([]);
   const [notifBadge, setNotifBadge]           = useState(0);
-  const [activeLabs, setActiveLabs]           = useState<any[]>([]);
+  const [partnerLabs, setPartnerLabs]         = useState<any[]>([]); // labs that joined Community Support
   const [approvingApp, setApprovingApp]       = useState<string | null>(null);
   const [selectedLabId, setSelectedLabId]     = useState('');
   const [rejectingApp, setRejectingApp]       = useState<string | null>(null);
@@ -87,7 +81,7 @@ const AdminDashboard = () => {
     }).catch(() => {});
 
     api.get('/admin/community-applications').then((d: any) => setCommunityApps(Array.isArray(d) ? d : [])).catch(() => {});
-    api.get('/admin/users?role=lab&status=active').then((d: any) => setActiveLabs(d.users || [])).catch(() => {});
+    loadPartnerLabs();
     loadWallets();
     api.get('/admin/defaulter-cases').then((d: any) => setDefaulterCases(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/admin/notifications').then((d: any) => {
@@ -105,6 +99,7 @@ const AdminDashboard = () => {
     socket.on('notification:new', (n: any) => {
       setNotifications(prev => [n, ...prev]);
       setNotifBadge(prev => prev + 1);
+      if (n.type === 'community_partner_joined' || n.type === 'community_partner_left') loadPartnerLabs();
       if (n.type === 'community_submitted') {
         api.get('/admin/community-applications').then((d: any) => setCommunityApps(Array.isArray(d) ? d : [])).catch(() => {});
       }
@@ -176,15 +171,19 @@ const AdminDashboard = () => {
     } catch (err: any) { alertDialog(err.message || 'Rejection failed'); }
   };
 
+  const loadPartnerLabs = () =>
+    api.get('/admin/partner-labs').then((d: any) => setPartnerLabs(Array.isArray(d) ? d : [])).catch(() => {});
+
   const approveCommunity = async (appId: string) => {
     if (!selectedLabId) { alertDialog('Please select a lab first.'); return; }
     try {
       const d: any = await api.put(`/admin/community-applications/${appId}/approve`, { assignedLabId: selectedLabId });
       setCommunityApps(prev => prev.map((a: any) => a._id === appId
-        ? { ...a, status: 'approved', slip: d.application?.slip, assignedLab: activeLabs.find((l: any) => l._id === selectedLabId) }
+        ? { ...a, status: 'approved', slip: d.application?.slip, assignedLab: { _id: selectedLabId, name: partnerLabs.find((l: any) => l._id === selectedLabId)?.labName } }
         : a
       ));
       setApprovingApp(null); setSelectedLabId('');
+      loadPartnerLabs();
     } catch (err: any) { alertDialog(err.message || 'Approval failed'); }
   };
 
@@ -625,7 +624,7 @@ const AdminDashboard = () => {
                   {[
                     { color: '#7c3aed', msg: <><strong>Noor Fatima</strong> registered as a patient</>,            time: '2 min ago' },
                     { color: '#166534', msg: <><strong>REP-089</strong> uploaded by LifeCare Diagnostics</>,      time: '14 min ago' },
-                    { color: '#854d0e', msg: <><strong>APP-035</strong> donation application submitted</>,        time: '32 min ago' },
+                    { color: '#854d0e', msg: <><strong>APP-035</strong> community support application submitted</>,        time: '32 min ago' },
                     { color: '#1e40af', msg: <><strong>Dr. Sarah Malik</strong> updated availability</>,          time: '1 hr ago' },
                     { color: '#7c3aed', msg: <><strong>MedLab Plus</strong> profile sent for review</>,           time: '2 hrs ago' },
                     { color: '#991b1b', msg: <><strong>APP-034</strong> funding application rejected</>,          time: '3 hrs ago' },
@@ -865,7 +864,7 @@ const AdminDashboard = () => {
               <div className="dash-page-header dash-fu">
                 <div className="dash-page-title">Community Support</div>
                 <div className="dash-page-rule"></div>
-                <div className="dash-page-subtitle">Review needy patient applications and view partner lab donation channels</div>
+                <div className="dash-page-subtitle">Review needy patient applications and see the partner labs that take care of them</div>
               </div>
 
               <div className="dash-card dash-fu dash-fu-1">
@@ -947,12 +946,16 @@ const AdminDashboard = () => {
                                 <div className="adm-reject-reason-row">
                                   <svg width="15" height="15" fill="none" stroke="#166534" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/></svg>
                                   <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#166534', flexShrink: 0 }}>Assign Lab for {a.patient?.name}:</span>
-                                  <select className="adm-reject-reason-input" style={{ border: '1px solid #86efac', background: '#f0fdf4' }} value={selectedLabId} onChange={e => setSelectedLabId(e.target.value)}>
-                                    <option value="">Select active lab…</option>
-                                    {activeLabs.map((lab: any) => (
-                                      <option key={lab._id} value={lab._id}>{lab.profile?.labName || lab.name}</option>
-                                    ))}
-                                  </select>
+                                  {partnerLabs.length === 0 ? (
+                                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No lab has joined Community Support yet — labs join from their own portal.</span>
+                                  ) : (
+                                    <select className="adm-reject-reason-input" style={{ border: '1px solid #86efac', background: '#f0fdf4' }} value={selectedLabId} onChange={e => setSelectedLabId(e.target.value)}>
+                                      <option value="">Select a partner lab…</option>
+                                      {partnerLabs.map((lab: any) => (
+                                        <option key={lab._id} value={lab._id}>{lab.labName} · {lab.location} ({lab.assigned - lab.conducted} waiting)</option>
+                                      ))}
+                                    </select>
+                                  )}
                                   <button className="adm-approve-btn" style={{ flexShrink: 0 }} onClick={() => approveCommunity(a._id)}>Confirm Approve</button>
                                   <button className="dash-btn-ghost" style={{ flexShrink: 0, padding: '5px 10px', fontSize: '0.75rem' }} onClick={() => setApprovingApp(null)}>Cancel</button>
                                 </div>
@@ -979,32 +982,41 @@ const AdminDashboard = () => {
                 </div>
               </div>
 
-              <div className="dash-fu dash-fu-2">
-                <div className="dash-card-header" style={{ paddingLeft: 0, marginBottom: 14 }}>
-                  <div className="dash-card-title" style={{ fontSize: '0.9rem' }}>
-                    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                    Partner Labs — Donation Channels
+              <div className="dash-card dash-fu dash-fu-2">
+                <div className="dash-card-header">
+                  <div className="dash-card-title">
+                    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                    Partner Labs
                   </div>
-                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>Patients donate directly to labs. Platform does not process or track donations.</div>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>Labs that joined Community Support from their portal and take care of needy patients. CareFirst collects no donations.</div>
                 </div>
-                <div className="adm-donation-labs-grid">
-                  {DONATION_LABS.map((lab, i) => (
-                    <div className="adm-donation-lab-card" key={i}>
-                      <div className="adm-dl-header">
-                        <div className="adm-dl-name">{lab.name}</div>
-                        {lab.charity && <span className="dash-badge dash-green"><span className="dash-badge-dot"></span>Charity Partner</span>}
-                      </div>
-                      <div className="adm-dl-location">
-                        <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                        {lab.location}
-                      </div>
-                      <div className="adm-dl-channels">
-                        <div className="adm-dl-channel"><span className="adm-dl-ch-label">Bank Transfer</span><span className="adm-dl-ch-val">{lab.bank}</span></div>
-                        <div className="adm-dl-channel"><span className="adm-dl-ch-label">JazzCash</span><span className="adm-dl-ch-val">{lab.jazz}</span></div>
-                        <div className="adm-dl-channel"><span className="adm-dl-ch-label">EasyPaisa</span><span className="adm-dl-ch-val">{lab.easypaisa}</span></div>
-                      </div>
-                    </div>
-                  ))}
+                <div className="dash-table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>Lab</th><th>Location</th><th>Phone</th><th>Joined</th><th>Needy Patients</th></tr>
+                    </thead>
+                    <tbody>
+                      {partnerLabs.length === 0 ? (
+                        <tr><td colSpan={5} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                          No lab has joined Community Support yet. Labs join from their own portal (Needy Patients → Join Community Support).
+                        </td></tr>
+                      ) : partnerLabs.map((lab: any) => (
+                        <tr key={lab._id}>
+                          <td>
+                            <div style={{ fontWeight: 600, color: 'var(--text)' }}>{lab.labName}</div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{lab.email}</div>
+                          </td>
+                          <td style={{ color: 'var(--text-sub)' }}>{lab.location || '—'}</td>
+                          <td className="dash-mono" style={{ fontSize: '0.78rem' }}>{lab.phone || '—'}</td>
+                          <td style={{ fontSize: '0.78rem' }}>{lab.since ? new Date(lab.since).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
+                          <td style={{ fontSize: '0.78rem' }}>
+                            <span style={{ fontWeight: 700, color: lab.assigned - lab.conducted > 0 ? '#92400e' : 'var(--text)' }}>{lab.assigned - lab.conducted} waiting</span>
+                            <span style={{ color: 'var(--text-muted)' }}> · {lab.conducted} tests conducted</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </section>
@@ -1376,7 +1388,6 @@ const AdminDashboard = () => {
                         { m: 'Lab Tests Booked',      c: '6,210',     r: 'PKR 7.8M',  ch: '+22%', up: true },
                         { m: 'Installment Plans',     c: '312',       r: 'PKR 1.4M',  ch: '+8%',  up: true },
                         { m: 'Legal Consultations',   c: '214',       r: 'PKR 640k',  ch: '-4%',  up: false },
-                        { m: 'Donations Received',    c: '28 donors', r: 'PKR 920k',  ch: '+35%', up: true },
                       ].map((r, i) => (
                         <tr key={i}>
                           <td style={{ fontWeight: 600, color: 'var(--text)' }}>{r.m}</td>
