@@ -28,8 +28,9 @@ const getProfile = async (req, res) => {
 // ─── PUT /api/lab/profile ─────────────────────────────────────────────────────
 const updateProfile = async (req, res) => {
   try {
-    const { labName, location, phone, bankDetails, jazzCash, easyPaisa, isCharityPartner } = req.body;
-    const update = { labName, location, phone, bankDetails, jazzCash, easyPaisa, isCharityPartner };
+    // Joining Community Support has its own endpoint (PUT /api/lab/community-support)
+    const { labName, location, phone, bankDetails, jazzCash, easyPaisa } = req.body;
+    const update = { labName, location, phone, bankDetails, jazzCash, easyPaisa };
 
     // coordinates: { lat, lng } sets the map pin, null removes it
     if (req.body.coordinates === null) {
@@ -417,6 +418,53 @@ const getNeedyPatients = async (req, res) => {
   }
 };
 
+// ─── PUT /api/lab/community-support ──────────────────────────────────────────
+// Body: { join: true | false }. Joining takes effect at once (admins are told);
+// leaving is refused while assigned patients still wait for their test.
+const setCommunitySupport = async (req, res) => {
+  try {
+    if (typeof req.body.join !== 'boolean') return res.status(400).json({ message: 'join must be true or false' });
+    const profile = await LabProfile.findOne({ user: req.user._id });
+    if (!profile) return res.status(404).json({ message: 'Lab profile not found' });
+
+    if (req.body.join === Boolean(profile.isCharityPartner)) {
+      return res.json({ message: req.body.join ? 'Already a Community Support partner' : 'Not a Community Support partner', profile });
+    }
+
+    if (!req.body.join) {
+      const waiting = await CommunityApplication.countDocuments({ assignedLab: req.user._id, status: 'approved', testConducted: { $ne: true } });
+      if (waiting > 0) {
+        return res.status(409).json({
+          message: `${waiting} needy patient${waiting === 1 ? ' is' : 's are'} still waiting for their test. Mark ${waiting === 1 ? 'it' : 'them'} conducted before leaving Community Support.`,
+          waiting,
+        });
+      }
+    }
+
+    profile.isCharityPartner = req.body.join;
+    profile.charityPartnerSince = req.body.join ? new Date() : undefined;
+    await profile.save();
+
+    const admins = await User.find({ role: 'admin' }).select('_id');
+    for (const admin of admins) {
+      const notif = await Notification.create({
+        recipient: admin._id,
+        title:     req.body.join ? 'Lab Joined Community Support' : 'Lab Left Community Support',
+        message:   req.body.join
+          ? `${profile.labName} joined Community Support and can now be assigned needy patients.`
+          : `${profile.labName} left Community Support and will not be assigned new needy patients.`,
+        type:      req.body.join ? 'community_partner_joined' : 'community_partner_left',
+        meta:      { labId: req.user._id },
+      });
+      sendNotification(admin._id.toString(), notif);
+    }
+
+    res.json({ message: req.body.join ? 'You joined Community Support' : 'You left Community Support', profile });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── PUT /api/lab/needy-patients/:id/mark-conducted ──────────────────────────
 const markTestConducted = async (req, res) => {
   try {
@@ -505,7 +553,7 @@ module.exports = {
   getTests, addTest, updateTest, deleteTest,
   uploadReport, getReports, updateReportSummary, readReportAgain,
   getReceiptsPendingApproval, approveReceipt,
-  getNeedyPatients, markTestConducted,
+  getNeedyPatients, markTestConducted, setCommunitySupport,
   getLabPatients,
   getBookings, markSampleCollected, completeBooking,
   getNotifications, markRead,

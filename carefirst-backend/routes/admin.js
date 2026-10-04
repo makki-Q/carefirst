@@ -8,7 +8,7 @@ const {
   getWallets, getWalletById, verifyInstallment,
   approvePlan, rejectPlan, verifyServiceFee, rejectServiceFee,
   getDefaulterCases,
-  getCommunityApplications, approveCommunityApplication, rejectCommunityApplication,
+  getCommunityApplications, approveCommunityApplication, rejectCommunityApplication, getPartnerLabs,
   getNotifications, markNotificationRead,
 } = require('../controllers/adminController');
 const { protect, requireRole } = require('../middleware/auth');
@@ -50,6 +50,7 @@ router.get('/defaulter-cases', ...guard, getDefaulterCases);
 // Community support
 router.get('/community-applications',                  ...guard, getCommunityApplications);
 router.put('/community-applications/:id/approve',      ...guard, approveCommunityApplication);
+router.get('/partner-labs',                            ...guard, getPartnerLabs); // labs in Community Support
 router.put('/community-applications/:id/reject',       ...guard, rejectCommunityApplication);
 
 // Notifications

@@ -562,6 +562,20 @@ const testCommunitySupport = async () => {
   check('admin sees application with patient CNIC',
     adminList.data[0]?.patient?.cnic === '35202-1234567-9', adminList.data);
 
+  // Only labs that joined Community Support (from their own portal) can be assigned
+  const notPartner = await put(`/api/admin/community-applications/${app.data._id}/approve`, { token: tokens.admin, body: { assignedLabId: ids.lab } });
+  check('a lab that has not joined Community Support cannot be assigned (400)', notPartner.status === 400 && /joined Community Support/.test(notPartner.data.message), notPartner);
+  check('joining needs join: true or false (400)', (await put('/api/lab/community-support', { token: tokens.lab, body: { join: 'yes' } })).status === 400);
+  const join = await put('/api/lab/community-support', { token: tokens.lab, body: { join: true } });
+  check('the lab joins Community Support from its portal', join.status === 200 && join.data.profile.isCharityPartner === true && join.data.profile.charityPartnerSince, join.data);
+  check('admins are told a lab joined',
+    (await get('/api/admin/notifications', { token: tokens.admin })).data.some(n => n.type === 'community_partner_joined' && n.message.includes(users.lab.labName)));
+  await put('/api/lab/profile', { token: tokens.lab, body: { isCharityPartner: false } });
+  check('the general profile update cannot change partnership', (await get('/api/lab/profile', { token: tokens.lab })).data.profile.isCharityPartner === true);
+  let partners = await get('/api/admin/partner-labs', { token: tokens.admin });
+  check('the admin sees the partner lab (no donation details)',
+    partners.status === 200 && partners.data.length === 1 && partners.data[0]._id === ids.lab && partners.data[0].assigned === 0 && !('jazzCash' in partners.data[0]), partners.data);
+
   const approve = await put(`/api/admin/community-applications/${app.data._id}/approve`, { token: tokens.admin, body: { assignedLabId: ids.lab } });
   check('admin approves and generates a slip', approve.status === 200 && /^CS-[2-9A-Z]{4}-[2-9A-Z]{4}$/.test(approve.data.application.slip?.slipId), approve);
   ids.communityApp = app.data._id;
@@ -570,8 +584,22 @@ const testCommunitySupport = async () => {
   const needy = await get('/api/lab/needy-patients', { token: tokens.lab });
   check('lab sees needy patient with CNIC', needy.data[0]?.patient?.cnic === '35202-1234567-9', needy.data);
 
+  const leaveEarly = await put('/api/lab/community-support', { token: tokens.lab, body: { join: false } });
+  check('the lab cannot leave while an assigned patient waits for the test (409)',
+    leaveEarly.status === 409 && leaveEarly.data.waiting === 1, leaveEarly.data);
+  partners = await get('/api/admin/partner-labs', { token: tokens.admin });
+  check('the partner list counts assigned patients', partners.data[0]?.assigned === 1 && partners.data[0]?.conducted === 0, partners.data);
+
   const conducted = await put(`/api/lab/needy-patients/${app.data._id}/mark-conducted`, { token: tokens.lab });
   check('lab marks test conducted', conducted.status === 200, conducted);
+
+  const leave = await put('/api/lab/community-support', { token: tokens.lab, body: { join: false } });
+  check('once every test is conducted the lab can leave', leave.status === 200 && leave.data.profile.isCharityPartner === false, leave.data);
+  check('… then it is no longer listed for the admin', (await get('/api/admin/partner-labs', { token: tokens.admin })).data.length === 0);
+  check('admins are told a lab left',
+    (await get('/api/admin/notifications', { token: tokens.admin })).data.some(n => n.type === 'community_partner_left'));
+  check('the patient it already helped keeps the approval and slip',
+    (await get('/api/lab/needy-patients', { token: tokens.lab })).data.some(n => n.slip?.slipId === ids.communitySlip));
 
   const mine = await get('/api/patient/community-applications', { token: tokens.patient });
   check('patient sees approved application with lab name',

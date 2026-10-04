@@ -23,7 +23,11 @@ const labProfileSchema = new mongoose.Schema(
     },
     jazzCash:        { type: String, trim: true },
     easyPaisa:       { type: String, trim: true },
-    isCharityPartner:{ type: Boolean, default: false },
+    // Community Support partner: takes care of needy patients the admin assigns.
+    // The lab joins / leaves from its own portal (PUT /api/lab/community-support);
+    // CareFirst collects no donations.
+    isCharityPartner:    { type: Boolean, default: false },
+    charityPartnerSince: { type: Date },
     // Map pin for True Cost Analysis (travel distance from the patient)
     coordinates: {
       lat: { type: Number, min: -90,  max: 90 },

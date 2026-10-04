@@ -26,6 +26,8 @@ const NOTIFICATION_TYPES = [
   'community_approved',      // admin approved needy patient application
   'community_rejected',      // admin rejected needy patient application
   'community_submitted',     // patient submitted a community support application
+  'community_partner_joined', // a lab joined Community Support (to admins)
+  'community_partner_left',   // a lab left Community Support (to admins)
   'cnic_verified',           // admin verified patient's CNIC
   'cnic_rejected',           // admin rejected patient's CNIC
 ];

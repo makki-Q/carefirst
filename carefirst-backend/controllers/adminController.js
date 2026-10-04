@@ -233,6 +233,35 @@ const rejectPatientCnic = async (req, res) => {
   }
 };
 
+// ─── GET /api/admin/partner-labs ─────────────────────────────────────────────
+// Labs that joined Community Support, with how many needy patients each has
+const getPartnerLabs = async (req, res) => {
+  try {
+    const profiles = await LabProfile.find({ isCharityPartner: true }).populate('user', 'name email phone status').lean();
+    const active = profiles.filter(p => p.user?.status === 'active');
+    const counts = await CommunityApplication.aggregate([
+      { $match: { status: 'approved', assignedLab: { $in: active.map(p => p.user._id) } } },
+      { $group: { _id: '$assignedLab', assigned: { $sum: 1 }, conducted: { $sum: { $cond: ['$testConducted', 1, 0] } } } },
+    ]);
+    const byLab = {};
+    counts.forEach(c => { byLab[c._id.toString()] = c; });
+    res.json(active
+      .map(p => ({
+        _id:       p.user._id,
+        labName:   p.labName,
+        location:  p.location,
+        phone:     p.phone || p.user.phone || '',
+        email:     p.user.email,
+        since:     p.charityPartnerSince || null,
+        assigned:  byLab[p.user._id.toString()]?.assigned || 0,
+        conducted: byLab[p.user._id.toString()]?.conducted || 0,
+      }))
+      .sort((a, b) => a.labName.localeCompare(b.labName)));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── GET /api/admin/wallets?status=&page=&limit= ─────────────────────────────
 const getWallets = async (req, res) => {
   try {
@@ -507,6 +536,9 @@ const approveCommunityApplication = async (req, res) => {
 
     const lab = await User.findOne({ _id: assignedLabId, role: 'lab', status: 'active' });
     if (!lab) return res.status(404).json({ message: 'Lab not found or inactive' });
+    if (!(await LabProfile.exists({ user: lab._id, isCharityPartner: true }))) {
+      return res.status(400).json({ message: 'Only labs that joined Community Support can be assigned needy patients' });
+    }
 
     const app = await CommunityApplication.findById(req.params.id).populate('patient', 'name email');
     if (!app)                    return res.status(404).json({ message: 'Application not found' });
@@ -597,6 +629,6 @@ module.exports = {
   getWallets, getWalletById, verifyInstallment,
   approvePlan, rejectPlan, verifyServiceFee, rejectServiceFee,
   getDefaulterCases,
-  getCommunityApplications, approveCommunityApplication, rejectCommunityApplication,
+  getCommunityApplications, approveCommunityApplication, rejectCommunityApplication, getPartnerLabs,
   getNotifications, markNotificationRead,
 };

@@ -5,7 +5,7 @@ const {
   getTests, addTest, updateTest, deleteTest,
   uploadReport, getReports, updateReportSummary, readReportAgain,
   getReceiptsPendingApproval, approveReceipt,
-  getNeedyPatients, markTestConducted,
+  getNeedyPatients, markTestConducted, setCommunitySupport,
   getLabPatients,
   getBookings, markSampleCollected, completeBooking,
   getNotifications, markRead,
@@ -39,6 +39,7 @@ router.put('/receipts/:walletId/down-payment/approve',                    ...gua
 // Needy patients (community support)
 router.get('/needy-patients',                      ...guard, getNeedyPatients);
 router.put('/needy-patients/:id/mark-conducted',   ...guard, markTestConducted);
+router.put('/community-support',                   ...guard, setCommunitySupport); // join / leave
 
 // Bookings (patients' lab visits): confirmed → sample_collected → completed
 router.get('/bookings',                        ...guard, getBookings);
