@@ -6,7 +6,7 @@ export default function Roles() {
   const roles = [
     { title: "Patient", color: "#0284C7", perks: ["Search & compare labs", "Installment payments", "Urdu audio reports", "Community assistance"] },
     { title: "Doctor", color: "#7C3AED", perks: ["Digital prescriptions", "Manage schedule & fees", "View patient history", "Appointment tracking"] },
-    { title: "Lab Admin", color: T.accentRed, perks: ["Publish test rates", "Verify receipts", "Upload results", "Manage charity quota"] },
+    { title: "Lab Admin", color: T.accentRed, perks: ["Publish test rates", "Verify receipts", "Upload results", "Manage Patients"] },
     { title: "Platform Admin", color: T.text, perks: ["Approve support cases", "Manage all users", "Monitor wallet ledger", "Registration control"] },
     { title: "Lawyer", color: "#B45309", perks: ["Receive defaulter cases", "Review agreements", "Issue legal notices", "Handle disputes"] },
   ];
