@@ -788,7 +788,7 @@ const DoctorDashboard = () => {
                   <div className="doc-page-subtitle">Clinic visits booked by patients — confirmed automatically</div>
                 </div>
                 <div className="doc-filter-row doc-fade-up doc-fade-up-1">
-                  <input className="doc-filter-select" style={{ width: 190 }} type="text" placeholder="Check a slip number…"
+                  <input className="doc-filter-select" style={{ width: 190, backgroundImage: 'none', paddingRight: 12, cursor: 'text' }} type="text" placeholder="Check a slip number…"
                     value={slipQuery} onChange={e => setSlipQuery(e.target.value)} title="Type the number on the patient's slip to find their appointment" />
                   <select className="doc-filter-select" value={apptFilter} onChange={e => setApptFilter(e.target.value as any)}>
                     <option value="upcoming">Upcoming</option>

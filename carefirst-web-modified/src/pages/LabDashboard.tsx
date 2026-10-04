@@ -665,7 +665,7 @@ const LabDashboard = () => {
                   <div className="dash-page-subtitle">Patients' lab visits — collect the sample, then upload the report to complete the booking</div>
                 </div>
                 <div className="dash-filter-row dash-fu-1">
-                  <input className="dash-filter-select" style={{ width: 190 }} type="text" placeholder="Check a slip number…"
+                  <input className="dash-filter-select" style={{ width: 190, backgroundImage: 'none', paddingRight: 12, cursor: 'text' }} type="text" placeholder="Check a slip number…"
                     value={slipQuery} onChange={e => setSlipQuery(e.target.value)} title="Type the number on the patient's slip to find their booking" />
                   <select className="dash-filter-select" value={bookingFilter} onChange={e => setBookingFilter(e.target.value as any)}>
                     <option value="open">Open</option>
