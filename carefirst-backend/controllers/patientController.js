@@ -17,6 +17,7 @@ const {
 } = require('../utils/schedule');
 const { normalizeCnic }    = require('../utils/cnic');
 const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
+const { CNIC_PICTURES }    = require('../middleware/upload');
 const { generateInstallmentAgreement, generateInstallmentAgreementUrdu } = require('../utils/legalAgreementTemplate');
 const {
   OPEN_PLAN_STATUSES, labPaymentDetails, hasPaymentDetails, planAmounts, findLabPayment,
@@ -75,9 +76,12 @@ const PHONE_FORMAT = /^\+?\d{10,13}$/;
 const buildPlanApplication = async (user, body) => {
   const fail = (status, message) => ({ error: { status, message } });
 
+  // An unverified CNIC is fine: the admin checks the CNIC pictures sent with the
+  // application. A CNIC the admin already rejected must be corrected first.
   const profile = await PatientProfile.findOne({ user: user._id });
-  if (profile?.cnicStatus !== 'verified') {
-    return fail(403, 'Your CNIC must be verified by the admin before you can apply for an installment plan');
+  if (!profile) return fail(403, 'Patient profile not found');
+  if (profile.cnicStatus === 'rejected') {
+    return fail(403, 'Your CNIC was not accepted. Please correct it on your Profile page before applying for an installment plan');
   }
 
   const openPlans = await Wallet.countDocuments({ patient: user._id, status: { $in: OPEN_PLAN_STATUSES } });
@@ -111,9 +115,12 @@ const buildPlanApplication = async (user, body) => {
   if (guarantor.cnic === profile.cnic) return fail(400, 'The guarantor must be someone other than you');
   if (!PHONE_FORMAT.test(guarantor.phone)) return fail(400, "Please enter the guarantor's phone number (e.g. 03001234567)");
   if (!guarantor.relation) return fail(400, 'Please enter how the guarantor is related to you');
+  if (!guarantor.address)  return fail(400, "Please enter the guarantor's home address");
+  const patientAddress = str(body.patientAddress);
+  if (!patientAddress)     return fail(400, 'Please enter your home address');
   // These go into the agreement (and its Urdu audio) — keep them to sensible lengths
-  if (guarantor.name.length > 80 || guarantor.relation.length > 40 || guarantor.address.length > 200) {
-    return fail(400, "Guarantor details are too long (name up to 80, relation up to 40, address up to 200 characters)");
+  if (guarantor.name.length > 80 || guarantor.relation.length > 40 || guarantor.address.length > 200 || patientAddress.length > 200) {
+    return fail(400, 'Details are too long (name up to 80, relation up to 40, addresses up to 200 characters)');
   }
 
   const totalAmount = Math.round(test.price);
@@ -130,12 +137,15 @@ const buildPlanApplication = async (user, body) => {
     installments,
     installmentTenureDays: test.installmentTenureDays,
     serviceFee:            SERVICE_FEE,
+    patientCnic:           profile.cnic,
+    patientAddress,
     guarantor,
   };
 
   const agreementInput = {
     patient:     user,
     patientCnic: profile.cnic,
+    patientAddress,
     guarantor,
     labName:     terms.labName,
     testName:    terms.testName,
@@ -178,6 +188,9 @@ const updateProfile = async (req, res) => {
       if (normalized !== profile.cnic) {
         if (profile.cnicStatus === 'verified') {
           return res.status(400).json({ message: 'Your CNIC is already verified and cannot be changed. Contact support.' });
+        }
+        if (await Wallet.exists({ patient: req.user._id, status: 'pending_approval' })) {
+          return res.status(409).json({ message: 'Your CNIC cannot be changed while an installment application is under review' });
         }
         if (await PatientProfile.exists({ cnic: normalized, user: { $ne: req.user._id } })) {
           return res.status(409).json({ message: 'This CNIC is already registered' });
@@ -292,7 +305,7 @@ const getInstallmentConfig = async (req, res) => {
 };
 
 // ─── POST /api/patient/installment-plans/preview ──────────────────────────────
-// Body: { labId, testId, guarantor: { name, cnic, phone, relation, address } }
+// Body: { labId, testId, patientAddress, guarantor: { name, cnic, phone, relation, address } }
 // Returns the plan terms and the agreement text the patient must accept
 const previewInstallmentPlan = async (req, res) => {
   try {
@@ -305,19 +318,39 @@ const previewInstallmentPlan = async (req, res) => {
 };
 
 // ─── POST /api/patient/installment-plans ──────────────────────────────────────
-// Body: preview body + { acceptAgreement: true, agreementText } — the text the
-// patient was shown, which must still match the current terms
+// Multipart: field `data` = JSON of the preview body + { acceptAgreement: true,
+// agreementText } (the text the patient was shown, which must still match the
+// current terms), and the pictures patientCnicFront, patientCnicBack,
+// guarantorCnicFront, guarantorCnicBack (jpg/png)
+const PICTURE_LABELS = {
+  patientCnicFront:   'the front of your CNIC',
+  patientCnicBack:    'the back of your CNIC',
+  guarantorCnicFront: "the front of the guarantor's CNIC",
+  guarantorCnicBack:  "the back of the guarantor's CNIC",
+};
+
 const applyForInstallmentPlan = async (req, res) => {
+  const reject = (status, message) => {
+    removeUploadedFiles(req);
+    return res.status(status).json({ message });
+  };
   try {
-    if (req.body.acceptAgreement !== true) {
-      return res.status(400).json({ message: 'You must read and accept the agreement to apply' });
+    let body;
+    try { body = JSON.parse(req.body.data || ''); } catch { return reject(400, 'Application details are missing'); }
+    if (!body || typeof body !== 'object') return reject(400, 'Application details are missing');
+
+    if (body.acceptAgreement !== true) return reject(400, 'You must read and accept the agreement to apply');
+
+    const { error, terms, agreementText, agreementTextUrdu } = await buildPlanApplication(req.user, body);
+    if (error) return reject(error.status, error.message);
+    if (body.agreementText !== agreementText) {
+      return reject(409, 'The plan terms have changed. Please review the agreement again.');
     }
 
-    const { error, terms, agreementText, agreementTextUrdu } = await buildPlanApplication(req.user, req.body);
-    if (error) return res.status(error.status).json({ message: error.message });
-    if (req.body.agreementText !== agreementText) {
-      return res.status(409).json({ message: 'The plan terms have changed. Please review the agreement again.' });
-    }
+    const missing = Object.keys(CNIC_PICTURES).find(field => !req.files?.[field]?.[0]);
+    if (missing) return reject(400, `Please upload a picture of ${PICTURE_LABELS[missing]}`);
+    const cnicPictures = {};
+    for (const [field, key] of Object.entries(CNIC_PICTURES)) cnicPictures[key] = req.files[field][0].filename;
 
     const wallet = await Wallet.create({
       patient:               req.user._id,
@@ -329,7 +362,10 @@ const applyForInstallmentPlan = async (req, res) => {
       installmentTenureDays: terms.installmentTenureDays,
       downPayment:           { amount: terms.downPayment },
       serviceFee:            { amount: terms.serviceFee },
+      patientCnic:           terms.patientCnic,
+      patientAddress:        terms.patientAddress,
       guarantor:             terms.guarantor,
+      cnicPictures,
       agreement:             { text: agreementText, textUrdu: agreementTextUrdu, acceptedAt: new Date() },
       status:                'pending_approval',
     });
@@ -345,6 +381,7 @@ const applyForInstallmentPlan = async (req, res) => {
     const [enriched] = await enrichWallets([wallet]);
     res.status(201).json(enriched);
   } catch (err) {
+    removeUploadedFiles(req);
     res.status(500).json({ message: err.message });
   }
 };

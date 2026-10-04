@@ -68,12 +68,23 @@ const walletSchema = new mongoose.Schema(
     installments: [installmentSchema],
 
     // Collected when patient applies for installment plan
+    patientCnic:    { type: String }, // CNIC in the agreement (approval verifies it on the profile)
+    patientAddress: { type: String },
     guarantor: {
       name:     String,
       cnic:     String,
       phone:    String,
       relation: String,
       address:  String,
+    },
+
+    // Front + back CNIC pictures of patient and guarantor (file names in the private
+    // CNIC folder, see middleware/upload.js) — shown to the admin and, on default, the lawyer
+    cnicPictures: {
+      patientFront:   { type: String },
+      patientBack:    { type: String },
+      guarantorFront: { type: String },
+      guarantorBack:  { type: String },
     },
 
     // Legal agreement exactly as the patient read and accepted it

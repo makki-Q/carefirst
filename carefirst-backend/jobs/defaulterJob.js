@@ -65,7 +65,10 @@ const runDefaulterCheck = async () => {
 
       const legalText = generateLegalAgreement({
         patient:          wallet.patient,
+        patientCnic:      wallet.patientCnic,
+        patientAddress:   wallet.patientAddress,
         guarantor:        wallet.guarantor,
+        hasCnicPictures:  Boolean(wallet.cnicPictures?.patientFront),
         testName:         wallet.testName,
         totalAmount:      wallet.totalAmount,
         remainingBalance: wallet.remainingBalance,

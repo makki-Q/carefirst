@@ -19,6 +19,7 @@ const doctorRoutes  = require('./routes/doctor');
 const patientRoutes = require('./routes/patient');
 const publicRoutes  = require('./routes/public');
 const ttsRoutes     = require('./routes/tts');
+const documentRoutes = require('./routes/documents');
 
 // ── App & HTTP server ────────────────────────────────────────────────────────
 const app        = express();
@@ -49,6 +50,7 @@ app.use('/api/doctor', doctorRoutes);
 app.use('/api/patient', patientRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/tts',    ttsRoutes);
+app.use('/api/documents', documentRoutes);
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) =>

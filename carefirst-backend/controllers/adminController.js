@@ -269,17 +269,38 @@ const getWalletById = async (req, res) => {
 };
 
 // ─── PUT /api/admin/wallets/:walletId/approve ────────────────────────────────
-// Approves an installment application; the patient then pays the service fee
+// Approves an installment application after the admin has checked the CNIC
+// pictures; this also verifies the patient's CNIC. The patient then pays the service fee.
 const approvePlan = async (req, res) => {
   try {
     const wallet = await findWallet(req.params.walletId);
     if (!wallet) return res.status(404).json({ message: 'Wallet not found' });
     if (wallet.status !== 'pending_approval') return res.status(400).json({ message: 'This application has already been reviewed' });
 
+    const profile = await PatientProfile.findOne({ user: wallet.patient._id });
+    if (!profile) return res.status(404).json({ message: 'Patient profile not found' });
+    if (wallet.patientCnic && wallet.patientCnic !== profile.cnic) {
+      return res.status(409).json({ message: "The patient's CNIC no longer matches the one in this application — reject it so they can apply again" });
+    }
+
     wallet.status         = 'awaiting_fee';
     wallet.planApprovedAt = new Date();
     wallet.planApprovedBy = req.user._id;
     await wallet.save();
+
+    const cnicNewlyVerified = profile.cnicStatus !== 'verified';
+    if (cnicNewlyVerified) {
+      profile.cnicStatus          = 'verified';
+      profile.cnicRejectionReason = undefined;
+      profile.cnicReviewedAt      = new Date();
+      profile.cnicReviewedBy      = req.user._id;
+      await profile.save();
+      await notify(wallet.patient._id, {
+        title:   'CNIC Verified',
+        message: 'Your CNIC was verified with your installment plan application.',
+        type:    'cnic_verified',
+      });
+    }
 
     await notify(wallet.patient._id, {
       title:   'Installment Plan Approved',
@@ -289,7 +310,7 @@ const approvePlan = async (req, res) => {
     });
 
     const [enriched] = await enrichWallets([wallet]);
-    res.json({ message: 'Plan approved — awaiting service fee', wallet: enriched });
+    res.json({ message: `Plan approved — awaiting service fee${cnicNewlyVerified ? '; patient CNIC verified' : ''}`, wallet: enriched, cnicVerified: cnicNewlyVerified });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

@@ -12,7 +12,7 @@ const {
   getNotifications, markRead, markAllRead,
 } = require('../controllers/patientController');
 const { protect, requireRole, requireActive } = require('../middleware/auth');
-const { uploadReceipt, uploadCommunityDoc }   = require('../middleware/upload');
+const { uploadReceipt, uploadCommunityDoc, uploadCnicPictures } = require('../middleware/upload');
 
 const guard = [protect, requireRole('patient'), requireActive];
 
@@ -39,7 +39,7 @@ router.post('/wallets/:walletId/service-fee/receipt',
 // Installment plan applications
 router.get('/installment-plans/config',   ...guard, getInstallmentConfig);
 router.post('/installment-plans/preview', ...guard, previewInstallmentPlan);
-router.post('/installment-plans',         ...guard, applyForInstallmentPlan);
+router.post('/installment-plans',         ...guard, uploadCnicPictures, applyForInstallmentPlan);
 
 // Doctor appointments (clinic visits)
 router.get('/appointments',             ...guard, getAppointments);

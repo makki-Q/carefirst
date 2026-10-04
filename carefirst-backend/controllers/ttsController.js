@@ -34,7 +34,7 @@ const reportText = async (user, id) => {
 };
 
 // Urdu agreement for a plan the patient is about to apply for — rebuilt on the
-// server from the same validated inputs as the preview (body: labId, testId, guarantor)
+// server from the same validated inputs as the preview (body: labId, testId, patientAddress, guarantor)
 const previewAgreementText = async (user, body) => {
   if (user.role !== 'patient') return null;
   const { error, agreementTextUrdu } = await buildPlanApplication(user, body);
@@ -49,7 +49,7 @@ const getStatus = (req, res) => {
 
 // ─── POST /api/tts ────────────────────────────────────────────────────────────
 // Body: { source: 'agreement' | 'report', id, voice?: 'uzma' | 'asad' } → audio/mpeg
-//   or  { source: 'agreement-preview', labId, testId, guarantor, voice? } (patient, before applying)
+//   or  { source: 'agreement-preview', labId, testId, patientAddress, guarantor, voice? } (patient, before applying)
 // Only Urdu text the server stores or generates itself is spoken — never text from the request.
 const speak = async (req, res) => {
   try {

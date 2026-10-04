@@ -11,7 +11,7 @@ const fileUrl = (subfolder, filename) => {
 const removeUploadedFiles = (req) => {
   const files = [
     ...(req.file ? [req.file] : []),
-    ...(Array.isArray(req.files) ? req.files : []),
+    ...(Array.isArray(req.files) ? req.files : Object.values(req.files || {}).flat()), // .array() or .fields()
   ];
   for (const f of files) {
     fs.unlink(path.resolve(f.path), () => {});

@@ -92,6 +92,8 @@ const mock = { osrmDown: false, osrmCalls: 0, translatorDown: false, translation
   docIntelResult: null, docIntelCalls: 0, docIntelOps: {} }; // docIntelResult null → the reading fails
 let mockServer;
 const AUDIO_DIR = path.join(require('os').tmpdir(), `carefirst-e2e-audio-${process.pid}`);
+const CNIC_DIR  = path.join(require('os').tmpdir(), `carefirst-e2e-cnic-${process.pid}`);
+const cnicFileCount = () => (fs.existsSync(CNIC_DIR) ? fs.readdirSync(CNIC_DIR).length : 0);
 
 // Fake road distance = straight line × 1.5 (the server's own fallback uses × 1.3)
 const fakeRoadKm = (a, b) => require('../utils/travel').haversineKm(a, b) * 1.5;
@@ -183,6 +185,7 @@ const startServer = async () => {
       AZURE_SPEECH_REGION:       'test',
       AZURE_SPEECH_ENDPOINT:     MOCK,
       AUDIO_CACHE_DIR:           AUDIO_DIR,
+      CNIC_STORAGE_DIR:          CNIC_DIR,
       AZURE_DOCINTEL_KEY:        'test-docintel-key',
       AZURE_DOCINTEL_ENDPOINT:   MOCK,
       AZURE_DOCINTEL_POLL_MS:    '20',
@@ -628,7 +631,12 @@ const testInstallmentReceipts = async () => {
 
 // ─── Step 2 — installment plans ──────────────────────────────────────────────
 const guarantor = { name: 'Kamran Khan', cnic: '35202-5555555-5', phone: '0300 1234567', relation: 'Brother', address: 'Lahore' };
-const planBody  = () => ({ labId: ids.lab, testId: ids.mriTest, guarantor });
+const planBody  = () => ({ labId: ids.lab, testId: ids.mriTest, patientAddress: 'House 12, Model Town, Lahore', guarantor });
+const CNIC_PICTURES = { patientCnicFront: ['pf.png'], patientCnicBack: ['pb.png'], guarantorCnicFront: ['gf.png'], guarantorCnicBack: ['gb.png'] };
+// The application is multipart: the details as JSON in `data` + the four CNIC pictures
+const applyPlan = (token, body, files = CNIC_PICTURES) =>
+  post('/api/patient/installment-plans', { token, body: { data: JSON.stringify(body) }, files });
+const PatientProfileModel = () => require('../models/PatientProfile');
 
 const testPlanApplication = async () => {
   section('Installment plan application');
@@ -638,7 +646,12 @@ const testPlanApplication = async () => {
     config.data.maxOpenPlans === 2 && config.data.openPlans === 1 && config.data.careFirstAccount, config.data);
 
   const unverified = await post('/api/patient/installment-plans/preview', { token: tokens.patient2, body: planBody() });
-  check('unverified CNIC cannot apply (403)', unverified.status === 403, unverified);
+  check('an unverified CNIC does not block applying (the admin checks the CNIC pictures)',
+    unverified.status !== 403 && /payment details/.test(unverified.data.message), unverified);
+  await PatientProfileModel().updateOne({ user: ids.patient2 }, { cnicStatus: 'rejected' });
+  const rejectedCnic = await post('/api/patient/installment-plans/preview', { token: tokens.patient2, body: planBody() });
+  check('a CNIC the admin rejected must be corrected first (403)', rejectedCnic.status === 403 && /Profile/.test(rejectedCnic.data.message), rejectedCnic);
+  await PatientProfileModel().updateOne({ user: ids.patient2 }, { cnicStatus: 'unverified' });
 
   let pub = await get('/api/public/tests');
   check('lab without payment details does not accept installments',
@@ -665,37 +678,49 @@ const testPlanApplication = async () => {
     ["guarantor with the patient's own CNIC", { ...guarantor, cnic: '3520212345679' }],
     ['invalid guarantor phone', { ...guarantor, phone: '12' }],
     ['missing relation', { ...guarantor, relation: '' }],
+    ['missing guarantor address', { ...guarantor, address: ' ' }],
   ];
   for (const [label, g] of cases) {
     const r = await post('/api/patient/installment-plans/preview', { token: tokens.patient, body: { ...planBody(), guarantor: g } });
     check(`${label} is rejected (400)`, r.status === 400, r);
   }
+  const noAddress = await post('/api/patient/installment-plans/preview', { token: tokens.patient, body: { ...planBody(), patientAddress: '' } });
+  check('missing patient address is rejected (400)', noAddress.status === 400 && /your home address/.test(noAddress.data.message), noAddress);
 
   const preview = await post('/api/patient/installment-plans/preview', { token: tokens.patient, body: planBody() });
   check('preview: 20% down payment and whole-rupee installments with remainder last',
     preview.status === 200 && preview.data.downPayment === 5000 &&
     JSON.stringify(preview.data.installments) === '[6666,6666,6668]' && preview.data.installmentTenureDays === 30, preview.data);
-  check('agreement names patient CNIC, guarantor, lab and service fee',
-    ['35202-1234567-9', 'Kamran Khan', '35202-5555555-5', 'E2E Diagnostics', 'PKR 500', 'PKR 6,668']
+  check('agreement names patient CNIC and address, guarantor, lab, service fee and the CNIC pictures',
+    ['35202-1234567-9', 'House 12, Model Town, Lahore', 'Kamran Khan', '35202-5555555-5', 'E2E Diagnostics', 'PKR 500', 'PKR 6,668', 'CNIC\npictures uploaded']
       .every(s => preview.data.agreementText?.includes(s)), preview.data.agreementText);
 
-  const notAccepted = await post('/api/patient/installment-plans', { token: tokens.patient, body: { ...planBody(), agreementText: preview.data.agreementText } });
+  const notAccepted = await applyPlan(tokens.patient, { ...planBody(), agreementText: preview.data.agreementText });
   check('applying without accepting the agreement is rejected (400)', notAccepted.status === 400, notAccepted);
 
-  const tampered = await post('/api/patient/installment-plans', {
-    token: tokens.patient,
-    body:  { ...planBody(), acceptAgreement: true, agreementText: preview.data.agreementText + ' ' },
-  });
+  const tampered = await applyPlan(tokens.patient, { ...planBody(), acceptAgreement: true, agreementText: preview.data.agreementText + ' ' });
   check('agreement text that does not match the terms is rejected (409)', tampered.status === 409, tampered);
 
-  const apply = await post('/api/patient/installment-plans', {
-    token: tokens.patient,
-    body:  { ...planBody(), acceptAgreement: true, agreementText: preview.data.agreementText },
-  });
+  const accepted = { ...planBody(), acceptAgreement: true, agreementText: preview.data.agreementText };
+  const noData = await post('/api/patient/installment-plans', { token: tokens.patient, body: { other: 'x' }, files: CNIC_PICTURES });
+  check('an application without its details is rejected (400)', noData.status === 400, noData);
+  const { guarantorCnicBack, ...threePictures } = CNIC_PICTURES;
+  const missingPicture = await applyPlan(tokens.patient, accepted, threePictures);
+  check('a missing CNIC picture is rejected (400) and nothing is kept',
+    missingPicture.status === 400 && /back of the guarantor's CNIC/.test(missingPicture.data.message) && cnicFileCount() === 0, [missingPicture, cnicFileCount()]);
+  const pdfPicture = await applyPlan(tokens.patient, accepted, { ...threePictures, guarantorCnicBack: ['cnic.pdf'] });
+  check('CNIC pictures must be JPG or PNG (400)', pdfPicture.status === 400 && cnicFileCount() === 0, [pdfPicture, cnicFileCount()]);
+
+  const apply = await applyPlan(tokens.patient, accepted);
   check('patient applies → pending_approval with stored agreement',
     apply.status === 201 && apply.data.status === 'pending_approval' &&
     apply.data.agreement?.text === preview.data.agreementText && apply.data.agreement?.acceptedAt &&
     apply.data.guarantor?.phone === '03001234567' && apply.data.installments.length === 0, apply.data);
+  check('the application stores the patient CNIC + address and four private CNIC pictures',
+    apply.data.patientCnic === '35202-1234567-9' && apply.data.patientAddress === 'House 12, Model Town, Lahore' &&
+    ['patientFront', 'patientBack', 'guarantorFront', 'guarantorBack'].every(k => apply.data.cnicPictures?.[k]) && cnicFileCount() === 4, apply.data);
+  const publicTry = await fetch(`${BASE}/uploads/${apply.data.cnicPictures.patientFront}`);
+  check('CNIC pictures are not served from /uploads', publicTry.status === 404, publicTry.status);
   check("wallet carries the lab's payment details", apply.data.labPayment?.jazzCash === '0301-7654321', apply.data.labPayment);
   ids.plan = apply.data._id;
 
@@ -720,15 +745,27 @@ const testPlanReview = async () => {
   check('admin sees the application with patient CNIC, lab name and agreement',
     listed?.patient?.cnic === '35202-1234567-9' && listed?.labName === 'E2E Diagnostics' && listed?.agreement?.text, listed);
 
-  // A second patient applies so there is one application to reject
-  await put(`/api/admin/patients/${ids.patient2}/cnic/verify`, { token: tokens.admin });
+  // A second patient (CNIC not verified yet) applies so there is one application to reject
   const body2 = { ...planBody(), guarantor: { ...guarantor, cnic: '35202-6666666-6' } };
   const preview2 = await post('/api/patient/installment-plans/preview', { token: tokens.patient2, body: body2 });
-  const apply2 = await post('/api/patient/installment-plans', {
-    token: tokens.patient2,
-    body:  { ...body2, acceptAgreement: true, agreementText: preview2.data.agreementText },
-  });
-  check('second patient applies', apply2.status === 201, apply2);
+  const apply2 = await applyPlan(tokens.patient2, { ...body2, acceptAgreement: true, agreementText: preview2.data.agreementText });
+  check('second patient applies with an unverified CNIC', apply2.status === 201, apply2);
+
+  const cnicChange = await put('/api/patient/profile', { token: tokens.patient2, body: { cnic: '35202-1212121-2' } });
+  check('the CNIC cannot change while an application is under review (409)', cnicChange.status === 409, cnicChange);
+
+  const picture = (token, walletId, name) =>
+    fetch(`${BASE}/api/documents/wallets/${walletId}/cnic/${name}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  const own = await picture(tokens.patient2, apply2.data._id, 'patient-front');
+  check('the patient can open their own CNIC picture',
+    own.status === 200 && /image\/png/.test(own.headers.get('content-type')) && /no-store/.test(own.headers.get('cache-control')), own.status);
+  check('the admin can open every CNIC picture',
+    (await Promise.all(['patient-front', 'patient-back', 'guarantor-front', 'guarantor-back'].map(n => picture(tokens.admin, apply2.data._id, n)))).every(r => r.status === 200));
+  check('another patient cannot (404)', (await picture(tokens.patient, apply2.data._id, 'patient-front')).status === 404);
+  check('a lab cannot (404)', (await picture(tokens.lab, apply2.data._id, 'guarantor-front')).status === 404);
+  check('a lawyer without a case on the plan cannot (404)', (await picture(tokens.lawyer, apply2.data._id, 'guarantor-front')).status === 404);
+  check('signed-out users cannot (401)', (await picture(null, apply2.data._id, 'patient-front')).status === 401);
+  check('unknown picture names return 404', (await picture(tokens.admin, apply2.data._id, 'selfie')).status === 404);
 
   const noReason = await put(`/api/admin/wallets/${apply2.data._id}/reject`, { token: tokens.admin, body: {} });
   check('rejecting without a reason is refused (400)', noReason.status === 400, noReason);
@@ -746,16 +783,27 @@ const testPlanReview = async () => {
 
   const p2Config = await get('/api/patient/installment-plans/config', { token: tokens.patient2 });
   check('rejected applications do not count toward the limit', p2Config.data.openPlans === 0, p2Config.data);
+  check("a rejected application leaves the patient's CNIC unverified", p2Config.data.cnicStatus === 'unverified', p2Config.data);
+
+  // The first patient's CNIC is not verified yet either: approving the plan verifies it
+  await PatientProfileModel().updateOne({ user: ids.patient }, { cnicStatus: 'unverified', cnic: '35202-1234567-8' });
+  const changed = await put(`/api/admin/wallets/${ids.plan}/approve`, { token: tokens.admin });
+  check("approval is refused if the patient's CNIC no longer matches the application (409)", changed.status === 409, changed);
+  await PatientProfileModel().updateOne({ user: ids.patient }, { cnic: '35202-1234567-9' });
 
   const approve = await put(`/api/admin/wallets/${ids.plan}/approve`, { token: tokens.admin });
   check('admin approves → awaiting_fee',
     approve.status === 200 && approve.data.wallet.status === 'awaiting_fee' && approve.data.wallet.planApprovedAt, approve);
+  const pProfile = await get('/api/patient/profile', { token: tokens.patient });
+  check("approving the plan also verifies the patient's CNIC",
+    approve.data.cnicVerified === true && pProfile.data.profile.cnicStatus === 'verified' && pProfile.data.profile.cnicReviewedAt, pProfile.data.profile);
 
   const again = await put(`/api/admin/wallets/${ids.plan}/approve`, { token: tokens.admin });
   check('approving twice is refused (400)', again.status === 400, again);
 
   const pNotifs = await get('/api/patient/notifications', { token: tokens.patient });
   check('patient is told to pay the service fee', pNotifs.data.some(n => n.type === 'plan_approved' && n.message.includes('PKR 500')), pNotifs.data);
+  check('… and that their CNIC is verified', pNotifs.data.some(n => n.type === 'cnic_verified' && /installment plan application/.test(n.message)), pNotifs.data);
 
   const verifyEarly = await put(`/api/admin/wallets/${ids.plan}/service-fee/verify`, { token: tokens.admin });
   check('fee cannot be verified before a receipt is uploaded (400)', verifyEarly.status === 400, verifyEarly);
@@ -1109,7 +1157,7 @@ const testUrdu = async () => {
     (await speak(tokens.lawyer, { source: 'agreement', id: ids.overdueWallet })).status === 409);
 
   // Before applying: audio of the agreement preview, rebuilt on the server from the plan inputs
-  const previewBody = { source: 'agreement-preview', labId: ids.lab, testId: ids.mriTest, guarantor: { ...guarantor, cnic: '35202-7777777-7' } };
+  const previewBody = { source: 'agreement-preview', labId: ids.lab, testId: ids.mriTest, patientAddress: 'Chiniot', guarantor: { ...guarantor, cnic: '35202-7777777-7' } };
   const prev = await speak(tokens.patient2, previewBody);
   check('patient can hear the Urdu agreement before applying',
     prev.status === 200 && mock.lastSsml.includes('35202-7777777-7') && mock.lastSsml.includes('35202-7654321-3'), [prev.status, prev.data]);
@@ -1217,6 +1265,21 @@ const testAutoSummary = async () => {
   mock.docIntelResult = null;
 };
 
+const testCnicPicturesForLawyer = async () => {
+  section('CNIC pictures for the lawyer');
+  const Wallet = require('../models/Wallet');
+  // The escalated test wallet was inserted directly; give it the pictures of a real application
+  const { cnicPictures } = await Wallet.findById(ids.plan).lean();
+  await Wallet.updateOne({ _id: ids.overdueWallet }, { cnicPictures });
+  const picture = (token, walletId, name) =>
+    fetch(`${BASE}/api/documents/wallets/${walletId}/cnic/${name}`, { headers: { Authorization: `Bearer ${token}` } });
+  check("the assigned lawyer can open the defaulter's and guarantor's CNIC pictures",
+    (await Promise.all(['patient-front', 'patient-back', 'guarantor-front', 'guarantor-back'].map(n => picture(tokens.lawyer, ids.overdueWallet, n)))).every(r => r.status === 200));
+  check("… but not those of a plan that isn't their case (404)", (await picture(tokens.lawyer, ids.plan, 'patient-front')).status === 404);
+  const lawyerCase = (await get('/api/lawyer/defaulter-cases', { token: tokens.lawyer })).data.find(c => c.wallet?._id === ids.overdueWallet);
+  check('the case gives the lawyer the wallet with its pictures', lawyerCase?.wallet?.cnicPictures?.guarantorBack, lawyerCase?.wallet);
+};
+
 const testDueReminders = async () => {
   section('Due-soon reminders (nightly job)');
   const Wallet = require('../models/Wallet');
@@ -1294,6 +1357,7 @@ const main = async () => {
     await testLabBookings();
     await testTrueCost();
     await testDefaulterEscalation();
+    await testCnicPicturesForLawyer();
     await testUrdu();
     await testAutoSummary();
     await testDueReminders();
@@ -1305,6 +1369,7 @@ const main = async () => {
     server?.kill();
     mockServer?.close();
     fs.rmSync(AUDIO_DIR, { recursive: true, force: true });
+    fs.rmSync(CNIC_DIR, { recursive: true, force: true });
     await mongoose.connection.dropDatabase();
     await mongoose.disconnect();
     for (const file of listUploads()) {
