@@ -156,6 +156,75 @@ test('flagged results are listed in English and Urdu with the doctor message', (
   assert.ok(s.ur.includes('اپنے ڈاکٹر کو دکھائیں'));
 });
 
+// ── Reports whose header is a separate table / whose rows OCR merges (IDC-style) ──
+test('header printed as its own table: columns are found from the cells', () => {
+  const r = interpretReport({
+    content: 'Mrs. X\nAge/Gender: 48 Y 0 M 0 D/F',
+    tables: [
+      table([['Visit Date: 1-Jan-2026 1:27PM', 'Final Report - Page 1 of 1', 'Report Date: 1-Jan-2026'], ['Test Name', 'Results', 'Reference Ranges']], 2),
+      table([
+        ['Complete Blood Picture', '01-Jan-26 2601-01-123456', '', ''],
+        ['Haemoglobin', '13.5', '12 - 15', 'g/dl'],
+        ['Absolute Lymphocyte Count :unselected:', '+3,030', '1000 - 3000', '/mm3'],
+        ['T3 Total', '1.10', '0,70-2.04', 'ng/ml'],       // decimal comma read by the OCR
+        ['TSH', '2.82', '0.4-4,5', 'uIU/ml'],
+      ]),
+    ],
+  });
+  assert.strictEqual(r.kind, 'table');
+  assert.strictEqual(r.sex, 'female', 'the M in "0 M" is months, the sex follows the slash');
+  assert.strictEqual(find(r, 'Haemoglobin').status, 'normal');
+  assert.strictEqual(find(r, 'Haemoglobin').unit, 'g/dl');
+  assert.strictEqual(find(r, 'Absolute Lymphocyte Count').status, 'high');
+  assert.strictEqual(find(r, 'T3 Total').normalLow, 0.7);
+  assert.strictEqual(find(r, 'TSH').normalHigh, 4.5);
+  assert.ok(!r.findings.some(f => /visit date|complete blood/i.test(f.name)), 'header and title rows are not results');
+});
+
+test('rows merged into one cell are read as text, incl. "number: label" bands', () => {
+  const r = interpretReport({ content: '', tables: [table([
+    ['Renal Function Tests', '01-Jan-26 2601-01-123456', '', '', ''],
+    ['Uric Acid 7.9 2.4 - 6.2 :unselected:', '', '', '', 'mg/dl'],
+    ['Blood Urea Nitrogen', '12.6 6- 23', '', '', 'mg/dl'],
+    ['eGFR', '86', '', '>60: Normal 15-60: Borderline', 'ml/min/1.73m^2'],
+  ])] });
+  assert.strictEqual(find(r, 'Uric Acid').status, 'high');
+  assert.strictEqual(find(r, 'Uric Acid').normalHigh, 6.2);
+  assert.strictEqual(find(r, 'Blood Urea Nitrogen').status, 'normal');
+  assert.strictEqual(find(r, 'eGFR').status, 'normal', '">60: Normal" is the normal band, not 15-60');
+});
+
+test('chart-style reports: range under the name, lab flag under the value', () => {
+  const r = interpretReport({ content: 'Age/Gender: 48 Y 0 M 0 D/F', tables: [table([
+    ['Visit Date: 1-Jan-2026 Test Name', 'Result', 'Final Report', 'History'],
+    ['Liver Function Tests', '', '', ''],
+    ['Total Bilirubin 0.1-1.1', '0.2', '0.202', 'Latest (0.2)'],
+    ['', 'mg/dL', '', ''],
+    ['S.G.O.T. (AST)', '20', '20.2', ''],
+    ['9.40', 'U/L Normal', '', 'Latest (20)'],             // OCR lost the dash in "9-40"
+    ['Gamma GT Male: < 55', '48', '48.1', 'Latest (48)'],
+    ['Female: < 38', 'U/L', '', ''],
+    ['', '', '100', '1 Jan 26'],                            // chart axis, not a test
+    ['Total Protein 6.0 - 8.7', '7.4 g/dl Normal', '7.5', 'Latest (7.4)'],
+  ])] });
+  assert.strictEqual(find(r, 'Total Bilirubin').status, 'normal');
+  assert.strictEqual(find(r, 'Total Bilirubin').unit, 'mg/dL');
+  assert.strictEqual(find(r, 'S.G.O.T. (AST)').status, 'normal', "garbled range: the lab's own Normal decides");
+  assert.strictEqual(find(r, 'Gamma GT').status, 'high', 'female band (< 38) from the next line');
+  assert.strictEqual(find(r, 'Total Protein').status, 'normal');
+  assert.strictEqual(r.findings.length, 4, r.findings.map(f => f.name).join(', '));
+});
+
+test("a lab's guidance table is never read as the patient's results", () => {
+  const r = interpretReport({ content: '', tables: [table([
+    ['Optimal', '< 100', '', ''],
+    ['Near / Above Optimal', '100 - 129', '', ''],
+    ['Borderline High', '130 - 159', '', ''],
+    ['Very High', '> 190', '', ''],
+  ], 0)] });
+  assert.strictEqual(r.findings.length, 0);
+});
+
 test('all-normal results never claim the whole report is normal', () => {
   const s = summarizeReport({ kind: 'table', findings: [{ name: 'pH', result: '6.5', unit: '', range: '5-8', normalLow: 5, normalHigh: 8, status: 'normal' }] });
   assert.ok(s.en.includes("found in the report's tables"));

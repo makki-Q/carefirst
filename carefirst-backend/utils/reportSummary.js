@@ -108,12 +108,12 @@ const summarizeReport = ({ kind, findings = [] }) => {
     en.push(`${flagged.length} of your ${findings.length} results ${flagged.length === 1 ? 'is' : 'are'} outside the normal range printed on the report: ` +
       listed.map(f => `${f.name} ${withUnit(f)} (${STATUS_EN[f.status]}; ${normalEn(f)})`).join(', ') +
       (more > 0 ? `, and ${more} more` : '') + '.');
-    ur.push(`آپ کی رپورٹ کے ${findings.length} نتائج میں سے ${flagged.length} نارمل حد سے باہر ہیں: ` +
+    ur.push(`آپ کی رپورٹ کے ${findings.length} نتائج میں سے ${flagged.length === 1 ? 'ایک نتیجہ نارمل حد سے باہر ہے' : `${flagged.length} نارمل حد سے باہر ہیں`}: ` +
       listed.map(f => `${urduName(f.name)} ${withUnit(f)} (${STATUS_UR[f.status]}؛ ${normalUr(f)})`).join('، ') +
       (more > 0 ? `، اور ${more} مزید` : '') + '۔');
     if (normal.length) {
-      en.push(`Your other ${normal.length} results are within the normal range.`);
-      ur.push(`آپ کے باقی ${normal.length} نتائج نارمل حد کے اندر ہیں۔`);
+      en.push(normal.length === 1 ? 'Your other result is within the normal range.' : `Your other ${normal.length} results are within the normal range.`);
+      ur.push(normal.length === 1 ? 'آپ کا باقی ایک نتیجہ نارمل حد کے اندر ہے۔' : `آپ کے باقی ${normal.length} نتائج نارمل حد کے اندر ہیں۔`);
     }
   }
   if (unknown.length) {
