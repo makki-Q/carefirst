@@ -13,6 +13,7 @@ const BRAND  = rgb(0.79, 0.22, 0.17); // CareFirst red
 const PALE   = rgb(0.98, 0.95, 0.94);
 
 const UPLOADS = path.join(__dirname, '..', 'uploads');
+const LOGO = path.join(__dirname, '..', 'assets', 'carefirst-logo.png'); // the CareFirst logo on every slip
 
 const fmtDateTime = (d) => new Date(d).toLocaleString('en-GB', {
   timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -51,13 +52,17 @@ const drawSlipPage = (pdf, fonts, slip) => {
     page.drawText(safeText(font, t), { x, y, size, font, color });
   let y = height - MARGIN;
 
-  // Header
-  page.drawRectangle({ x: 0, y: height - 92, width, height: 92, color: BRAND });
-  text('CareFirst', MARGIN, height - 50, { size: 24, font: bold, color: rgb(1, 1, 1) });
-  text('Healthcare appointments, lab tests & support', MARGIN, height - 70, { size: 9, color: rgb(1, 0.9, 0.88) });
+  // Header: CareFirst logo on the left, the slip's title on the right, red rule below
+  const HEADER = 100;
+  const logoH = 72;
+  const logoW = fonts.logo.width * (logoH / fonts.logo.height);
+  page.drawImage(fonts.logo, { x: MARGIN, y: height - HEADER + (HEADER - logoH) / 2 - 4, width: logoW, height: logoH });
   const title = safeText(bold, slip.title);
-  text(title, width - MARGIN - bold.widthOfTextAtSize(title, 15), height - 52, { size: 15, font: bold, color: rgb(1, 1, 1) });
-  y = height - 92 - 30;
+  text(title, width - MARGIN - bold.widthOfTextAtSize(title, 16), height - 50, { size: 16, font: bold, color: BRAND });
+  const tagline = 'Healthcare appointments, lab tests & support';
+  text(tagline, width - MARGIN - regular.widthOfTextAtSize(tagline, 9), height - 66, { size: 9, color: MUTED });
+  page.drawRectangle({ x: MARGIN, y: height - HEADER - 6, width: width - 2 * MARGIN, height: 2.5, color: BRAND });
+  y = height - HEADER - 6 - 26;
 
   // Slip number + status
   page.drawRectangle({ x: MARGIN, y: y - 58, width: width - 2 * MARGIN, height: 66, color: PALE, borderColor: LINE, borderWidth: 1 });
@@ -158,7 +163,11 @@ const buildSlipPdf = async (slip, { attachments = [] } = {}) => {
   const pdf = await PDFDocument.create();
   pdf.setTitle(`CareFirst ${slip.title} ${slip.slipNumber}`);
   pdf.setAuthor('CareFirst');
-  const fonts = { regular: await pdf.embedFont(StandardFonts.Helvetica), bold: await pdf.embedFont(StandardFonts.HelveticaBold) };
+  const fonts = {
+    regular: await pdf.embedFont(StandardFonts.Helvetica),
+    bold:    await pdf.embedFont(StandardFonts.HelveticaBold),
+    logo:    await pdf.embedPng(fs.readFileSync(LOGO)),
+  };
   drawSlipPage(pdf, fonts, slip);
   if (attachments.length) await appendDocuments(pdf, fonts, attachments);
   return Buffer.from(await pdf.save());
