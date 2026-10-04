@@ -118,6 +118,7 @@ const handleMock = async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/documentintelligence/documentModels/prebuilt-layout:analyze') {
     if (req.headers['ocp-apim-subscription-key'] !== 'test-docintel-key') return send(401, { error: 'bad key' });
     mock.docIntelCalls++;
+    mock.docIntelLastBytes = Buffer.from(JSON.parse(body).base64Source, 'base64').length;
     if (!mock.docIntelResult) return send(500, { error: 'down' });
     const id = mock.docIntelCalls;
     mock.docIntelOps[id] = mock.docIntelResult;
@@ -1182,6 +1183,16 @@ const testAutoSummary = async () => {
   const pdfRead = await waitRead(pdf.data._id);
   check('a 3-page PDF is read in two requests, every page included',
     pdfRead.autoRead.status === 'ready' && mock.docIntelCalls - callsBefore === 2 && pdfRead.autoRead.pages === 3 && pdfRead.autoRead.totalPages === 3, [mock.docIntelCalls - callsBefore, pdfRead.autoRead]);
+
+  // A phone photo over the free tier's ~4 MB limit is read from a smaller copy; the original is kept
+  const sharp = require('sharp');
+  const photo = await sharp(require('crypto').randomBytes(1500 * 1100 * 3), { raw: { width: 1500, height: 1100, channels: 3 } }).png().toBuffer();
+  const big = await upload({}, { name: 'phone-photo.png', data: photo });
+  const bigRead = await waitRead(big.data._id);
+  const stored = await fetch(bigRead.reportUrl);
+  check('a photo over 4 MB is shrunk for reading, and the patient still gets the original file',
+    photo.length > 4 * 1024 * 1024 && bigRead.autoRead.status === 'ready' && mock.docIntelLastBytes < 4 * 1024 * 1024 &&
+    (await stored.arrayBuffer()).byteLength === photo.length, [photo.length, mock.docIntelLastBytes, bigRead.autoRead]);
 
   mock.docIntelResult = NARRATIVE_LAYOUT;
   const written = await waitRead((await upload({}, 'biopsy.png')).data._id);

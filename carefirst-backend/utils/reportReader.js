@@ -1,6 +1,7 @@
 // Reads an uploaded lab report with Azure Document Intelligence ("prebuilt-layout")
 // and returns its text + tables. PDFs are sent in small page groups because the
-// free tier reads at most 2 pages per request and rejects files over ~4 MB.
+// free tier reads at most 2 pages per request and rejects files over ~4 MB;
+// large photos are shrunk before sending.
 const fs   = require('fs');
 const path = require('path');
 const { PDFDocument } = require('pdf-lib');
@@ -59,6 +60,22 @@ const pdfPieces = async (bytes) => {
   return { pieces, totalPages: src.getPageCount(), readPages: total };
 };
 
+// Phone photos are often over the free tier's ~4 MB limit. Send a smaller JPEG copy
+// for reading only; the uploaded original stays untouched for the patient and lab.
+const prepareImage = async (bytes) => {
+  if (bytes.length <= DOC_INTEL.maxBytes) return bytes;
+  const sharp = require('sharp');
+  for (const [size, quality] of [[3000, 85], [2400, 75], [1800, 70]]) {
+    const out = await sharp(bytes)
+      .rotate() // respect the phone's EXIF orientation
+      .resize({ width: size, height: size, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality, mozjpeg: true })
+      .toBuffer();
+    if (out.length <= DOC_INTEL.maxBytes) return out;
+  }
+  throw fail('too_large', 'This photo is too large to read automatically');
+};
+
 // → { content, tables, pages, totalPages }
 const readReport = async (filePath) => {
   if (!docIntelConfigured()) throw fail('not_configured', 'Report reading is not set up on this server');
@@ -69,6 +86,7 @@ const readReport = async (filePath) => {
   let totalPages = 1;
   let readPages = 1;
   if (isPdf) ({ pieces, totalPages, readPages } = await pdfPieces(bytes));
+  else pieces = [await prepareImage(bytes)];
 
   const results = [];
   for (const [i, piece] of pieces.entries()) {
