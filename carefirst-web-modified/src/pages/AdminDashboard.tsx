@@ -13,8 +13,22 @@ const CNIC_BADGE: Record<string, { cls: string; label: string }> = {
   rejected:   { cls: 'dash-red',   label: 'Rejected' },
 };
 
-const DEFAULT_SETTINGS = {
-  supportEmail: 'support@carefirst.pk',
+const EMPTY_ACCOUNT = { bankName: '', accountTitle: '', accountNumber: '', jazzCash: '', easyPaisa: '' };
+
+// "3 min ago" / "2 hrs ago" / "4 Oct"
+const timeAgo = (d: string) => {
+  const mins = Math.round((Date.now() - new Date(d).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} hr${hrs === 1 ? '' : 's'} ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
+  return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+};
+const monthLabel = (ym: string) => new Date(`${ym}-01T00:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+const ACTIVITY_COLORS: Record<string, string> = {
+  registration: '#7c3aed', report: '#166534', community: '#854d0e', plan: '#1e40af', appointment: '#0f766e', defaulter: '#991b1b',
 };
 
 const AdminDashboard = () => {
@@ -25,7 +39,13 @@ const AdminDashboard = () => {
   const [roleFilter, setRoleFilter]               = useState('All');
   const [userSearch, setUserSearch]               = useState('');
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
-  const [settings, setSettings]                   = useState({ ...DEFAULT_SETTINGS });
+  const [overview, setOverview]                   = useState<any>(null);   // GET /admin/overview
+  const [reports, setReports]                     = useState<any>(null);   // GET /admin/reports
+  const [reportMonth, setReportMonth]             = useState('');
+  const [settingsForm, setSettingsForm]           = useState({ supportEmail: '', careFirstAccount: { ...EMPTY_ACCOUNT } });
+  const [settingsInfo, setSettingsInfo]           = useState<any>(null);   // saved / updatedAt
+  const [settingsBusy, setSettingsBusy]           = useState(false);
+  const [settingsMsg, setSettingsMsg]             = useState<{ ok: boolean; text: string } | null>(null);
 
   // ── Data state ────────────────────────────────────────────────────────────────
   const { user: sessionUser } = getSession();
@@ -82,6 +102,8 @@ const AdminDashboard = () => {
 
     api.get('/admin/community-applications').then((d: any) => setCommunityApps(Array.isArray(d) ? d : [])).catch(() => {});
     loadPartnerLabs();
+    loadOverview();
+    loadSettings();
     loadWallets();
     api.get('/admin/defaulter-cases').then((d: any) => setDefaulterCases(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/admin/notifications').then((d: any) => {
@@ -100,6 +122,7 @@ const AdminDashboard = () => {
       setNotifications(prev => [n, ...prev]);
       setNotifBadge(prev => prev + 1);
       if (n.type === 'community_partner_joined' || n.type === 'community_partner_left') loadPartnerLabs();
+      loadOverview(); // the dashboard activity log follows what happens
       if (n.type === 'community_submitted') {
         api.get('/admin/community-applications').then((d: any) => setCommunityApps(Array.isArray(d) ? d : [])).catch(() => {});
       }
@@ -170,6 +193,34 @@ const AdminDashboard = () => {
       setCnicRejectingId(null); setCnicRejectReason('');
     } catch (err: any) { alertDialog(err.message || 'Rejection failed'); }
   };
+
+  useEffect(() => {
+    if (currentPage !== 'reports') return;
+    api.get(`/admin/reports${reportMonth ? `?month=${reportMonth}` : ''}`).then((d: any) => setReports(d)).catch(() => {});
+  }, [currentPage, reportMonth]);
+
+  const loadOverview = () =>
+    api.get('/admin/overview').then((d: any) => setOverview(d)).catch(() => {});
+
+  const loadSettings = () =>
+    api.get('/admin/settings').then((d: any) => {
+      setSettingsInfo(d);
+      setSettingsForm({ supportEmail: d.supportEmail || '', careFirstAccount: { ...EMPTY_ACCOUNT, ...d.careFirstAccount } });
+    }).catch(() => {});
+
+  const saveSettings = async () => {
+    setSettingsBusy(true); setSettingsMsg(null);
+    try {
+      const d: any = await api.put('/admin/settings', settingsForm);
+      setSettingsInfo(d);
+      setSettingsForm({ supportEmail: d.supportEmail || '', careFirstAccount: { ...EMPTY_ACCOUNT, ...d.careFirstAccount } });
+      setSettingsMsg({ ok: true, text: 'Settings saved. Patients now see this account when they pay the service fee.' });
+    } catch (err: any) {
+      setSettingsMsg({ ok: false, text: err.message || 'Could not save the settings' });
+    } finally { setSettingsBusy(false); }
+  };
+  const setAccountField = (field: string, value: string) =>
+    setSettingsForm(f => ({ ...f, careFirstAccount: { ...f.careFirstAccount, [field]: value } }));
 
   const loadPartnerLabs = () =>
     api.get('/admin/partner-labs').then((d: any) => setPartnerLabs(Array.isArray(d) ? d : [])).catch(() => {});
@@ -519,27 +570,28 @@ const AdminDashboard = () => {
                   <div className="dash-hero-left">
                     <div className="dash-hero-eyebrow">Admin Dashboard</div>
                     <div className="dash-hero-name">CareFirst Platform</div>
-                    <div className="dash-hero-sub">Healthcare management system · All roles active</div>
+                    <div className="dash-hero-sub">
+                      {overview ? `${overview.totals.patient} patients · ${overview.totals.doctor} doctors · ${overview.totals.lab} labs · ${overview.totals.lawyer} lawyers` : 'Loading…'}
+                    </div>
                     <div className="dash-hero-pills">
-                     
                       <div className="dash-hero-pill accent">{registrations.length} Pending Reviews</div>
-                      <div className="dash-hero-pill green">All Systems Operational</div>
+                      <div className="dash-hero-pill green">{pendingPlans.length} Installment Application{pendingPlans.length === 1 ? "" : "s"}</div>
                     </div>
                   </div>
                   <div className="dash-hero-stats">
-                    <div className="dash-hero-stat"><div className="val">8,240</div><div className="lbl">Total Users</div></div>
+                    <div className="dash-hero-stat"><div className="val">{overview?.totals.users ?? '—'}</div><div className="lbl">Total Users</div></div>
                     <div className="dash-hero-divider"></div>
-                    <div className="dash-hero-stat"><div className="val">99.9%</div><div className="lbl">Uptime</div></div>
+                    <div className="dash-hero-stat"><div className="val">{overview?.appointmentsToday ?? '—'}</div><div className="lbl">Appointments Today</div></div>
                     <div className="dash-hero-divider"></div>
-                    <div className="dash-hero-stat"><div className="val">342</div><div className="lbl">Active Today</div></div>
+                    <div className="dash-hero-stat"><div className="val">{overview?.labVisitsToday ?? '—'}</div><div className="lbl">Lab Visits Today</div></div>
                   </div>
                 </div>
               </div>
 
               <div className="dash-stats-grid dash-fu dash-fu-2">
                 {[
-                  { label: 'Total Users',      value: apiUsers.length || '—', icon: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>, trend: 'All registered platform members' },
-                  { label: 'Platform Revenue', value: 'PKR 2.1M',              icon: <><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></>,                                                                                    trend: '+22% vs last month' },
+                  { label: 'Total Users',      value: overview?.totals.users ?? '—', icon: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>, trend: 'All registered platform members' },
+                  { label: 'Open Installment Plans', value: overview?.openPlans ?? '—', icon: <><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></>, trend: 'Active and defaulted plans' },
                   { label: 'Community Cases',  value: `${communityApps.filter(a => a.status === 'pending').length} Pending`, icon: <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>, trend: `${communityApps.length} total applications` },
                   { label: 'Pending Receipts', value: pendingVerifications.length, icon: <><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></>,                                                                                                            trend: 'Awaiting admin verification' },
                 ].map((s, i) => (
@@ -618,22 +670,18 @@ const AdminDashboard = () => {
                   <div className="dash-card-header">
                     <div className="dash-card-title">
                       <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                      System Activity Log
+                      Recent Activity
                     </div>
                   </div>
-                  {[
-                    { color: '#7c3aed', msg: <><strong>Noor Fatima</strong> registered as a patient</>,            time: '2 min ago' },
-                    { color: '#166534', msg: <><strong>REP-089</strong> uploaded by LifeCare Diagnostics</>,      time: '14 min ago' },
-                    { color: '#854d0e', msg: <><strong>APP-035</strong> community support application submitted</>,        time: '32 min ago' },
-                    { color: '#1e40af', msg: <><strong>Dr. Sarah Malik</strong> updated availability</>,          time: '1 hr ago' },
-                    { color: '#7c3aed', msg: <><strong>MedLab Plus</strong> profile sent for review</>,           time: '2 hrs ago' },
-                    { color: '#991b1b', msg: <><strong>APP-034</strong> funding application rejected</>,          time: '3 hrs ago' },
-                    { color: '#166534', msg: <><strong>Omar Farooq</strong> account verified</>,                  time: '4 hrs ago' },
-                  ].map((l, i) => (
+                  {!overview ? (
+                    <div style={{ padding: '16px 20px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>Loading…</div>
+                  ) : overview.activity.length === 0 ? (
+                    <div style={{ padding: '16px 20px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>Nothing has happened yet.</div>
+                  ) : overview.activity.map((l: any, i: number) => (
                     <div className="adm-log-item" key={i}>
-                      <div className="adm-log-dot" style={{ background: l.color }}></div>
-                      <div className="adm-log-body">{l.msg}</div>
-                      <div className="adm-log-time">{l.time}</div>
+                      <div className="adm-log-dot" style={{ background: ACTIVITY_COLORS[l.kind] || '#6b7280' }}></div>
+                      <div className="adm-log-body"><strong>{l.who}</strong> {l.text}</div>
+                      <div className="adm-log-time">{timeAgo(l.at)}</div>
                     </div>
                   ))}
                 </div>
@@ -988,7 +1036,6 @@ const AdminDashboard = () => {
                     <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
                     Partner Labs
                   </div>
-                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>Labs that joined Community Support from their portal and take care of needy patients. CareFirst collects no donations.</div>
                 </div>
                 <div className="dash-table-wrap">
                   <table>
@@ -1056,9 +1103,10 @@ const AdminDashboard = () => {
                             <tr>
                               <td>
                                 <div style={{ fontWeight: 600, color: 'var(--text)' }}>{w.patient?.name || '—'}</div>
-                                <div className="dash-mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                                  {w.patient?.cnic || '—'} {w.patient?.cnicStatus === 'verified' ? '✓' : `(${w.patient?.cnicStatus || 'unverified'})`}
-                                </div>
+                                <div className="dash-mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{w.patient?.cnic || '—'}</div>
+                                <span className={`dash-badge ${w.patient?.cnicStatus === 'verified' ? 'dash-green' : 'dash-amber'}`} style={{ marginTop: 4 }}>
+                                  <span className="dash-badge-dot"></span>{w.patient?.cnicStatus === 'verified' ? 'CNIC verified' : 'CNIC to check'}
+                                </span>
                               </td>
                               <td>
                                 <div style={{ fontWeight: 600 }}>{w.testName}</div>
@@ -1066,21 +1114,25 @@ const AdminDashboard = () => {
                               </td>
                               <td style={{ fontSize: '0.78rem' }}>
                                 <div style={{ fontWeight: 600 }}>{pkr(w.totalAmount)}</div>
-                                <div style={{ color: 'var(--text-sub)' }}>{pkr(w.downPayment?.amount)} down · {w.installmentCount} × every {w.installmentTenureDays} days</div>
+                                <div style={{ color: 'var(--text-sub)', whiteSpace: 'nowrap' }}>{pkr(w.downPayment?.amount)} down</div>
+                                <div style={{ color: 'var(--text-sub)', whiteSpace: 'nowrap' }}>{w.installmentCount} × every {w.installmentTenureDays} days</div>
                               </td>
                               <td style={{ fontSize: '0.78rem' }}>
                                 <div style={{ fontWeight: 600 }}>{w.guarantor?.name} <span style={{ fontWeight: 400, color: 'var(--text-sub)' }}>({w.guarantor?.relation})</span></div>
-                                <div className="dash-mono" style={{ color: 'var(--text-muted)' }}>{w.guarantor?.cnic} · {w.guarantor?.phone}</div>
-                                {w.guarantor?.address && <div style={{ color: 'var(--text-muted)' }}>{w.guarantor.address}</div>}
+                                <div className="dash-mono" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{w.guarantor?.cnic}</div>
+                                <div className="dash-mono" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{w.guarantor?.phone}</div>
+                                {w.guarantor?.address && <div style={{ color: 'var(--text-muted)', maxWidth: 220 }}>{w.guarantor.address}</div>}
                               </td>
-                              <td style={{ fontSize: '0.78rem' }}>{shortDate(w.createdAt)}</td>
+                              <td style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{shortDate(w.createdAt)}</td>
                               <td style={{ textAlign: 'right' }}>
-                                <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                                  <button className="dash-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.72rem' }} onClick={() => setOpenAgreementId(openAgreementId === w._id ? null : w._id)}>
-                                    {openAgreementId === w._id ? 'Hide' : 'CNICs & agreement'}
+                                <div className="adm-action-stack">
+                                  <button className="dash-btn-ghost" onClick={() => setOpenAgreementId(openAgreementId === w._id ? null : w._id)}>
+                                    {openAgreementId === w._id ? 'Hide details' : 'CNICs & agreement'}
                                   </button>
-                                  <button className="adm-approve-btn" onClick={() => approvePlan(w._id)}>Approve</button>
-                                  <button className="adm-reject-btn" onClick={() => { setPlanRejectingId(w._id); setPlanRejectReason(''); }}>Reject</button>
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    <button className="adm-approve-btn" onClick={() => approvePlan(w._id)}>Approve</button>
+                                    <button className="adm-reject-btn" onClick={() => { setPlanRejectingId(w._id); setPlanRejectReason(''); }}>Reject</button>
+                                  </div>
                                 </div>
                               </td>
                             </tr>
@@ -1345,61 +1397,71 @@ const AdminDashboard = () => {
               <div className="dash-page-header dash-fu">
                 <div className="dash-page-title">Platform Reports</div>
                 <div className="dash-page-rule"></div>
-                <div className="dash-page-subtitle">System health, usage analytics, and financial summaries</div>
+                <div className="dash-page-subtitle">What happened on CareFirst each month, counted from the database (Pakistan time)</div>
               </div>
 
-              <div className="dash-stats-grid dash-fu dash-fu-1">
-                {[
-                  { label: 'Appointments (Month)', value: '1,842', color: 'dash-blue' },
-                  { label: 'Tests Processed',       value: '6,210', color: 'dash-green' },
-                  { label: 'Reports Generated',     value: '6,008', color: 'dash-green' },
-                  { label: 'Legal Consultations',   value: '214',   color: 'dash-teal' },
-                ].map((s, i) => (
-                  <div className="dash-stat-card" key={i}>
-                    <div className="dash-stat-label">{s.label}</div>
-                    <div className="dash-stat-value" style={{ marginTop: 8 }}>{s.value}</div>
-                    <div className="dash-progress-wrap" style={{ marginTop: 12 }}>
-                      <div className="dash-progress-fill" style={{ width: `${60 + i * 8}%` }}></div>
+              {(() => {
+                const change = (cur: number, prev: number) =>
+                  prev === 0 ? (cur === 0 ? { text: '—', cls: 'var(--text-muted)' } : { text: 'new', cls: '#166534' })
+                  : { text: `${cur >= prev ? '+' : ''}${Math.round(((cur - prev) / prev) * 100)}%`, cls: cur >= prev ? '#166534' : '#991b1b' };
+                const fmt = (c: any) => c.money ? `PKR ${Number(c.count).toLocaleString()}` : Number(c.count).toLocaleString();
+                if (!reports) return <div className="dash-card" style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)' }}>Loading reports…</div>;
+                return (
+                  <>
+                    <div className="dash-stats-grid dash-fu dash-fu-1">
+                      {reports.cards.map((c: any) => {
+                        const ch = change(c.count, c.previous);
+                        return (
+                          <div className="dash-stat-card" key={c.key}>
+                            <div className="dash-stat-label">{c.label}</div>
+                            <div className="dash-stat-value" style={{ marginTop: 8 }}>{fmt(c)}</div>
+                            <div className="dash-stat-trend">
+                              <span style={{ color: ch.cls, fontWeight: 700 }}>{ch.text}</span>
+                              <span>vs {monthLabel(reports.previousMonth)} ({fmt({ ...c, count: c.previous })})</span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  </div>
-                ))}
-              </div>
 
-              <div className="dash-card dash-fu dash-fu-2">
-                <div className="dash-card-header">
-                  <div className="dash-card-title">
-                    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-                    Monthly Activity Breakdown
-                  </div>
-                  <div className="dash-filter-row">
-                    <select className="dash-filter-select" style={{ height: 30 }}>
-                      <option>April 2024</option>
-                      <option>March 2024</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="dash-table-wrap">
-                  <table>
-                    <thead><tr><th>Metric</th><th>Count</th><th>Revenue</th><th>vs Last Month</th></tr></thead>
-                    <tbody>
-                      {[
-                        { m: 'Patient Registrations', c: '148',       r: '—',         ch: '+18%', up: true },
-                        { m: 'Doctor Consultations',  c: '1,842',     r: 'PKR 3.2M',  ch: '+12%', up: true },
-                        { m: 'Lab Tests Booked',      c: '6,210',     r: 'PKR 7.8M',  ch: '+22%', up: true },
-                        { m: 'Installment Plans',     c: '312',       r: 'PKR 1.4M',  ch: '+8%',  up: true },
-                        { m: 'Legal Consultations',   c: '214',       r: 'PKR 640k',  ch: '-4%',  up: false },
-                      ].map((r, i) => (
-                        <tr key={i}>
-                          <td style={{ fontWeight: 600, color: 'var(--text)' }}>{r.m}</td>
-                          <td>{r.c}</td>
-                          <td>{r.r}</td>
-                          <td style={{ fontWeight: 700, color: r.up ? '#166534' : '#991b1b' }}>{r.ch}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                    <div className="dash-card dash-fu dash-fu-2">
+                      <div className="dash-card-header">
+                        <div className="dash-card-title">
+                          <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                          Monthly Activity — {monthLabel(reports.month)}
+                        </div>
+                        <div className="dash-filter-row">
+                          <select className="dash-filter-select" style={{ height: 30 }} value={reports.month} onChange={e => setReportMonth(e.target.value)}>
+                            {reports.months.map((m: string) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="dash-table-wrap">
+                        <table>
+                          <thead><tr><th>Metric</th><th>{monthLabel(reports.month)}</th><th>{monthLabel(reports.previousMonth)}</th><th>Change</th><th>Details</th></tr></thead>
+                          <tbody>
+                            {reports.rows.map((r: any) => {
+                              const ch = change(r.count, r.previous);
+                              return (
+                                <tr key={r.key}>
+                                  <td style={{ fontWeight: 600, color: 'var(--text)' }}>{r.label}</td>
+                                  <td style={{ fontWeight: 700 }}>{r.count.toLocaleString()}</td>
+                                  <td style={{ color: 'var(--text-sub)' }}>{r.previous.toLocaleString()}</td>
+                                  <td style={{ fontWeight: 700, color: ch.cls }}>{ch.text}</td>
+                                  <td style={{ fontSize: '0.78rem', color: 'var(--text-sub)' }}>{r.details || '—'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{ padding: '12px 20px', fontSize: '0.74rem', color: 'var(--text-muted)', borderTop: '1px solid var(--glass-border)' }}>
+                        CareFirst only receives the service fee; consultation fees and test payments go directly to doctors and labs.
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </section>
 
             {/* ══ SETTINGS ══════════════════════════════════════ */}
@@ -1420,8 +1482,8 @@ const AdminDashboard = () => {
                   </div>
                   <div className="dash-form-group">
                     <label className="dash-form-label">Support Email</label>
-                    <input className="dash-form-input" type="email" value={settings.supportEmail}
-                      onChange={e => setSettings(s => ({ ...s, supportEmail: e.target.value }))} />
+                    <input className="dash-form-input" type="email" value={settingsForm.supportEmail} maxLength={100}
+                      onChange={e => setSettingsForm(f => ({ ...f, supportEmail: e.target.value }))} />
                   </div>
                 </div>
                 <div className="dash-form-row">
@@ -1433,13 +1495,57 @@ const AdminDashboard = () => {
                 </div>
               </div>
 
+              <div className="adm-settings-section dash-fu dash-fu-2">
+                <div className="adm-settings-title">CareFirst Account — Service Fees</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-sub)', margin: '-6px 0 16px', lineHeight: 1.55 }}>
+                  Patients pay the installment-plan service fee into this account and upload a screenshot, which you verify in Wallet Management.
+                  Add a bank account, a JazzCash / EasyPaisa number, or both. {settingsInfo && !settingsInfo.saved && <strong>Not saved yet — patients currently see the details from the server's .env file.</strong>}
+                </div>
+                <div className="dash-form-row">
+                  <div className="dash-form-group">
+                    <label className="dash-form-label">Bank Name</label>
+                    <input className="dash-form-input" placeholder="e.g. Meezan Bank" maxLength={60} value={settingsForm.careFirstAccount.bankName} onChange={e => setAccountField('bankName', e.target.value)} />
+                  </div>
+                  <div className="dash-form-group">
+                    <label className="dash-form-label">Account Title</label>
+                    <input className="dash-form-input" placeholder="Name on the account" maxLength={80} value={settingsForm.careFirstAccount.accountTitle} onChange={e => setAccountField('accountTitle', e.target.value)} />
+                  </div>
+                </div>
+                <div className="dash-form-row">
+                  <div className="dash-form-group">
+                    <label className="dash-form-label">Account Number / IBAN</label>
+                    <input className="dash-form-input" style={{ fontFamily: "ui-monospace, Consolas, monospace" }} placeholder="PK36 MEZN 0001 2345 6789" maxLength={40} value={settingsForm.careFirstAccount.accountNumber} onChange={e => setAccountField('accountNumber', e.target.value)} />
+                  </div>
+                  <div className="dash-form-group"></div>
+                </div>
+                <div className="dash-form-row">
+                  <div className="dash-form-group">
+                    <label className="dash-form-label">JazzCash</label>
+                    <input className="dash-form-input" style={{ fontFamily: "ui-monospace, Consolas, monospace" }} placeholder="0300-1234567" maxLength={20} value={settingsForm.careFirstAccount.jazzCash} onChange={e => setAccountField('jazzCash', e.target.value)} />
+                  </div>
+                  <div className="dash-form-group">
+                    <label className="dash-form-label">EasyPaisa</label>
+                    <input className="dash-form-input" style={{ fontFamily: "ui-monospace, Consolas, monospace" }} placeholder="0345-1234567" maxLength={20} value={settingsForm.careFirstAccount.easyPaisa} onChange={e => setAccountField('easyPaisa', e.target.value)} />
+                  </div>
+                </div>
+                {settingsInfo?.updatedAt && settingsInfo.saved && (
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>Last saved {new Date(settingsInfo.updatedAt).toLocaleString('en-GB')}</div>
+                )}
+              </div>
+
+              {settingsMsg && (
+                <div style={{ padding: '10px 14px', borderRadius: 8, marginBottom: 14, fontSize: '0.82rem',
+                  background: settingsMsg.ok ? '#dcfce7' : '#fee2e2', color: settingsMsg.ok ? '#166534' : '#991b1b' }}>
+                  {settingsMsg.text}
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }} className="dash-fu dash-fu-3">
-                <button className="dash-btn-ghost" onClick={() => setSettings({ ...DEFAULT_SETTINGS })}>
+                <button className="dash-btn-ghost" disabled={settingsBusy} onClick={() => { loadSettings(); setSettingsMsg(null); }}>
                   Discard Changes
                 </button>
-                <button className="dash-btn-primary accent" onClick={() => alertDialog('Settings saved.')}>
+                <button className="dash-btn-primary accent" disabled={settingsBusy} onClick={saveSettings}>
                   <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-                  Save Settings
+                  {settingsBusy ? 'Saving…' : 'Save Settings'}
                 </button>
               </div>
             </section>

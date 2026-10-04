@@ -2160,7 +2160,12 @@ const PatientDashboard = () => {
                         </div>
                       )}
                       <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                        <div style={{ flex: '1 1 260px' }}>{paymentDetails('CareFirst account', careFirstRows(planConfig?.careFirstAccount))}</div>
+                        <div style={{ flex: '1 1 260px' }}>
+                          {paymentDetails('CareFirst account', careFirstRows(planConfig?.careFirstAccount))}
+                          {planConfig?.supportEmail && (
+                            <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 6 }}>Questions? Email {planConfig.supportEmail}</div>
+                          )}
+                        </div>
                         <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
                           {wallet.serviceFee?.receiptUrl && (
                             <span style={{ fontSize: '0.8rem' }}>
