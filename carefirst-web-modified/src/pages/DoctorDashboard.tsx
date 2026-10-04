@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './DoctorDashboard.css';
-import { api, getSession, clearSession } from '../lib/api';
+import { api, getSession, clearSession, downloadSlip } from '../lib/api';
+import { alertDialog } from '../components/Dialog';
 import { getSocket } from '../lib/socket';
 import { ListenButton, UrduText } from '../components/Urdu';
 
@@ -115,6 +116,8 @@ const DoctorDashboard = () => {
     specialization: DUMMY_PROFILE_DATA.specialization,
     experience:     String(DUMMY_PROFILE_DATA.experience),
     bio:            DUMMY_PROFILE_DATA.bio,
+    clinicName:     '',
+    clinicAddress:  '',
   });
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMsg, setProfileMsg]       = useState('');
@@ -138,6 +141,7 @@ const DoctorDashboard = () => {
   const [apptsLoaded, setApptsLoaded]   = useState(false);
   const [myPatients, setMyPatients]     = useState<any[]>([]);
   const [apptFilter, setApptFilter]     = useState<'upcoming' | 'today' | 'past' | 'all'>('upcoming');
+  const [slipQuery, setSlipQuery]       = useState(''); // check a patient's slip number
   const [cancelId, setCancelId]         = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [apptMsg, setApptMsg]           = useState<{ ok: boolean; text: string } | null>(null);
@@ -166,6 +170,8 @@ const DoctorDashboard = () => {
         specialization: d.profile?.specialization || DUMMY_PROFILE_DATA.specialization,
         experience:     String(d.profile?.experience || DUMMY_PROFILE_DATA.experience),
         bio:            d.profile?.bio             || DUMMY_PROFILE_DATA.bio,
+        clinicName:     d.profile?.clinicName      || '',
+        clinicAddress:  d.profile?.clinicAddress   || '',
       });
     }).catch(() => {});
 
@@ -286,6 +292,8 @@ const DoctorDashboard = () => {
         specialization: profileForm.specialization,
         experience:     Number(profileForm.experience),
         bio:            profileForm.bio,
+        clinicName:     profileForm.clinicName.trim(),
+        clinicAddress:  profileForm.clinicAddress.trim(),
       });
       setProfileMsg('Profile updated successfully.');
       api.get('/doctor/profile').then((d: any) => setDocProfile(d)).catch(() => {});
@@ -366,8 +374,11 @@ const DoctorDashboard = () => {
   const started = (a: any) => new Date(a.startsAt).getTime() <= nowMs;
   const todaysAppts = appointments.filter(a => a.date === today && a.status !== 'cancelled');
   const upcomingCount = appointments.filter(a => a.status === 'confirmed' && !started(a)).length;
+  // Slip numbers compare without dashes / spaces / case
+  const slipKey = (v: string) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   const filteredAppts = appointments.filter(a =>
-    apptFilter === 'all'      ? true
+    slipKey(slipQuery)       ? slipKey(a.slipNumber).includes(slipKey(slipQuery))
+    : apptFilter === 'all'      ? true
     : apptFilter === 'today'  ? a.date === today
     : apptFilter === 'upcoming' ? a.status === 'confirmed' && !started(a)
     : started(a) || a.status !== 'confirmed'
@@ -819,6 +830,8 @@ const DoctorDashboard = () => {
                   <div className="doc-page-subtitle">Clinic visits booked by patients — confirmed automatically</div>
                 </div>
                 <div className="doc-filter-row doc-fade-up doc-fade-up-1">
+                  <input className="doc-filter-select" style={{ width: 190 }} type="text" placeholder="Check a slip number…"
+                    value={slipQuery} onChange={e => setSlipQuery(e.target.value)} title="Type the number on the patient's slip to find their appointment" />
                   <select className="doc-filter-select" value={apptFilter} onChange={e => setApptFilter(e.target.value as any)}>
                     <option value="upcoming">Upcoming</option>
                     <option value="today">Today</option>
@@ -845,7 +858,9 @@ const DoctorDashboard = () => {
                         <tr><td colSpan={5} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)' }}>Loading…</td></tr>
                       ) : filteredAppts.length === 0 ? (
                         <tr><td colSpan={5} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
-                          {appointments.length === 0 ? 'No appointments yet. Patients book the free times from your availability.' : 'No appointments in this view.'}
+                          {slipKey(slipQuery)
+                            ? 'None of your appointments has this slip number. Check the number, or the slip may be for another doctor.'
+                            : appointments.length === 0 ? 'No appointments yet. Patients book the free times from your availability.' : 'No appointments in this view.'}
                         </td></tr>
                       ) : filteredAppts.map((a: any) => (
                         <React.Fragment key={a._id}>
@@ -853,6 +868,9 @@ const DoctorDashboard = () => {
                             <td>
                               <div style={{ fontWeight: 600, color: 'var(--text)' }}>{a.date === today ? 'Today' : dayLabel(a.date)}</div>
                               <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{time12(a.time)} · {a.durationMinutes} min</div>
+                              {a.slipNumber && a.status !== 'cancelled' && (
+                                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2, fontFamily: 'ui-monospace, Consolas, monospace' }}>Slip {a.slipNumber}</div>
+                              )}
                             </td>
                             <td>
                               <div style={{ fontWeight: 600, color: 'var(--text)' }}>{a.patient?.name || '—'}</div>
@@ -879,6 +897,10 @@ const DoctorDashboard = () => {
                                 </>}
                                 {['confirmed', 'completed'].includes(a.status) && started(a) && !a.prescription && (
                                   <button className="doc-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.72rem', color: 'var(--red)' }} onClick={() => openPrescribe(a)}>Prescribe</button>
+                                )}
+                                {a.status !== 'cancelled' && (
+                                  <button className="doc-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.72rem' }}
+                                    onClick={() => downloadSlip('appointment', a._id).catch((err: any) => alertDialog(err.message || 'Could not download the slip'))}>Slip (PDF)</button>
                                 )}
                                 {a.status === 'confirmed' && (
                                   <button className="doc-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.72rem' }} onClick={() => { setCancelId(a._id); setCancelReason(''); setApptMsg(null); }}>Cancel</button>
@@ -1120,6 +1142,15 @@ const DoctorDashboard = () => {
                 <div className="doc-form-section">
                   <label className="doc-form-label">Professional Bio</label>
                   <textarea className="doc-form-input doc-form-textarea" placeholder="A short professional bio visible to patients…" value={profileForm.bio} onChange={e => setProfileForm(f => ({ ...f, bio: e.target.value }))}></textarea>
+                </div>
+                <div className="doc-form-section">
+                  <label className="doc-form-label">Clinic Name</label>
+                  <input className="doc-form-input" type="text" maxLength={100} placeholder="e.g. Heart Care Clinic" value={profileForm.clinicName} onChange={e => setProfileForm(f => ({ ...f, clinicName: e.target.value }))} />
+                </div>
+                <div className="doc-form-section">
+                  <label className="doc-form-label">Clinic Address</label>
+                  <input className="doc-form-input" type="text" maxLength={200} placeholder="e.g. 12 College Road, Chiniot" value={profileForm.clinicAddress} onChange={e => setProfileForm(f => ({ ...f, clinicAddress: e.target.value }))} />
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 6 }}>Shown to patients in Find Doctors and printed on their appointment slip.</div>
                 </div>
                 {profileMsg && (
                   <div style={{ padding: '10px 14px', borderRadius: 8, background: profileMsg.includes('success') ? '#dcfce7' : '#fee2e2', color: profileMsg.includes('success') ? '#166534' : '#991b1b', fontSize: '0.82rem' }}>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import './PatientDashboard.css';
-import { api, getSession, saveSession, clearSession, formatCnic } from '../lib/api';
+import { confirmDialog, alertDialog } from '../components/Dialog';
+import { api, getSession, saveSession, clearSession, formatCnic, downloadSlip } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import MapPicker, { currentPosition } from '../components/MapPicker';
 import { ListenButton, UrduText } from '../components/Urdu';
@@ -378,7 +379,7 @@ const PatientDashboard = () => {
   };
 
   const cancelMyAppointment = async (a: any) => {
-    if (!window.confirm(`Cancel your appointment with ${drName(a.doctor?.name)} on ${dayLabel(a.date)} at ${time12(a.time)}?`)) return;
+    if (!(await confirmDialog(`Cancel your appointment with ${drName(a.doctor?.name)} on ${dayLabel(a.date)} at ${time12(a.time)}?`, { danger: true, confirmLabel: 'Cancel appointment', cancelLabel: 'Keep it' }))) return;
     setVisitsMsg(null);
     try {
       const d: any = await api.put(`/patient/appointments/${a._id}/cancel`, {});
@@ -412,7 +413,7 @@ const PatientDashboard = () => {
   };
 
   const cancelLabVisit = async (b: any) => {
-    if (!window.confirm(`Cancel your ${b.testName} visit on ${dayLabel(b.visitDate)}?`)) return;
+    if (!(await confirmDialog(`Cancel your ${b.testName} visit on ${dayLabel(b.visitDate)}?`, { danger: true, confirmLabel: 'Cancel visit', cancelLabel: 'Keep it' }))) return;
     setVisitsMsg(null);
     try {
       const d: any = await api.put(`/patient/lab-bookings/${b._id}/cancel`, {});
@@ -882,6 +883,13 @@ const PatientDashboard = () => {
     </button>
   );
 
+  // PDF slip to show at the clinic / lab
+  const getSlip = (kind: string, id: string) =>
+    downloadSlip(kind, id).catch((err: any) => alertDialog(err.message || 'Could not download the slip'));
+  const slipLine = (n?: string) => n
+    ? <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2, fontFamily: 'ui-monospace, Consolas, monospace' }}>Slip {n}</div>
+    : null;
+
   const smallBtn = (label: string, onClick: () => void, opts: { danger?: boolean; title?: string } = {}) => (
     <button type="button" className="pat-upload-receipt-btn" title={opts.title} onClick={onClick}
       style={opts.danger ? {} : { color: 'var(--text)' }}>
@@ -1298,6 +1306,11 @@ const PatientDashboard = () => {
                       <div style={{ flex: 1 }}>
                         <div className="pat-doc-name">{drName(doc.name)}</div>
                         <div className="pat-doc-spec">{doc.specialization}</div>
+                        {(doc.clinicName || doc.clinicAddress) && (
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                            {[doc.clinicName, doc.clinicAddress].filter(Boolean).join(' · ')}
+                          </div>
+                        )}
                       </div>
                       <div className="pat-doc-rating">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="#d97706" stroke="none">
@@ -1703,10 +1716,12 @@ const PatientDashboard = () => {
                               <td>
                                 <div style={{ fontWeight: 600, color: 'var(--text)' }}>{dayLabel(a.date)}</div>
                                 <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{time12(a.time)} · {a.durationMinutes} min</div>
+                                {a.status !== 'cancelled' && slipLine(a.slipNumber)}
                               </td>
                               <td>
                                 <div style={{ fontWeight: 600, color: 'var(--text)' }}>{drName(a.doctor?.name)}</div>
                                 {a.doctorSpecialization && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{a.doctorSpecialization}</div>}
+                                {a.doctorClinic && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', maxWidth: 220 }}>{a.doctorClinic}</div>}
                               </td>
                               <td>{pkr(a.fee)}<div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>at the clinic</div></td>
                               <td>
@@ -1728,11 +1743,14 @@ const PatientDashboard = () => {
                                   : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                               </td>
                               <td style={{ textAlign: 'right' }}>
-                                {canCancelAppt(a)
-                                  ? smallBtn('Cancel', () => cancelMyAppointment(a), { danger: true })
-                                  : upcoming
-                                    ? <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Within {PATIENT_CANCEL_HOURS} h — call the clinic</span>
-                                    : <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>—</span>}
+                                <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                                  {a.status !== 'cancelled' && smallBtn('Slip (PDF)', () => getSlip('appointment', a._id), { title: 'Download the appointment slip to show at the clinic' })}
+                                  {canCancelAppt(a)
+                                    ? smallBtn('Cancel', () => cancelMyAppointment(a), { danger: true })
+                                    : upcoming
+                                      ? <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Within {PATIENT_CANCEL_HOURS} h — call the clinic</span>
+                                      : a.status === 'cancelled' && <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>—</span>}
+                                </div>
                               </td>
                             </tr>
                           );
@@ -1762,7 +1780,10 @@ const PatientDashboard = () => {
                           const st = LAB_STATUS[b.status] || { label: b.status, cls: 'pat-badge-amber' };
                           return (
                             <tr key={b._id}>
-                              <td style={{ fontWeight: 600, color: 'var(--text)' }}>{b.visitDate === pktToday() ? 'Today' : dayLabel(b.visitDate)}</td>
+                              <td style={{ fontWeight: 600, color: 'var(--text)' }}>
+                                {b.visitDate === pktToday() ? 'Today' : dayLabel(b.visitDate)}
+                                {b.status !== 'cancelled' && slipLine(b.slipNumber)}
+                              </td>
                               <td>
                                 <div style={{ fontWeight: 600, color: 'var(--text)' }}>{b.testName}</div>
                                 <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{b.labName}{b.labLocation ? ` · ${b.labLocation}` : ''}</div>
@@ -1778,9 +1799,12 @@ const PatientDashboard = () => {
                                   : <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>—</span>}
                               </td>
                               <td style={{ textAlign: 'right' }}>
-                                {b.status === 'confirmed' && b.visitDate > pktToday()
-                                  ? smallBtn('Cancel', () => cancelLabVisit(b), { danger: true })
-                                  : <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>—</span>}
+                                <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                                  {b.status !== 'cancelled' && smallBtn('Slip (PDF)', () => getSlip('lab-booking', b._id), { title: 'Download the visit slip to show at the lab' })}
+                                  {b.status === 'confirmed' && b.visitDate > pktToday()
+                                    ? smallBtn('Cancel', () => cancelLabVisit(b), { danger: true })
+                                    : b.status === 'cancelled' && <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>—</span>}
+                                </div>
                               </td>
                             </tr>
                           );
@@ -2466,9 +2490,10 @@ const PatientDashboard = () => {
                           <td style={{ fontSize: '0.78rem', color: 'var(--text-sub)', maxWidth: 280 }}>
                             {a.status === 'approved' && (
                               <>
-                                <div><strong>Slip:</strong> {a.slip?.slipId || '—'}</div>
+                                <div><strong>Slip:</strong> <span style={{ fontFamily: 'ui-monospace, Consolas, monospace' }}>{a.slip?.slipId || '—'}</span></div>
                                 <div><strong>Lab:</strong> {[a.labName, a.labLocation].filter(Boolean).join(' · ')}</div>
-                                <div>{a.testConducted ? `Test conducted on ${fmtDate(a.conductedAt)}` : 'Visit the lab with your Slip ID'}</div>
+                                <div>{a.testConducted ? `Test conducted on ${fmtDate(a.conductedAt)}` : 'Take the slip and your CNIC to the lab'}</div>
+                                <div style={{ marginTop: 6 }}>{smallBtn('Download slip (PDF)', () => getSlip('community', a._id), { title: 'Your approval slip with the documents you sent' })}</div>
                               </>
                             )}
                             {a.status === 'rejected' && (a.rejectionReason || 'Not approved')}

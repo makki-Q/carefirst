@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import './AdminDashboard.css';
-import { api, getSession, clearSession } from '../lib/api';
+import { api, getSession, clearSession, downloadSlip } from '../lib/api';
 import { getSocket } from '../lib/socket';
+import { confirmDialog, alertDialog } from '../components/Dialog';
 import { CnicPictureGallery } from '../components/CnicPictures';
 
 const ROLE_FILTERS = ['All', 'Patients', 'CNIC Review', 'Doctors', 'Labs', 'Lawyers'];
@@ -129,7 +130,7 @@ const AdminDashboard = () => {
       setRegistrations(prev => prev.filter((u: any) => u._id !== userId));
       setAllRegs(prev => prev.map((u: any) => u._id === userId ? { ...u, status: 'active' } : u));
       setApiUsers(prev => prev.map((u: any) => u._id === userId ? { ...u, status: 'active' } : u));
-    } catch (err: any) { alert(err.message || 'Approval failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Approval failed'); }
   };
 
   const rejectReg = async () => {
@@ -140,30 +141,30 @@ const AdminDashboard = () => {
       setAllRegs(prev => prev.map((u: any) => u._id === rejectingId ? { ...u, status: 'rejected' } : u));
       setApiUsers(prev => prev.map((u: any) => u._id === rejectingId ? { ...u, status: 'rejected' } : u));
       setRejectingId(null); setRejectReason('');
-    } catch (err: any) { alert(err.message || 'Rejection failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Rejection failed'); }
   };
 
   const suspendUser = async (id: string) => {
-    if (!window.confirm('Suspend this user? They will be unable to log in.')) return;
+    if (!(await confirmDialog('Suspend this user? They will be unable to log in.', { danger: true, confirmLabel: 'Suspend' }))) return;
     try {
       await api.put(`/admin/users/${id}/suspend`, {});
       setApiUsers(prev => prev.map((u: any) => u._id === id ? { ...u, status: 'suspended' } : u));
-    } catch (err: any) { alert(err.message || 'Failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Failed'); }
   };
 
   const activateUser = async (id: string) => {
     try {
       await api.put(`/admin/users/${id}/activate`, {});
       setApiUsers(prev => prev.map((u: any) => u._id === id ? { ...u, status: 'active' } : u));
-    } catch (err: any) { alert(err.message || 'Failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Failed'); }
   };
 
   const verifyCnic = async (userId: string) => {
-    if (!window.confirm('Mark this patient\'s CNIC as verified?')) return;
+    if (!(await confirmDialog('Mark this patient\'s CNIC as verified?'))) return;
     try {
       const d: any = await api.put(`/admin/patients/${userId}/cnic/verify`, {});
       setApiUsers(prev => prev.map((u: any) => u._id === userId ? { ...u, profile: d.profile } : u));
-    } catch (err: any) { alert(err.message || 'Verification failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Verification failed'); }
   };
 
   const rejectCnic = async () => {
@@ -172,19 +173,19 @@ const AdminDashboard = () => {
       const d: any = await api.put(`/admin/patients/${cnicRejectingId}/cnic/reject`, { reason: cnicRejectReason.trim() });
       setApiUsers(prev => prev.map((u: any) => u._id === cnicRejectingId ? { ...u, profile: d.profile } : u));
       setCnicRejectingId(null); setCnicRejectReason('');
-    } catch (err: any) { alert(err.message || 'Rejection failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Rejection failed'); }
   };
 
   const approveCommunity = async (appId: string) => {
-    if (!selectedLabId) { alert('Please select a lab first.'); return; }
+    if (!selectedLabId) { alertDialog('Please select a lab first.'); return; }
     try {
-      await api.put(`/admin/community-applications/${appId}/approve`, { assignedLabId: selectedLabId });
+      const d: any = await api.put(`/admin/community-applications/${appId}/approve`, { assignedLabId: selectedLabId });
       setCommunityApps(prev => prev.map((a: any) => a._id === appId
-        ? { ...a, status: 'approved', assignedLab: activeLabs.find((l: any) => l._id === selectedLabId) }
+        ? { ...a, status: 'approved', slip: d.application?.slip, assignedLab: activeLabs.find((l: any) => l._id === selectedLabId) }
         : a
       ));
       setApprovingApp(null); setSelectedLabId('');
-    } catch (err: any) { alert(err.message || 'Approval failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Approval failed'); }
   };
 
   const rejectCommunity = async (appId: string) => {
@@ -192,54 +193,54 @@ const AdminDashboard = () => {
       await api.put(`/admin/community-applications/${appId}/reject`, { reason: appRejectReason.trim() || 'Application rejected.' });
       setCommunityApps(prev => prev.map((a: any) => a._id === appId ? { ...a, status: 'rejected' } : a));
       setRejectingApp(null); setAppRejectReason('');
-    } catch (err: any) { alert(err.message || 'Rejection failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Rejection failed'); }
   };
 
   const replaceWallet = (w: any) => setWallets(prev => prev.map((x: any) => x._id === w._id ? w : x));
 
   // path: `installments/<index>` or `down-payment`
   const adminVerifyPayment = async (walletId: string, path: string, label: string) => {
-    if (!window.confirm(`Verify the ${label} payment? This marks it as paid.`)) return;
+    if (!(await confirmDialog(`Verify the ${label} payment? This marks it as paid.`))) return;
     try {
       const d: any = await api.put(`/admin/wallets/${walletId}/${path}/verify`, {});
       replaceWallet(d.wallet);
-    } catch (err: any) { alert(err.message || 'Verification failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Verification failed'); }
   };
 
   const approvePlan = async (walletId: string) => {
-    if (!window.confirm("Approve this installment plan? Only approve if the CNIC pictures match the details. This also verifies the patient's CNIC, and the patient will be asked to pay the service fee.")) return;
+    if (!(await confirmDialog("Approve this installment plan? Only approve if the CNIC pictures match the details. This also verifies the patient's CNIC, and the patient will be asked to pay the service fee.", { confirmLabel: 'Approve plan' }))) return;
     try {
       const d: any = await api.put(`/admin/wallets/${walletId}/approve`, {});
       replaceWallet(d.wallet);
-    } catch (err: any) { alert(err.message || 'Approval failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Approval failed'); }
   };
 
   const rejectPlan = async () => {
     if (!planRejectingId) return;
-    if (!planRejectReason.trim()) { alert('Please enter a reason — it is sent to the patient.'); return; }
+    if (!planRejectReason.trim()) { alertDialog('Please enter a reason — it is sent to the patient.'); return; }
     try {
       const d: any = await api.put(`/admin/wallets/${planRejectingId}/reject`, { reason: planRejectReason.trim() });
       replaceWallet(d.wallet);
       setPlanRejectingId(null); setPlanRejectReason('');
-    } catch (err: any) { alert(err.message || 'Rejection failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Rejection failed'); }
   };
 
   const verifyServiceFee = async (walletId: string) => {
-    if (!window.confirm('Confirm CareFirst received this service fee? The plan becomes active and the installment schedule is generated.')) return;
+    if (!(await confirmDialog('Confirm CareFirst received this service fee? The plan becomes active and the installment schedule is generated.', { confirmLabel: 'Verify & activate' }))) return;
     try {
       const d: any = await api.put(`/admin/wallets/${walletId}/service-fee/verify`, {});
       replaceWallet(d.wallet);
-    } catch (err: any) { alert(err.message || 'Verification failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Verification failed'); }
   };
 
   const rejectServiceFee = async () => {
     if (!feeRejectingId) return;
-    if (!feeRejectReason.trim()) { alert('Please enter a reason — it is sent to the patient.'); return; }
+    if (!feeRejectReason.trim()) { alertDialog('Please enter a reason — it is sent to the patient.'); return; }
     try {
       const d: any = await api.put(`/admin/wallets/${feeRejectingId}/service-fee/reject`, { reason: feeRejectReason.trim() });
       replaceWallet(d.wallet);
       setFeeRejectingId(null); setFeeRejectReason('');
-    } catch (err: any) { alert(err.message || 'Rejection failed'); }
+    } catch (err: any) { alertDialog(err.message || 'Rejection failed'); }
   };
 
   // ── Navigation ────────────────────────────────────────────────────────────────
@@ -929,6 +930,12 @@ const AdminDashboard = () => {
                                     Reject
                                   </button>
                                 </div>
+                              ) : a.status === 'approved' && a.slip?.slipId ? (
+                                <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                                  <span className="dash-mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Slip {a.slip.slipId}</span>
+                                  <button className="dash-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.72rem' }}
+                                    onClick={() => downloadSlip('community', a._id).catch((err: any) => alertDialog(err.message || 'Could not download the slip'))}>Slip (PDF)</button>
+                                </div>
                               ) : (
                                 <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Decision made</span>
                               )}
@@ -1419,7 +1426,7 @@ const AdminDashboard = () => {
                 <button className="dash-btn-ghost" onClick={() => setSettings({ ...DEFAULT_SETTINGS })}>
                   Discard Changes
                 </button>
-                <button className="dash-btn-primary accent" onClick={() => alert('Settings saved.')}>
+                <button className="dash-btn-primary accent" onClick={() => alertDialog('Settings saved.')}>
                   <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
                   Save Settings
                 </button>

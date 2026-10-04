@@ -32,6 +32,29 @@ export const api = {
   upload: (path, form)   => request('POST',   path, form, true),
 };
 
+// Downloads a file the server sends only to signed-in users (e.g. a PDF slip)
+export const downloadFile = async (path, fallbackName = 'download') => {
+  const res = await fetch(`${BASE}${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const err = new Error(data.message || `Download failed (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '')?.[1] || fallbackName;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+};
+
+// PDF slip for an appointment, a lab visit or an approved community application
+export const downloadSlip = (kind, id) => downloadFile(`/documents/slips/${kind}/${id}`, 'CareFirst-slip.pdf');
+
 // Pakistani CNIC → "#####-#######-#", or null if it isn't 13 digits
 export const formatCnic = (value) => {
   const digits = String(value || '').replace(/[\s-]/g, '');

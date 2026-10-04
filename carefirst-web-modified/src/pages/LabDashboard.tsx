@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import './LabDashboard.css';
-import { api, getSession, clearSession } from '../lib/api';
+import { api, getSession, clearSession, downloadSlip } from '../lib/api';
 import { getSocket } from '../lib/socket';
+import { confirmDialog, alertDialog } from '../components/Dialog';
 import MapPicker, { currentPosition } from '../components/MapPicker';
 import { ListenButton, UrduText } from '../components/Urdu';
 
@@ -36,6 +37,7 @@ const LabDashboard = () => {
   const [bookings, setBookings]       = useState<any[]>([]);
   const [bookingsLoaded, setBookingsLoaded] = useState(false);
   const [bookingFilter, setBookingFilter]   = useState<'open' | 'today' | 'upcoming' | 'all'>('open');
+  const [slipQuery, setSlipQuery]           = useState(''); // check a patient's slip number
   const [bookingMsg, setBookingMsg]   = useState<{ ok: boolean; text: string } | null>(null);
   const [uploadBookingId, setUploadBookingId] = useState('');
 
@@ -195,7 +197,7 @@ const LabDashboard = () => {
   };
 
   const deleteTest = async (id: string) => {
-    if (!window.confirm('Delete this test from your catalog?')) return;
+    if (!(await confirmDialog('Delete this test from your catalog?', { danger: true, confirmLabel: 'Delete test' }))) return;
     try {
       await (api as any).delete(`/lab/tests/${id}`);
       setTests(prev => prev.filter((t: any) => t._id !== id));
@@ -265,6 +267,9 @@ const LabDashboard = () => {
     }
   };
 
+  const getSlip = (kind: string, id: string) =>
+    downloadSlip(kind, id).catch((err: any) => alertDialog(err.message || 'Could not download the slip'));
+
   // action: 'sample-collected' | 'complete'
   const advanceBooking = async (b: any, action: 'sample-collected' | 'complete') => {
     setBookingMsg(null);
@@ -284,7 +289,7 @@ const LabDashboard = () => {
     try {
       await api.put(`/lab/receipts/${walletId}/${path}/approve`, {});
       api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
-    } catch (err: any) { alert(err.message || 'Could not confirm the receipt'); }
+    } catch (err: any) { alertDialog(err.message || 'Could not confirm the receipt'); }
   };
 
   const useLabPosition = async () => {
@@ -363,8 +368,11 @@ const LabDashboard = () => {
   const openBookings   = bookings.filter((b: any) => ['confirmed', 'sample_collected'].includes(b.status));
   const visitsToday    = bookings.filter((b: any) => b.visitDate === today && b.status !== 'cancelled');
   const awaitingReport = bookings.filter((b: any) => b.status === 'sample_collected' && !b.report);
+  // Slip numbers compare without dashes / spaces / case ("lb 7kq4m9xd" finds LB-7KQ4-M9XD)
+  const slipKey = (v: string) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   const filteredBookings = bookings.filter((b: any) =>
-    bookingFilter === 'all'      ? true
+    slipKey(slipQuery)           ? slipKey(b.slipNumber).includes(slipKey(slipQuery))
+    : bookingFilter === 'all'      ? true
     : bookingFilter === 'today'  ? b.visitDate === today
     : bookingFilter === 'upcoming' ? b.visitDate > today && b.status === 'confirmed'
     : ['confirmed', 'sample_collected'].includes(b.status)
@@ -633,6 +641,8 @@ const LabDashboard = () => {
                   <div className="dash-page-subtitle">Patients' lab visits — collect the sample, then upload the report to complete the booking</div>
                 </div>
                 <div className="dash-filter-row dash-fu-1">
+                  <input className="dash-filter-select" style={{ width: 190 }} type="text" placeholder="Check a slip number…"
+                    value={slipQuery} onChange={e => setSlipQuery(e.target.value)} title="Type the number on the patient's slip to find their booking" />
                   <select className="dash-filter-select" value={bookingFilter} onChange={e => setBookingFilter(e.target.value as any)}>
                     <option value="open">Open</option>
                     <option value="today">Visiting today</option>
@@ -659,13 +669,18 @@ const LabDashboard = () => {
                         <tr><td colSpan={6} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)' }}>Loading…</td></tr>
                       ) : filteredBookings.length === 0 ? (
                         <tr><td colSpan={6} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
-                          {bookings.length === 0 ? 'No bookings yet. Patients book visits from Book Tests.' : 'No bookings in this view.'}
+                          {slipKey(slipQuery)
+                            ? 'No booking at your lab has this slip number. Check the number, or the slip may be for another lab.'
+                            : bookings.length === 0 ? 'No bookings yet. Patients book visits from Book Tests.' : 'No bookings in this view.'}
                         </td></tr>
                       ) : filteredBookings.map((b: any) => {
                         const st = BOOKING_STATUS[b.status] || { label: b.status, cls: 'dash-gray' };
                         return (
                           <tr key={b._id}>
-                            <td style={{ fontWeight: 600, color: 'var(--text)' }}>{b.visitDate === today ? 'Today' : dayLabel(b.visitDate)}</td>
+                            <td style={{ fontWeight: 600, color: 'var(--text)' }}>
+                              {b.visitDate === today ? 'Today' : dayLabel(b.visitDate)}
+                              {b.slipNumber && <div className="dash-mono" style={{ fontSize: '0.68rem', fontWeight: 400, color: 'var(--text-muted)', marginTop: 2 }}>Slip {b.slipNumber}</div>}
+                            </td>
                             <td>
                               <div style={{ fontWeight: 600, color: 'var(--text)' }}>{b.patient?.name || '—'}</div>
                               <div className="dash-mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{[b.patient?.cnic, b.patient?.phone].filter(Boolean).join(' · ')}</div>
@@ -691,7 +706,10 @@ const LabDashboard = () => {
                                 {b.status === 'sample_collected' && (
                                   <button className="dash-btn-ghost" style={{ padding: '5px 10px', fontSize: '0.74rem' }} onClick={() => advanceBooking(b, 'complete')}>Mark completed</button>
                                 )}
-                                {['completed', 'cancelled'].includes(b.status) && <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>—</span>}
+                                {b.status !== 'cancelled' && (
+                                  <button className="dash-btn-ghost" style={{ padding: '5px 10px', fontSize: '0.74rem' }} onClick={() => getSlip('lab-booking', b._id)}>Slip (PDF)</button>
+                                )}
+                                {b.status === 'cancelled' && <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>—</span>}
                               </div>
                             </td>
                           </tr>
@@ -1175,10 +1193,15 @@ const LabDashboard = () => {
                       </div>
                       <div className="lab-needy-slip-row">
                         <div className="lab-needy-slip-block">
-                          <div className="lab-needy-slip-id">Slip ID: {p.slip?.slipId || '—'} · Case: {p._id?.toString().slice(-6).toUpperCase()}</div>
+                          <div className="lab-needy-slip-id">Slip: {p.slip?.slipId || '—'} · Case: {p._id?.toString().slice(-6).toUpperCase()}</div>
                           <div className="lab-needy-stamp">Background Check Assured</div>
                           <div className="lab-needy-approved">Admin approved: {p.reviewedAt ? new Date(p.reviewedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</div>
                         </div>
+                        {p.slip?.slipId && (
+                          <button className="dash-btn-ghost" style={{ padding: '5px 10px', fontSize: '0.74rem', marginTop: 8 }} onClick={() => getSlip('community', p._id)}>
+                            Slip + documents (PDF)
+                          </button>
+                        )}
                       </div>
                       {!conducted && (
                         <button className="dash-btn-primary accent" style={{ width: '100%', justifyContent: 'center', marginTop: 14 }} onClick={() => markConducted(p._id)}>
