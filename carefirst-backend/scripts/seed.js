@@ -360,7 +360,16 @@ const seed = async () => {
     notes: 'Sample collected 9:30 AM',
     summary: 'Your blood count is mostly normal. Haemoglobin is slightly low, so please discuss iron-rich food or supplements with your doctor.',
     summaryUrdu: 'آپ کے خون کا ٹیسٹ زیادہ تر نارمل ہے۔ ہیموگلوبن تھوڑا کم ہے، اس لیے آئرن والی غذا یا سپلیمنٹ کے بارے میں اپنے ڈاکٹر سے مشورہ کریں۔',
-    summaryUrduSource: 'lab', summaryUrduEditedAt: daysAgo(5),
+    summaryUrduSource: 'lab', summaryUrduEditedAt: daysAgo(5), summarySource: 'lab',
+    // What the automatic reader found in the file (decision 9)
+    autoRead: {
+      status: 'ready', kind: 'table', pages: 1, totalPages: 1, readAt: daysAgo(5),
+      findings: [
+        { name: 'Haemoglobin', result: '11.2', unit: 'g/dL', range: '12 - 16', normalLow: 12, normalHigh: 16, status: 'low', basis: 'range' },
+        { name: 'WBC', result: '7,400', unit: '/uL', range: '4,000 - 11,000', normalLow: 4000, normalHigh: 11000, status: 'normal', basis: 'range' },
+        { name: 'Platelets', result: '250,000', unit: '/uL', range: '150,000 - 400,000', normalLow: 150000, normalHigh: 400000, status: 'normal', basis: 'range' },
+      ],
+    },
   });
   ayeshaBooking.report = ayeshaReport._id;
   await ayeshaBooking.save();
