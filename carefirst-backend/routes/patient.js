@@ -3,7 +3,7 @@ const router  = express.Router();
 const {
   getProfile, updateProfile,
   getPrescriptions,
-  getReports, markReportRead,
+  getReports, markReportRead, getReportDoctors, shareReport, unshareReport,
   getWallets, uploadPaymentReceipt, uploadServiceFeeReceipt,
   getInstallmentConfig, previewInstallmentPlan, applyForInstallmentPlan,
   getAppointments, bookAppointment, cancelAppointment,
@@ -26,6 +26,10 @@ router.get('/prescriptions', ...guard, getPrescriptions);
 // Test reports uploaded by labs
 router.get('/reports',           ...guard, getReports);
 router.put('/reports/:id/read',  ...guard, markReportRead);
+// Sharing a report with a doctor the patient visited or booked (decision 13)
+router.get('/report-doctors',                     ...guard, getReportDoctors);
+router.put('/reports/:id/share',                  ...guard, shareReport);
+router.delete('/reports/:id/share/:doctorId',     ...guard, unshareReport);
 
 // Digital wallet (installment ledger)
 router.get('/wallets', ...guard, getWallets);

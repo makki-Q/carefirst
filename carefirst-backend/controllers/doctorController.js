@@ -283,15 +283,10 @@ const getNotifications = async (req, res) => {
 };
 
 // ─── GET /api/doctor/reports ──────────────────────────────────────────────────
-// Returns all lab test reports for patients this doctor has prescribed for
+// Lab reports patients shared with this doctor (decision 13), newest first
 const getReports = async (req, res) => {
   try {
-    const prescriptions = await Prescription.find({ doctor: req.user._id }).select('patient');
-    const patientIds = [...new Set(prescriptions.map(p => p.patient.toString()))];
-
-    if (patientIds.length === 0) return res.json([]);
-
-    const reports = await TestReport.find({ patient: { $in: patientIds } })
+    const reports = await TestReport.find({ 'sharedWith.doctor': req.user._id })
       .populate('patient', 'name email phone')
       .populate('lab', 'name')
       .sort({ createdAt: -1 });
@@ -301,10 +296,14 @@ const getReports = async (req, res) => {
     const labNameMap = {};
     labProfiles.forEach(lp => { labNameMap[lp.user.toString()] = lp.labName; });
 
-    const enriched = reports.map(r => ({
-      ...r.toObject(),
-      labName: r.lab?._id ? (labNameMap[r.lab._id.toString()] || r.lab.name) : '—',
-    }));
+    const enriched = reports.map(r => {
+      const { sharedWith, ...obj } = r.toObject(); // the doctor sees when it was shared with them, not with whom else
+      return {
+        ...obj,
+        labName: r.lab?._id ? (labNameMap[r.lab._id.toString()] || r.lab.name) : '—',
+        sharedAt: sharedWith.find(s => s.doctor.toString() === req.user._id.toString())?.sharedAt,
+      };
+    });
 
     res.json(enriched);
   } catch (err) {

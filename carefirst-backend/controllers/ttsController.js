@@ -2,7 +2,6 @@ const mongoose      = require('mongoose');
 const Wallet        = require('../models/Wallet');
 const TestReport    = require('../models/TestReport');
 const DefaulterCase = require('../models/DefaulterCase');
-const Prescription  = require('../models/Prescription');
 const { urduAudioFile, speechConfigured, translatorConfigured } = require('../utils/azure');
 const { VOICES, DEFAULT_VOICE } = require('../config/azure');
 const { buildPlanApplication } = require('./patientController');
@@ -23,13 +22,13 @@ const agreementText = async (user, id) => {
 
 // Urdu summary of a report the user may see, or null
 const reportText = async (user, id) => {
-  const report = await TestReport.findById(id).select('patient lab summaryUrdu');
+  const report = await TestReport.findById(id).select('patient lab summaryUrdu sharedWith');
   if (!report) return null;
   const allowed =
     user.role === 'admin' ||
     (user.role === 'patient' && same(report.patient, user._id)) ||
     (user.role === 'lab' && same(report.lab, user._id)) ||
-    (user.role === 'doctor' && await Prescription.exists({ doctor: user._id, patient: report.patient }));
+    (user.role === 'doctor' && report.sharedWith.some(s => same(s.doctor, user._id)));
   return allowed ? { text: report.summaryUrdu || '' } : null;
 };
 

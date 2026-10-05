@@ -249,8 +249,82 @@ const getReports = async (req, res) => {
   try {
     const reports = await TestReport.find({ patient: req.user._id })
       .populate('lab', 'name')
+      .populate('sharedWith.doctor', 'name')
       .sort({ createdAt: -1 });
     res.json(await withLabInfo(reports, 'lab'));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Doctors a patient may share reports with: visited (completed) or booked (confirmed) — decision 13
+const SHARE_APPOINTMENT_STATUSES = ['confirmed', 'completed'];
+const shareableDoctorIds = async (patientId) =>
+  (await Appointment.distinct('doctor', { patient: patientId, status: { $in: SHARE_APPOINTMENT_STATUSES } })).map(String);
+
+// ─── GET /api/patient/report-doctors ─────────────────────────────────────────
+// → [{ doctorId, name, specialization }]
+const getReportDoctors = async (req, res) => {
+  try {
+    const ids = await shareableDoctorIds(req.user._id);
+    const [users, profiles] = await Promise.all([
+      User.find({ _id: { $in: ids } }).select('name'),
+      DoctorProfile.find({ user: { $in: ids } }).select('user specialization'),
+    ]);
+    const spec = Object.fromEntries(profiles.map(p => [p.user.toString(), p.specialization || '']));
+    res.json(users
+      .map(u => ({ doctorId: u._id, name: u.name, specialization: spec[u._id.toString()] || '' }))
+      .sort((a, b) => a.name.localeCompare(b.name)));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PUT /api/patient/reports/:id/share ──────────────────────────────────────
+// Body: { doctorId } — the doctor can then see the report and its summary; they are notified
+const shareReport = async (req, res) => {
+  try {
+    const { doctorId } = req.body;
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Report not found' });
+    const report = await TestReport.findOne({ _id: req.params.id, patient: req.user._id });
+    if (!report) return res.status(404).json({ message: 'Report not found' });
+    if (!mongoose.isValidObjectId(doctorId) || !(await shareableDoctorIds(req.user._id)).includes(String(doctorId))) {
+      return res.status(400).json({ message: 'You can share reports only with doctors you have visited or booked' });
+    }
+    const doctor = await User.findById(doctorId).select('name');
+    const already = report.sharedWith.some(s => same(s.doctor, doctorId));
+    if (!already) {
+      report.sharedWith.push({ doctor: doctorId, sharedAt: new Date() });
+      await report.save();
+      await notifyUser(doctorId, {
+        type: 'report_shared',
+        title: 'Report Shared With You',
+        message: `${req.user.name} shared their ${report.testName} report with you. Open Patient Reports to see it.`,
+        meta: { reportId: report._id, patientId: req.user._id },
+      });
+    }
+    await report.populate('sharedWith.doctor', 'name');
+    res.json({
+      message: already ? `Already shared with ${doctor?.name || 'this doctor'}` : `Shared with ${doctor?.name || 'the doctor'}`,
+      sharedWith: report.sharedWith,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── DELETE /api/patient/reports/:id/share/:doctorId ─────────────────────────
+// Stop sharing: the doctor no longer sees the report (or hears its summary)
+const unshareReport = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Report not found' });
+    const report = await TestReport.findOne({ _id: req.params.id, patient: req.user._id });
+    if (!report) return res.status(404).json({ message: 'Report not found' });
+    const before = report.sharedWith.length;
+    report.sharedWith = report.sharedWith.filter(s => !same(s.doctor, req.params.doctorId));
+    if (report.sharedWith.length !== before) await report.save();
+    await report.populate('sharedWith.doctor', 'name');
+    res.json({ message: 'Stopped sharing this report', sharedWith: report.sharedWith });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -880,7 +954,7 @@ const markAllRead = async (req, res) => {
 module.exports = {
   getProfile, updateProfile,
   getPrescriptions,
-  getReports, markReportRead,
+  getReports, markReportRead, getReportDoctors, shareReport, unshareReport,
   getWallets, uploadPaymentReceipt, uploadServiceFeeReceipt,
   getInstallmentConfig, previewInstallmentPlan, applyForInstallmentPlan,
   getAppointments, bookAppointment, cancelAppointment,

@@ -396,6 +396,7 @@ const seed = async () => {
     summary: 'Your blood count is mostly normal. Haemoglobin is slightly low, so please discuss iron-rich food or supplements with your doctor.',
     summaryUrdu: 'آپ کے خون کا ٹیسٹ زیادہ تر نارمل ہے۔ ہیموگلوبن تھوڑا کم ہے، اس لیے آئرن والی غذا یا سپلیمنٹ کے بارے میں اپنے ڈاکٹر سے مشورہ کریں۔',
     summaryUrduSource: 'lab', summaryUrduEditedAt: daysAgo(5), summarySource: 'lab',
+    sharedWith: [{ doctor: users.sara._id, sharedAt: daysAgo(4) }], // Ayesha shared it with Dr. Sara (decision 13)
     // What the automatic reader found in the file (decision 9)
     autoRead: {
       status: 'ready', kind: 'table', pages: 1, totalPages: 1, readAt: daysAgo(5),
@@ -454,7 +455,7 @@ const seed = async () => {
   console.log(`\nSeeded "${dbName}". Password for every demo account: ${PASSWORD}`);
   console.log(`Admin: log in with username "${process.env.ADMIN_USERNAME || 'admin'}" and ADMIN_PASSWORD from .env\n`);
   row('PATIENTS', '', '');
-  row('Ayesha Khan', 'ayesha@carefirst.test', 'clean start: prescription (CBC, MRI) → Find labs, True Cost, apply, book; report with Urdu summary');
+  row('Ayesha Khan', 'ayesha@carefirst.test', 'clean start: prescription (CBC, MRI) → Find labs, True Cost, apply, book; report with Urdu summary, shared with Dr. Sara');
   row('Bilal Ahmed', 'bilal@carefirst.test', 'CNIC unverified (admin verifies); appointment with Dr. Sara in progress');
   row('Sana Javed', 'sana@carefirst.test', 'CNIC rejected — correct it in Profile');
   row('Usman Tariq', 'usman@carefirst.test', 'installment application under review (CNIC not verified yet: approving it verifies the CNIC); appointment tomorrow');

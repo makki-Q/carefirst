@@ -369,6 +369,7 @@ const testLabAndDoctor = async () => {
     files: { report: ['cbc.png'] },
   });
   check('lab uploads a report', report.status === 201 && report.data.reportUrl?.startsWith(`${BASE}/uploads/reports/`), report);
+  ids.firstReport = report.data._id;
 
   const reports = await get('/api/patient/reports', { token: tokens.patient });
   check('patient sees report with lab name', reports.data[0]?.labName === users.lab.labName, reports.data);
@@ -519,8 +520,35 @@ const testAppointments = async () => {
   const apptWithRx = (await get('/api/patient/appointments', { token: tokens.patient })).data.find(a => a._id === ids.apptDone);
   check("the appointment shows the prescription written in it", apptWithRx?.prescription?.tests?.[0]?.testName === 'MRI Brain', apptWithRx);
 
+  // ── Sharing reports with doctors (decision 13): a doctor sees only what the patient shared ──
   const docReports = await get('/api/doctor/reports', { token: tokens.doctor });
-  check('doctor sees reports of patients they prescribed for', docReports.data.length === 1, docReports.data);
+  check('a doctor sees no report until the patient shares it — even after prescribing', docReports.status === 200 && docReports.data.length === 0, docReports.data);
+  const shareDocs = await get('/api/patient/report-doctors', { token: tokens.patient });
+  check('the patient can share with the doctor they visited',
+    shareDocs.status === 200 && shareDocs.data.length === 1 && shareDocs.data[0].doctorId === ids.doctor && shareDocs.data[0].specialization === 'Cardiology', shareDocs.data);
+  check('not with a doctor they never booked (400)',
+    (await put(`/api/patient/reports/${ids.firstReport}/share`, { token: tokens.patient, body: { doctorId: ids.patient2 } })).status === 400);
+  check('not with an invalid doctor id (400)',
+    (await put(`/api/patient/reports/${ids.firstReport}/share`, { token: tokens.patient, body: { doctorId: 'nope' } })).status === 400);
+  check("another patient cannot share this patient's report (404)",
+    (await put(`/api/patient/reports/${ids.firstReport}/share`, { token: tokens.patient2, body: { doctorId: ids.doctor } })).status === 404);
+
+  const notifsBefore = (await get('/api/doctor/notifications', { token: tokens.doctor })).data.filter(n => n.type === 'report_shared').length;
+  const shared = await put(`/api/patient/reports/${ids.firstReport}/share`, { token: tokens.patient, body: { doctorId: ids.doctor } });
+  check('patient shares a report with their doctor',
+    shared.status === 200 && shared.data.sharedWith.length === 1 && shared.data.sharedWith[0].doctor.name === users.doctor.name, shared.data);
+  const again = await put(`/api/patient/reports/${ids.firstReport}/share`, { token: tokens.patient, body: { doctorId: ids.doctor } });
+  check('sharing twice keeps one entry', again.status === 200 && again.data.sharedWith.length === 1 && /Already shared/.test(again.data.message), again.data);
+  const shareNotifs = (await get('/api/doctor/notifications', { token: tokens.doctor })).data.filter(n => n.type === 'report_shared');
+  check('the doctor is notified once', shareNotifs.length === notifsBefore + 1 && shareNotifs[0].message.includes('CBC report'), shareNotifs);
+  const docSees = (await get('/api/doctor/reports', { token: tokens.doctor })).data;
+  check('the doctor now sees that report (with when it was shared, not with whom else)',
+    docSees.length === 1 && docSees[0]._id === ids.firstReport && docSees[0].sharedAt && docSees[0].sharedWith === undefined && docSees[0].patient?.name, docSees);
+  const mine = (await get('/api/patient/reports', { token: tokens.patient })).data.find(r => r._id === ids.firstReport);
+  check('the patient sees who the report is shared with', mine?.sharedWith?.[0]?.doctor?.name === users.doctor.name, mine?.sharedWith);
+  const stop = await del(`/api/patient/reports/${ids.firstReport}/share/${ids.doctor}`, { token: tokens.patient });
+  check('patient stops sharing', stop.status === 200 && stop.data.sharedWith.length === 0, stop.data);
+  check('the doctor no longer sees it', (await get('/api/doctor/reports', { token: tokens.doctor })).data.length === 0);
 };
 
 const testCommunitySupport = async () => {
@@ -1159,7 +1187,9 @@ const testUrdu = async () => {
   check("another patient cannot hear this patient's report (404)", (await speak(tokens.patient2, { source: 'report', id: ids.urduReport })).status === 404);
   check('the lab that uploaded it can listen', (await speak(tokens.lab, { source: 'report', id: ids.urduReport })).status === 200);
   check('another lab cannot (404)', (await speak(tokens.lab2, { source: 'report', id: ids.urduReport })).status === 404);
-  check("the patient's doctor can listen", (await speak(tokens.doctor, { source: 'report', id: ids.urduReport })).status === 200);
+  check('a doctor the report is not shared with cannot listen (404)', (await speak(tokens.doctor, { source: 'report', id: ids.urduReport })).status === 404);
+  await put(`/api/patient/reports/${ids.urduReport}/share`, { token: tokens.patient, body: { doctorId: ids.doctor } });
+  check('the doctor it is shared with can listen', (await speak(tokens.doctor, { source: 'report', id: ids.urduReport })).status === 200);
 
   // Lab corrections
   const fix = await put(`/api/lab/reports/${ids.urduReport}/summary`, { token: tokens.lab, body: { summaryUrdu: 'آپ کا خون کا ٹیسٹ نارمل ہے۔' } });
@@ -1293,6 +1323,7 @@ const testAutoSummary = async () => {
     again.status === 200 && again.data.report.autoRead.status === 'ready' && again.data.report.summarySource === 'auto', again.data.report?.autoRead);
   check('another lab cannot (404)', (await post(`/api/lab/reports/${failed._id}/read-again`, { token: tokens.lab2 })).status === 404);
 
+  await put(`/api/patient/reports/${up.data._id}/share`, { token: tokens.patient, body: { doctorId: ids.doctor } });
   const doctorView = (await get('/api/doctor/reports', { token: tokens.doctor })).data.find(x => x._id === up.data._id);
   check("the patient's doctor sees the results table too", doctorView?.autoRead?.findings?.length === 3, doctorView?.autoRead);
   mock.docIntelResult = null;

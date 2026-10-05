@@ -35,6 +35,13 @@ const testReportSchema = new mongoose.Schema(
       readAt:     Date,
     },
     isRead:    { type: Boolean, default: false },
+
+    // Doctors the patient chose to share this report with (decision 13) — only they can see it
+    sharedWith: [{
+      _id: false,
+      doctor:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+      sharedAt: { type: Date, default: Date.now },
+    }],
   },
   { timestamps: true }
 );

@@ -22,6 +22,7 @@ const NOTIFICATION_TYPES = [
   'report_summary_ready',    // automatic report summary is ready for the patient
   'defaulter_escalated',     // case moved to lawyer
   'test_report_uploaded',    // lab uploaded patient's result
+  'report_shared',           // a patient shared a report with their doctor
   'prescription_issued',     // doctor issued a prescription
   'community_approved',      // admin approved needy patient application
   'community_rejected',      // admin rejected needy patient application
