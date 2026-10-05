@@ -87,9 +87,10 @@ const drawSlipPage = (pdf, fonts, slip) => {
     page.drawLine({ start: { x: MARGIN, y }, end: { x: width - MARGIN, y }, thickness: 1, color: LINE });
     y -= 16;
     for (const [label, value] of section.rows) {
-      const lines = wrap(regular, 10.5, value || '—', valueW);
+      const font = section.boldFirst ? bold : regular; // a wrapped value keeps one weight on every line
+      const lines = wrap(font, 10.5, value || '—', valueW);
       text(label, MARGIN, y, { size: 9.5, color: MUTED });
-      lines.forEach((l, i) => text(l, MARGIN + labelW, y - i * 14, { size: 10.5, font: i === 0 && section.boldFirst ? bold : regular }));
+      lines.forEach((l, i) => text(l, MARGIN + labelW, y - i * 14, { size: 10.5, font }));
       y -= 14 * lines.length + 6;
     }
     y -= 12;
