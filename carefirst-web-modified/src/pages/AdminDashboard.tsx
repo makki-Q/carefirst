@@ -73,6 +73,9 @@ const AdminDashboard = () => {
   const [feeRejectReason, setFeeRejectReason] = useState('');
   const [openAgreementId, setOpenAgreementId] = useState<string | null>(null);
   const [defaulterCases, setDefaulterCases]   = useState<any[]>([]);
+  const [defaulterFilter, setDefaulterFilter] = useState<'open' | 'cleared' | 'all'>('open');
+  const [rejectingPayment, setRejectingPayment]       = useState('');   // `${walletId}-${path}`
+  const [paymentRejectReason, setPaymentRejectReason] = useState('');
   const [cnicRejectingId, setCnicRejectingId] = useState<string | null>(null);
   const [cnicRejectReason, setCnicRejectReason] = useState('');
 
@@ -106,7 +109,7 @@ const AdminDashboard = () => {
     loadOverview();
     loadSettings();
     loadWallets();
-    api.get('/admin/defaulter-cases').then((d: any) => setDefaulterCases(Array.isArray(d) ? d : [])).catch(() => {});
+    loadDefaulters();
     api.get('/admin/notifications').then((d: any) => {
       const arr = Array.isArray(d) ? d : [];
       setNotifications(arr);
@@ -127,7 +130,8 @@ const AdminDashboard = () => {
       if (n.type === 'community_submitted') {
         api.get('/admin/community-applications').then((d: any) => setCommunityApps(Array.isArray(d) ? d : [])).catch(() => {});
       }
-      if (['plan_submitted', 'service_fee_uploaded', 'receipt_lab_approved', 'defaulter_escalated'].includes(n.type)) loadWallets();
+      if (['plan_submitted', 'service_fee_uploaded', 'receipt_lab_approved', 'defaulter_escalated', 'defaulter_cleared'].includes(n.type)) loadWallets();
+      if (['defaulter_escalated', 'defaulter_cleared'].includes(n.type)) loadDefaulters();
     });
     return () => { socket.off('notification:new'); };
   }, []);
@@ -255,8 +259,21 @@ const AdminDashboard = () => {
     try {
       const d: any = await api.put(`/admin/wallets/${walletId}/${path}/verify`, {});
       replaceWallet(d.wallet);
+      loadDefaulters(); // the last overdue installment closes the case (decision 14)
     } catch (err: any) { alertDialog(err.message || 'Verification failed'); }
   };
+
+  // CareFirst could not verify a lab-confirmed receipt: it is cleared and the patient uploads a new one
+  const adminRejectPayment = async (walletId: string, path: string) => {
+    if (!paymentRejectReason.trim()) { alertDialog('Please write why the receipt cannot be verified'); return; }
+    try {
+      const d: any = await api.put(`/admin/wallets/${walletId}/${path}/reject`, { reason: paymentRejectReason.trim() });
+      replaceWallet(d.wallet);
+      setRejectingPayment(''); setPaymentRejectReason('');
+    } catch (err: any) { alertDialog(err.message || 'Could not reject the receipt'); }
+  };
+  const loadDefaulters = () =>
+    api.get('/admin/defaulter-cases').then((d: any) => setDefaulterCases(Array.isArray(d) ? d : [])).catch(() => {});
 
   const approvePlan = async (walletId: string) => {
     if (!(await confirmDialog("Approve this installment plan? Only approve if the CNIC pictures match the details. This also verifies the patient's CNIC, and the patient will be asked to pay the service fee.", { confirmLabel: 'Approve plan' }))) return;
@@ -305,7 +322,7 @@ const AdminDashboard = () => {
     reports:       'Platform Reports',
     settings:      'Settings',
     wallets:       'Wallet Management',
-    defaulters:    'Defaulter Cases',
+    defaulters:    'Defaulters',
   };
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -345,6 +362,9 @@ const AdminDashboard = () => {
   const usersPageNow = Math.min(usersPage, usersPageCount - 1);
   const pagedUsers = filteredUsers.slice(usersPageNow * USERS_PER_PAGE, (usersPageNow + 1) * USERS_PER_PAGE);
 
+  const openDefaulters = defaulterCases.filter((c: any) => c.status === 'active');
+  const shownDefaulters = defaulterFilter === 'all' ? defaulterCases
+    : defaulterCases.filter((c: any) => (defaulterFilter === 'open' ? c.status === 'active' : c.status === 'resolved'));
   const pendingCnicCount = apiUsers.filter((u: any) => u.role === 'patient' && u.profile?.cnicStatus === 'unverified').length;
 
   const filteredCommunityApps = appStatusFilter === 'all'
@@ -461,8 +481,8 @@ const AdminDashboard = () => {
 
             <button className={`dash-nav-item ${currentPage === 'defaulters' ? 'active' : ''}`} onClick={() => navigate('defaulters')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-              Defaulter Cases
-              {defaulterCases.length > 0 && <span className="dash-nav-badge">{defaulterCases.length}</span>}
+              Defaulters
+              {openDefaulters.length > 0 && <span className="dash-nav-badge">{openDefaulters.length}</span>}
             </button>
 
             <button className={`dash-nav-item ${currentPage === 'reports' ? 'active' : ''}`} onClick={() => navigate('reports')}>
@@ -883,7 +903,10 @@ const AdminDashboard = () => {
                             ) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                           </td>
                           <td style={{ whiteSpace: 'nowrap' }}>{u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
-                          <td><span className={`dash-badge ${statusClass(u.status)}`}><span className="dash-badge-dot"></span>{statusLabel(u.status)}</span></td>
+                          <td>
+                            <span className={`dash-badge ${statusClass(u.status)}`}><span className="dash-badge-dot"></span>{statusLabel(u.status)}</span>
+                            {u.isDefaulter && <div style={{ marginTop: 4 }}><span className="dash-badge dash-red" title="Restricted until the overdue installments are paid"><span className="dash-badge-dot"></span>Defaulter</span></div>}
+                          </td>
                           <td style={{ textAlign: 'right' }}>
                             <div className="dash-row-actions" style={{ gap: 4 }}>
                               {cnicStatus && cnicStatus !== 'verified' && u.profile && (
@@ -1277,7 +1300,8 @@ const AdminDashboard = () => {
                       </thead>
                       <tbody>
                         {pendingVerifications.map(({ wallet, payment, label, path }) => (
-                          <tr key={`${wallet._id}-${path}`}>
+                          <React.Fragment key={`${wallet._id}-${path}`}>
+                          <tr>
                             <td style={{ fontWeight: 600, color: 'var(--text)' }}>{wallet.patient?.name || '—'}</td>
                             <td style={{ color: 'var(--text-sub)' }}>{wallet.labName || wallet.lab?.name || '—'}</td>
                             <td>{wallet.testName || '—'}</td>
@@ -1296,12 +1320,29 @@ const AdminDashboard = () => {
                               ) : '—'}
                             </td>
                             <td style={{ textAlign: 'right' }}>
-                              <button className="adm-approve-btn" onClick={() => adminVerifyPayment(wallet._id, path, label === 'Down payment' ? 'down payment' : `installment ${label}`)}>
-                                <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-                                Verify Payment
-                              </button>
+                              <div className="dash-row-actions">
+                                <button className="adm-approve-btn" onClick={() => adminVerifyPayment(wallet._id, path, label === 'Down payment' ? 'down payment' : `installment ${label}`)}>
+                                  <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                                  Verify Payment
+                                </button>
+                                <button className="adm-reject-btn" onClick={() => { setRejectingPayment(`${wallet._id}-${path}`); setPaymentRejectReason(''); }}>Reject</button>
+                              </div>
                             </td>
                           </tr>
+                          {rejectingPayment === `${wallet._id}-${path}` && (
+                            <tr>
+                              <td colSpan={8} style={{ background: 'var(--glass-bg)', padding: '12px 20px' }}>
+                                <div className="adm-reject-reason-row">
+                                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#991b1b', flexShrink: 0 }}>Why can't this receipt be verified?</span>
+                                  <input className="adm-reject-reason-input" type="text" autoFocus placeholder="e.g. The screenshot is cut off — the amount is not visible"
+                                    value={paymentRejectReason} onChange={e => setPaymentRejectReason(e.target.value)} onKeyDown={e => e.key === 'Enter' && adminRejectPayment(wallet._id, path)} />
+                                  <button className="adm-reject-btn" style={{ flexShrink: 0 }} onClick={() => adminRejectPayment(wallet._id, path)}>Reject receipt</button>
+                                  <button className="dash-btn-ghost" style={{ flexShrink: 0, padding: '5px 10px', fontSize: '0.75rem' }} onClick={() => setRejectingPayment('')}>Cancel</button>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                          </React.Fragment>
                         ))}
                       </tbody>
                     </table>
@@ -1371,32 +1412,48 @@ const AdminDashboard = () => {
             {/* ══ DEFAULTER CASES ══════════════════════════════ */}
             <section className={`dash-page-section ${currentPage === 'defaulters' ? 'active' : ''}`}>
               <div className="dash-page-header dash-fu">
-                <div className="dash-page-title">Defaulter Cases</div>
+                <div className="dash-page-title">Defaulters</div>
                 <div className="dash-page-rule"></div>
-                <div className="dash-page-subtitle">Auto-generated cases for patients who have missed installment payments — escalated for legal review</div>
+                <div className="dash-page-subtitle">Patients with overdue installments — restricted to My Wallet until the overdue installments are paid and verified</div>
+              </div>
+
+              <div className="dash-chip-row dash-fu">
+                {([['open', `Restricted (${openDefaulters.length})`], ['cleared', 'Cleared'], ['all', 'All']] as const).map(([key, text]) => (
+                  <button key={key} className={`dash-chip ${defaulterFilter === key ? 'active' : ''}`} onClick={() => setDefaulterFilter(key)}>{text}</button>
+                ))}
               </div>
 
               <div className="dash-card dash-fu dash-fu-1">
-                {defaulterCases.length === 0 ? (
+                {shownDefaulters.length === 0 ? (
                   <div style={{ padding: '40px 24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                    No defaulter cases at this time. Cases are auto-generated when installments become overdue.
+                    {defaulterCases.length === 0 ? 'No defaulters. A case is created automatically when an installment is more than 3 days overdue.' : 'No defaulters in this view.'}
                   </div>
                 ) : (
                   <div className="dash-table-wrap">
                     <table>
                       <thead>
-                        <tr><th>Patient</th><th>Contact</th><th>Test / Wallet</th><th>Amount Owed</th><th>Escalated On</th><th>Assigned Lawyer</th></tr>
+                        <tr><th>Patient</th><th>Contact</th><th>Plan</th><th>Overdue</th><th>Escalated On</th><th>Assigned Lawyer</th><th>Status</th></tr>
                       </thead>
                       <tbody>
-                        {defaulterCases.map((c: any, i: number) => (
-                          <tr key={i}>
-                            <td style={{ fontWeight: 600, color: 'var(--text)' }}>{c.patient?.name || '—'}</td>
+                        {shownDefaulters.map((c: any, i: number) => (
+                          <tr key={c._id || i}>
+                            <td>
+                              <div style={{ fontWeight: 600, color: 'var(--text)' }}>{c.patient?.name || '—'}</div>
+                              <div className="dash-mono" style={{ fontSize: '0.72rem' }}>{c.patient?.cnic || 'No CNIC'}</div>
+                            </td>
                             <td style={{ fontSize: '0.8rem', color: 'var(--text-sub)' }}>
                               <div>{c.patient?.email || '—'}</div>
-                              <div>{c.patient?.phone || '—'}</div>
+                              <div className="dash-mono" style={{ fontSize: '0.72rem' }}>{c.patient?.phone || '—'}</div>
                             </td>
-                            <td>{c.wallet?.testName || '—'}</td>
-                            <td style={{ fontWeight: 700, color: '#991b1b' }}>PKR {(c.wallet?.remainingBalance || 0).toLocaleString()}</td>
+                            <td>
+                              <div>{c.wallet?.testName || '—'}</div>
+                              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{c.wallet?.labName || ''}</div>
+                            </td>
+                            <td style={{ whiteSpace: 'nowrap' }}>
+                              {c.status === 'active'
+                                ? <><div style={{ fontWeight: 700, color: '#991b1b' }}>PKR {(c.totalOverdue || 0).toLocaleString()}</div><div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{c.missedInstallments} installment{c.missedInstallments === 1 ? '' : 's'}</div></>
+                                : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                            </td>
                             <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>
                               {c.escalatedAt ? new Date(c.escalatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
                             </td>
@@ -1406,6 +1463,14 @@ const AdminDashboard = () => {
                               ) : (
                                 <span style={{ color: 'var(--text-muted)' }}>Not assigned</span>
                               )}
+                            </td>
+                            <td>
+                              {c.status === 'active'
+                                ? <span className="dash-badge dash-red"><span className="dash-badge-dot"></span>Restricted</span>
+                                : <>
+                                    <span className="dash-badge dash-green"><span className="dash-badge-dot"></span>{c.resolution === 'settled' ? 'Settled by lawyer' : 'Paid'}</span>
+                                    {c.resolvedAt && <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 3 }}>{new Date(c.resolvedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</div>}
+                                  </>}
                             </td>
                           </tr>
                         ))}

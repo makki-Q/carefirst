@@ -129,7 +129,7 @@ const LabDashboard = () => {
     socket.on('notification:new', (n: any) => {
       setNotifications(prev => [n, ...prev]);
       setNotifBadge(prev => prev + 1);
-      if (n.type === 'receipt_uploaded') {
+      if (n.type === 'receipt_uploaded' || n.type === 'receipt_rejected') {
         api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
       }
       if (n.type === 'plan_activated' || n.type === 'lab_booking_created') {
@@ -312,6 +312,18 @@ const LabDashboard = () => {
   const uploadForBooking = (b: any) => {
     setUploadBookingId(b._id); setUploadFile(null); setUploadNotes(''); setUploadMsg('');
     navigate('upload');
+  };
+
+  // The lab did not receive this payment: the receipt is cleared and the patient uploads a new one
+  const [rejectingReceipt, setRejectingReceipt] = useState('');   // `${walletId}-${path}`
+  const [receiptRejectReason, setReceiptRejectReason] = useState('');
+  const rejectReceipt = async (walletId: string, path: string) => {
+    if (!receiptRejectReason.trim()) { alertDialog('Please write why you are rejecting this receipt'); return; }
+    try {
+      await api.put(`/lab/receipts/${walletId}/${path}/reject`, { reason: receiptRejectReason.trim() });
+      setRejectingReceipt(''); setReceiptRejectReason('');
+      api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
+    } catch (err: any) { alertDialog(err.message || 'Could not reject the receipt'); }
   };
 
   // path: `installments/<index>` or `down-payment`
@@ -1461,8 +1473,12 @@ const LabDashboard = () => {
                             ...(r.pendingDownPayment ? [{ ...r.pendingDownPayment, label: 'Down payment', path: 'down-payment' }] : []),
                             ...(r.pendingInstallments || []).map((inst: any) => ({ ...inst, label: `#${inst.number || inst.index + 1}`, path: `installments/${inst.index}` })),
                           ].map((inst: any) => (
-                            <tr key={`${r.walletId}-${inst.path}`}>
-                              <td style={{ fontWeight: 600, color: 'var(--text)' }}>{r.patient?.name || '—'}</td>
+                            <React.Fragment key={`${r.walletId}-${inst.path}`}>
+                            <tr>
+                              <td style={{ fontWeight: 600, color: 'var(--text)' }}>
+                                {r.patient?.name || '—'}
+                                {r.defaulter && <div><span className="dash-badge dash-red" title="This plan was escalated — the patient is paying overdue installments"><span className="dash-badge-dot"></span>Escalated plan</span></div>}
+                              </td>
                               <td>{r.testName || '—'}</td>
                               <td>{inst.label}</td>
                               <td>PKR {Number(inst.amount || 0).toLocaleString()}</td>
@@ -1483,6 +1499,7 @@ const LabDashboard = () => {
                                       <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
                                       Approve
                                     </button>
+                                    <button className="adm-reject-btn" onClick={() => { setRejectingReceipt(`${r.walletId}-${inst.path}`); setReceiptRejectReason(''); }}>Reject</button>
                                   </div>
                                 ) : (
                                   <span style={{ fontSize: '0.75rem', color: inst.labApproved ? '#166534' : 'var(--text-muted)', fontWeight: inst.labApproved ? 700 : 400 }}>
@@ -1491,6 +1508,20 @@ const LabDashboard = () => {
                                 )}
                               </td>
                             </tr>
+                            {rejectingReceipt === `${r.walletId}-${inst.path}` && (
+                              <tr>
+                                <td colSpan={7} style={{ background: 'var(--glass-bg)', padding: '12px 20px' }}>
+                                  <div className="adm-reject-reason-row">
+                                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#991b1b', flexShrink: 0 }}>Why can't you confirm this payment?</span>
+                                    <input className="adm-reject-reason-input" type="text" autoFocus placeholder="e.g. No payment with this reference reached our account"
+                                      value={receiptRejectReason} onChange={e => setReceiptRejectReason(e.target.value)} onKeyDown={e => e.key === 'Enter' && rejectReceipt(r.walletId, inst.path)} />
+                                    <button className="adm-reject-btn" style={{ flexShrink: 0 }} onClick={() => rejectReceipt(r.walletId, inst.path)}>Reject receipt</button>
+                                    <button className="dash-btn-ghost" style={{ flexShrink: 0, padding: '5px 10px', fontSize: '0.75rem' }} onClick={() => setRejectingReceipt('')}>Cancel</button>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                            </React.Fragment>
                           ))
                         )}
                       </tbody>

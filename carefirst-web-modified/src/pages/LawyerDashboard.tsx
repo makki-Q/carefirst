@@ -4,6 +4,7 @@ import { api, getSession, clearSession } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { ListenButton, UrduText } from '../components/Urdu';
 import { CnicPictureGallery } from '../components/CnicPictures';
+import { confirmDialog, alertDialog } from '../components/Dialog';
 
 interface Installment {
   month: string;
@@ -12,10 +13,18 @@ interface Installment {
   paid: boolean;
   paidOn: string | null;
   verifiedBy: string | null;
+  overdue: boolean;          // past due + grace, not paid
+  receiptUploaded: boolean;  // the patient uploaded a receipt that is being checked
+  settled: boolean;          // recorded as settled outside CareFirst when a case was closed
 }
 
 interface Defaulter {
   id: string;
+  caseId: string;
+  open: boolean;                    // false once paid or settled (decision 14)
+  resolution?: 'paid' | 'settled';
+  resolutionNote?: string;
+  resolvedOn?: string;
   escalatedAt?: string; // when the case reached the lawyer
   patient: { name: string; cnic: string; phone: string; address: string };
   guarantor: { name: string; cnic: string; relation: string; phone: string; address?: string };
@@ -47,7 +56,8 @@ const LawyerDashboard = () => {
   const { user: sessionUser } = getSession();
   const [cases, setCases]               = useState<Defaulter[]>([]);
   // Case with the most days since it reached the lawyer, and paid vs total owed across cases
-  const longest = cases
+  const openCases = cases.filter(c => c.open);
+  const longest = openCases
     .filter(c => c.escalatedAt)
     .map(c => ({ c, days: Math.floor((Date.now() - new Date(c.escalatedAt as string).getTime()) / 86400000) }))
     .sort((a, b) => b.days - a.days)[0] || null;
@@ -61,10 +71,15 @@ const LawyerDashboard = () => {
     setDateString(d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }));
   }, []);
 
-  useEffect(() => {
+  const loadCases = () =>
     api.get('/lawyer/defaulter-cases').then((d: any) => {
-      setCases(Array.isArray(d) ? d.map((c: any) => mapApiCase(c)) : []);
+      const list = Array.isArray(d) ? d.map((c: any) => mapApiCase(c)) : [];
+      setCases(list);
+      setSelectedCase(prev => (prev ? list.find(c => c.caseId === prev.caseId) || prev : prev));
     }).catch(() => {});
+
+  useEffect(() => {
+    loadCases();
     api.get('/lawyer/notifications').then((d: any) => {
       const arr = Array.isArray(d) ? d : [];
       setNotifications(arr);
@@ -80,11 +95,27 @@ const LawyerDashboard = () => {
     socket.on('notification:new', (n: any) => {
       setNotifications(prev => [n, ...prev]);
       setNotifBadge(prev => prev + 1);
+      if (['defaulter_escalated', 'defaulter_cleared'].includes(n.type)) loadCases();
     });
     return () => { socket.off('notification:new'); };
   }, []);
 
   const signOut = () => { clearSession(); window.location.href = '/login'; };
+
+  // Settled outside CareFirst: overdue installments are recorded as settled, the patient's account unlocks
+  const [closeNote, setCloseNote]   = useState('');
+  const [closing, setClosing]       = useState(false);
+  const closeCase = async (c: Defaulter) => {
+    if (closeNote.trim().length < 5) { alertDialog('Please write how the case was settled (at least a few words).'); return; }
+    if (!(await confirmDialog(`Close ${c.patient.name}'s case? The overdue installments are recorded as settled and the patient's account returns to normal.`, { confirmLabel: 'Close case' }))) return;
+    setClosing(true);
+    try {
+      await api.put(`/lawyer/defaulter-cases/${c.caseId}/close`, { note: closeNote.trim() });
+      setCloseNote('');
+      await loadCases();
+    } catch (err: any) { alertDialog(err.message || 'Could not close the case'); }
+    finally { setClosing(false); }
+  };
 
   const markAllRead = async () => {
     try {
@@ -100,6 +131,11 @@ const LawyerDashboard = () => {
     const rem    = wallet.remainingBalance ?? total;
     return {
       id:             `DEF-${c._id?.toString().slice(-3).toUpperCase()}`,
+      caseId:         c._id,
+      open:           c.status !== 'resolved',
+      resolution:     c.resolution,
+      resolutionNote: c.resolutionNote,
+      resolvedOn:     c.resolvedAt ? new Date(c.resolvedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : undefined,
       patient:        {
         name:    c.patient?.name || '—',
         cnic:    c.patient?.cnic || '—',
@@ -127,8 +163,11 @@ const LawyerDashboard = () => {
         due:        inst.dueDate ? new Date(inst.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—',
         amount:     inst.amount || 0,
         paid:       inst.status === 'paid',
-        paidOn:     inst.adminVerifiedAt ? new Date(inst.adminVerifiedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : null,
-        verifiedBy: inst.adminVerified ? 'Admin' : null,
+        paidOn:     (inst.adminVerifiedAt || inst.settledOffline?.at) ? new Date(inst.adminVerifiedAt || inst.settledOffline.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : null,
+        verifiedBy: inst.settledOffline?.at ? 'Lawyer (settled)' : inst.adminVerified ? 'Admin' : null,
+        overdue:    inst.status === 'overdue',
+        receiptUploaded: Boolean(inst.receiptUrl) && inst.status !== 'paid',
+        settled:    Boolean(inst.settledOffline?.at),
       })),
     };
   };
@@ -186,7 +225,7 @@ const LawyerDashboard = () => {
                 <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
               </svg>
               Defaulter Cases
-              <span className="dash-nav-badge">{cases.length}</span>
+              {openCases.length > 0 && <span className="dash-nav-badge">{openCases.length}</span>}
             </button>
 
             <div className="dash-nav-label">Account</div>
@@ -255,7 +294,7 @@ const LawyerDashboard = () => {
                   <div className="dash-stat-top">
                     <div>
                       <div className="dash-stat-label">Active Defaulters</div>
-                      <div className="dash-stat-value">{cases.length}</div>
+                      <div className="dash-stat-value">{openCases.length}</div>
                     </div>
                     <div className="dash-stat-icon">
                       <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
@@ -318,10 +357,17 @@ const LawyerDashboard = () => {
                         </div>
                       </div>
                       <div className="law-def-right">
-                        <span className="dash-badge dash-red">
-                          <span className="dash-badge-dot"></span>Defaulter
-                        </span>
-                        <div className="law-def-overdue">Overdue by {c.overdueBy}</div>
+                        {c.open ? (
+                          <>
+                            <span className="dash-badge dash-red"><span className="dash-badge-dot"></span>Defaulter</span>
+                            <div className="law-def-overdue">Overdue by {c.overdueBy}</div>
+                          </>
+                        ) : (
+                          <>
+                            <span className="dash-badge dash-green"><span className="dash-badge-dot"></span>Closed · {c.resolution === 'settled' ? 'Settled' : 'Paid'}</span>
+                            <div className="law-def-overdue" style={{ color: 'var(--text-muted)' }}>{c.resolvedOn}</div>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -368,13 +414,37 @@ const LawyerDashboard = () => {
                     <div>
                       <div className="dash-page-title">{selectedCase.patient.name}</div>
                       <div className="dash-page-rule"></div>
-                      <div className="dash-page-subtitle">Case {selectedCase.id} · Defaulted on {selectedCase.defaultedOn} · Overdue by {selectedCase.overdueBy}</div>
+                      <div className="dash-page-subtitle">
+                        Case {selectedCase.id} · Defaulted on {selectedCase.defaultedOn} · {selectedCase.open ? `Overdue by ${selectedCase.overdueBy}` : `Closed on ${selectedCase.resolvedOn}`}
+                      </div>
                     </div>
                     <button className="dash-btn-ghost dash-fu-1" onClick={() => navigate('defaulters')}>
                       <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
                       Back to Cases
                     </button>
                   </div>
+
+                  {/* Closing the case (decision 14) */}
+                  {selectedCase.open ? (
+                    <div className="dash-card dash-fu" style={{ padding: '16px 22px', marginBottom: 20 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.86rem', color: 'var(--text)' }}>Close this case</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '3px 0 10px' }}>
+                        The case closes by itself when the patient's overdue receipts are verified. If the dues were settled outside CareFirst, write how and close it here — the overdue installments are recorded as settled and the patient's account returns to normal.
+                      </div>
+                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                        <textarea className="dash-form-input" rows={2} style={{ flex: '1 1 320px', resize: 'vertical' }} maxLength={500}
+                          placeholder="e.g. Paid in full at the lab on 2 Oct; the lab manager confirmed by phone."
+                          value={closeNote} onChange={e => setCloseNote(e.target.value)} />
+                        <button className="dash-btn-primary accent" disabled={closing} onClick={() => closeCase(selectedCase)}>{closing ? 'Closing…' : 'Close case'}</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="dash-card dash-fu" style={{ padding: '14px 22px', marginBottom: 20, background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', fontSize: '0.84rem' }}>
+                      <strong>Case closed on {selectedCase.resolvedOn}</strong> — {selectedCase.resolution === 'settled'
+                        ? <>settled outside CareFirst: {selectedCase.resolutionNote}</>
+                        : 'the patient paid the overdue installments and CareFirst verified them.'} The patient's account is back to normal.
+                    </div>
+                  )}
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
                     {/* Patient Info */}
@@ -384,7 +454,9 @@ const LawyerDashboard = () => {
                           <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
                           Patient Information
                         </div>
-                        <span className="dash-badge dash-red"><span className="dash-badge-dot"></span>Defaulter</span>
+                        {selectedCase.open
+                          ? <span className="dash-badge dash-red"><span className="dash-badge-dot"></span>Defaulter</span>
+                          : <span className="dash-badge dash-green"><span className="dash-badge-dot"></span>Case closed</span>}
                       </div>
                       <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12 }}>
                         {[
@@ -541,10 +613,11 @@ const LawyerDashboard = () => {
                               <td>{inst.paidOn ?? <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                               <td>{inst.verifiedBy ?? <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                               <td style={{ textAlign: 'right' }}>
-                                {inst.paid
-                                  ? <span className="dash-badge dash-green"><span className="dash-badge-dot"></span>Paid & Verified</span>
-                                  : <span className="dash-badge dash-red"><span className="dash-badge-dot"></span>Unpaid</span>
-                                }
+                                {inst.settled ? <span className="dash-badge dash-green"><span className="dash-badge-dot"></span>Settled</span>
+                                  : inst.paid ? <span className="dash-badge dash-green"><span className="dash-badge-dot"></span>Paid & Verified</span>
+                                  : inst.receiptUploaded ? <span className="dash-badge dash-amber"><span className="dash-badge-dot"></span>Receipt being checked</span>
+                                  : inst.overdue ? <span className="dash-badge dash-red"><span className="dash-badge-dot"></span>Overdue</span>
+                                  : <span className="dash-badge dash-gray"><span className="dash-badge-dot"></span>Not due yet</span>}
                               </td>
                             </tr>
                           ))}

@@ -1588,6 +1588,35 @@
   cursor: pointer;
 }
 
+/* Defaulter: account restricted until the overdue installments are paid (decision 14) */
+.pat-restricted-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-bottom: 22px;
+  border-radius: var(--radius-sm);
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.pat-restricted-banner svg { flex-shrink: 0; }
+
+.pat-nav-item.locked { opacity: 0.45; }
+.pat-nav-item.locked .pat-nav-badge { display: none; }
+.pat-nav-item.locked::after {
+  content: 'Locked';
+  margin-left: auto;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 /* Sharing a report with doctors (My Reports) */
 .pat-share-bar {
   display: flex;

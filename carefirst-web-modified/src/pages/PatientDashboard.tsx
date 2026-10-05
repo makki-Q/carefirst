@@ -44,6 +44,9 @@ const timeAgo = (d?: string | Date) => {
   return fmtDate(d);
 };
 
+// Pages a restricted (defaulter) patient cannot open
+const LOCKED_WHEN_RESTRICTED = ['dashboard', 'findDoctors', 'bookTests', 'labTests', 'community', 'bookAppointment', 'bookLabTest', 'applyPlan'];
+
 const drName = (name?: string) => (!name ? 'Doctor' : /^dr\.?\s/i.test(name) ? name : `Dr. ${name}`);
 
 // "Cardiology" / "Cardiologist" and "Gynaecology" / "Gynecologist" are one specialty filter
@@ -116,7 +119,9 @@ const planEstimate = (price: number, count: number, downPct: number) => {
 
 // Where an installment (or the down payment) is in the patient → lab → admin verification chain
 const installmentStage = (inst: any) => {
+  if (inst.settledOffline?.at)                      return { label: 'Settled',           cls: 'pat-badge-green', verification: 'Settled with the lawyer' };
   if (inst.status === 'paid' || inst.adminVerified) return { label: 'Paid',              cls: 'pat-badge-green', verification: 'Verified ✓' };
+  if (inst.rejectionReason && !inst.receiptUrl)     return { label: 'Receipt rejected',  cls: 'pat-badge-red',   verification: `Not accepted by the ${inst.rejectedBy === 'admin' ? 'admin' : 'lab'}: ${inst.rejectionReason}` };
   if (inst.status === 'overdue')                    return { label: 'Overdue',           cls: 'pat-badge-red',   verification: '—' };
   if (inst.labApproved)                             return { label: 'Lab confirmed',     cls: 'pat-badge-amber', verification: 'Awaiting admin' };
   if (inst.receiptUrl)                              return { label: 'Receipt submitted', cls: 'pat-badge-amber', verification: 'Awaiting lab' };
@@ -174,6 +179,7 @@ const PatientDashboard = () => {
   const [appointments, setAppointments]   = useState<any[]>([]);
   const [labBookings, setLabBookings]     = useState<any[]>([]);
   const [shareDoctors, setShareDoctors]   = useState<any[]>([]); // doctors the patient may share reports with
+  const [restriction, setRestriction]     = useState<any>(null);  // set while a plan is escalated (decision 14)
   const [reportShareMsg, setReportShareMsg] = useState<{ id: string; ok: boolean; text: string } | null>(null);
 
   // ── Booking flows ───────────────────────────────────────────────────────────
@@ -229,6 +235,7 @@ const PatientDashboard = () => {
     api.get('/patient/profile').then((d: any) => {
       setMe(d.user || {});
       setProfile(d.profile || null);
+      setRestriction(d.restriction || null);
       setProfileForm({
         name:    d.user?.name || '',
         phone:   d.user?.phone || '',
@@ -295,8 +302,9 @@ const PatientDashboard = () => {
       if (n.type?.startsWith('lab_booking_') || n.type === 'test_report_uploaded') loadLabBookings();
       if ([
         'receipt_lab_approved', 'receipt_admin_verified', 'installment_overdue', 'installment_due_soon', 'defaulter_escalated',
-        'plan_approved', 'plan_rejected', 'plan_activated', 'service_fee_rejected',
+        'plan_approved', 'plan_rejected', 'plan_activated', 'service_fee_rejected', 'receipt_rejected', 'defaulter_cleared',
       ].includes(n.type)) loadWallets();
+      if (['defaulter_escalated', 'defaulter_cleared', 'receipt_admin_verified'].includes(n.type)) loadProfile();
       if (['community_approved', 'community_rejected'].includes(n.type)) loadCommunity();
       if (['cnic_verified', 'cnic_rejected'].includes(n.type)) loadProfile();
     });
@@ -321,7 +329,17 @@ const PatientDashboard = () => {
   }, [wallets]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
-  const navigate = (page: string) => { setCurrentPage(page); if (window.innerWidth <= 900) setSidebarOpen(false); };
+  // A defaulter can only use My Wallet and read their own records (decision 14)
+  const navigate = (page: string) => {
+    setCurrentPage(restriction && LOCKED_WHEN_RESTRICTED.includes(page) ? 'myWallet' : page);
+    if (window.innerWidth <= 900) setSidebarOpen(false);
+  };
+  const lockedNav = (page: string) => (restriction && LOCKED_WHEN_RESTRICTED.includes(page) ? 'locked' : '');
+  useEffect(() => {
+    if (!restriction) return;
+    setCurrentPage(p => (LOCKED_WHEN_RESTRICTED.includes(p) ? 'myWallet' : p));
+    if (restriction.plans?.[0]) setSelectedWalletId(String(restriction.plans[0].walletId));
+  }, [restriction]);
 
   const markNotifRead = async (n: any) => {
     if (n.read) return;
@@ -1108,7 +1126,7 @@ const PatientDashboard = () => {
           <nav className="pat-sidebar-nav">
             <div className="pat-nav-label">Main</div>
 
-            <button className={`pat-nav-item ${currentPage === 'dashboard' ? 'active' : ''}`} onClick={() => navigate('dashboard')}>
+            <button className={`pat-nav-item ${currentPage === 'dashboard' ? 'active' : ''} ${lockedNav('dashboard')}`} onClick={() => navigate('dashboard')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
                 <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
                 <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
@@ -1116,7 +1134,7 @@ const PatientDashboard = () => {
               Dashboard
             </button>
 
-            <button className={`pat-nav-item ${currentPage === 'findDoctors' ? 'active' : ''}`} onClick={() => navigate('findDoctors')}>
+            <button className={`pat-nav-item ${currentPage === 'findDoctors' ? 'active' : ''} ${lockedNav('findDoctors')}`} onClick={() => navigate('findDoctors')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
                 <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
                 <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
@@ -1124,7 +1142,7 @@ const PatientDashboard = () => {
               Find Doctors
             </button>
 
-            <button className={`pat-nav-item ${currentPage === 'bookTests' ? 'active' : ''}`} onClick={() => navigate('bookTests')}>
+            <button className={`pat-nav-item ${currentPage === 'bookTests' ? 'active' : ''} ${lockedNav('bookTests')}`} onClick={() => navigate('bookTests')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
                 <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
               </svg>
@@ -1160,7 +1178,7 @@ const PatientDashboard = () => {
               My Wallet
             </button>
 
-            <button className={`pat-nav-item ${currentPage === 'community' ? 'active' : ''}`} onClick={() => navigate('community')}>
+            <button className={`pat-nav-item ${currentPage === 'community' ? 'active' : ''} ${lockedNav('community')}`} onClick={() => navigate('community')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
               </svg>
@@ -1238,6 +1256,18 @@ const PatientDashboard = () => {
 
           {/* CONTENT */}
           <div className="pat-content">
+            {restriction && (
+              <div className="pat-restricted-banner">
+                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <strong>Your account is restricted.</strong> {restriction.overdueCount} overdue installment{restriction.overdueCount === 1 ? '' : 's'} ({pkr(restriction.overdueTotal)})
+                  {' '}on {restriction.plans.map((p: any) => p.testName).join(', ')}. Pay the lab, then upload the receipt in My Wallet — once it is verified, everything unlocks again.
+                </div>
+                {currentPage !== 'myWallet' && (
+                  <button type="button" className="pat-btn-primary pat-red" style={{ padding: '7px 14px', fontSize: '0.8rem' }} onClick={() => navigate('myWallet')}>Go to My Wallet</button>
+                )}
+              </div>
+            )}
 
             {/* ══ DASHBOARD ══════════════════════════════════════ */}
             <section className={`pat-page-section ${currentPage === 'dashboard' ? 'active' : ''}`}>
@@ -1873,8 +1903,8 @@ const PatientDashboard = () => {
                   <div className="pat-page-subtitle">Your clinic visits and lab visits — fees are paid at the clinic or lab</div>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="pat-btn-ghost" onClick={() => navigate('findDoctors')}>Book a doctor</button>
-                  <button className="pat-btn-ghost" onClick={() => navigate('bookTests')}>Book a test</button>
+                  {!restriction && <button className="pat-btn-ghost" onClick={() => navigate('findDoctors')}>Book a doctor</button>}
+                  {!restriction && <button className="pat-btn-ghost" onClick={() => navigate('bookTests')}>Book a test</button>}
                 </div>
               </div>
 
@@ -2315,7 +2345,7 @@ const PatientDashboard = () => {
                     <div className="pat-true-cost-banner pat-fade-up" style={{ marginBottom: 20, borderColor: '#fecaca', background: '#fef2f2', color: '#991b1b' }}>
                       <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                       <div className="pat-true-cost-text">
-                        <strong>This plan has been escalated to the legal team</strong> because of missed installments. Please contact CareFirst support.
+                        <strong>This plan was escalated to the legal team</strong> because of missed installments. Pay {wallet.labName || 'the lab'} for each <strong>overdue</strong> installment below and upload the receipt — once they are verified, the plan and your account return to normal.
                       </div>
                     </div>
                   )}
@@ -2383,7 +2413,7 @@ const PatientDashboard = () => {
                   {['active', 'defaulter', 'completed'].includes(wallet.status) && wallet.downPayment?.amount > 0 && (() => {
                     const dp = wallet.downPayment;
                     const stage = installmentStage(dp);
-                    const canUpload = wallet.status === 'active' && !dp.labApproved && !dp.adminVerified;
+                    const canUpload = ['active', 'defaulter'].includes(wallet.status) && !dp.labApproved && !dp.adminVerified;
                     return (
                       <div className="pat-card pat-fade-up" style={{ padding: '20px 22px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
@@ -2396,6 +2426,11 @@ const PatientDashboard = () => {
                           <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap', marginTop: 12 }}>
                             <div style={{ flex: '1 1 260px' }}>{paymentDetails(`Pay ${wallet.labName} directly`, labRows(wallet.labPayment))}</div>
                             <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
+                              {dp.rejectionReason && !dp.receiptUrl && (
+                                <span style={{ fontSize: '0.8rem', color: '#991b1b' }}>
+                                  <strong>Receipt not accepted</strong> by the {dp.rejectedBy === 'admin' ? 'admin' : 'lab'}: {dp.rejectionReason} Please upload a new one.
+                                </span>
+                              )}
                               {dp.receiptUrl && (
                                 <span style={{ fontSize: '0.8rem' }}>
                                   <a href={dp.receiptUrl} target="_blank" rel="noreferrer" style={{ color: '#166534', fontWeight: 600 }}>Receipt uploaded ✓</a>
@@ -2490,7 +2525,7 @@ const PatientDashboard = () => {
                             : wallet.installments.map((inst: any, idx: number) => {
                             const stage     = installmentStage(inst);
                             const key       = `${wallet._id}-${idx}`;
-                            const canUpload = wallet.status === 'active' && !inst.labApproved && !inst.adminVerified && inst.status !== 'paid';
+                            const canUpload = ['active', 'defaulter'].includes(wallet.status) && !inst.labApproved && !inst.adminVerified && inst.status !== 'paid';
                             return (
                               <tr key={inst._id || idx}>
                                 <td className="pat-report-id">#{inst.number}</td>
