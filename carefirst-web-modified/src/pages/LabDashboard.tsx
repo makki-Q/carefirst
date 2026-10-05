@@ -335,6 +335,15 @@ const LabDashboard = () => {
   const offeredAt = (test: any) => (test?.branches?.length ? test.branches.map(String) : branches.map((b: any) => String(b.branchId)));
   const multiBranch = branches.length > 1; // single-branch labs don't need a Branch column
   const branchName = (id: string) => branches.find((b: any) => String(b.branchId) === String(id))?.name || '—';
+  // "Chughtai Medical Center Samanabad" → "Samanabad": drop the words every branch name starts with (tables, pickers)
+  const branchPrefix = (() => {
+    if (branches.length < 2) return '';
+    const words = branches.map((b: any) => String(b.name || '').split(' '));
+    let n = 0;
+    while (words.every((w: string[]) => w.length > n + 1 && w[n] === words[0][n])) n++;
+    return n ? words[0].slice(0, n).join(' ') + ' ' : '';
+  })();
+  const shortBranch = (name?: string) => (!name ? '—' : branchPrefix && name.startsWith(branchPrefix) ? name.slice(branchPrefix.length) : name);
 
   // The patient came to another branch: take the visit at the given branch
   const transferBooking = async (b: any, branchId: string) => {
@@ -732,7 +741,7 @@ const LabDashboard = () => {
                         <span>Working at</span>
                         <select className="dash-filter-select" value={workingAt} onChange={e => chooseWorkingAt(e.target.value)} title="Show the visits of the branch you are working at">
                           <option value="">All branches</option>
-                          {branches.map((br: any) => <option key={br.branchId} value={String(br.branchId)}>{br.name}</option>)}
+                          {branches.map((br: any) => <option key={br.branchId} value={String(br.branchId)}>{shortBranch(br.name)}</option>)}
                         </select>
                       </label>
                     )}
@@ -774,11 +783,18 @@ const LabDashboard = () => {
                               {b.patient?.cnic && <div className="dash-mono" style={{ fontSize: '0.72rem' }}>{b.patient.cnic}</div>}
                               {b.patient?.phone && <div className="dash-mono" style={{ fontSize: '0.72rem' }}>{b.patient.phone}</div>}
                             </td>
-                            <td>{b.testName}</td>
-                            {multiBranch && <td style={{ fontSize: '0.78rem' }}>
-                              <div style={{ fontWeight: 600, color: workingAt && String(b.branch) !== workingAt ? '#b45309' : 'var(--text)' }}>{b.branchName || '—'}</div>
+                            <td style={{ minWidth: 140 }}>{b.testName}</td>
+                            {multiBranch && <td style={{ fontSize: '0.78rem' }} title={b.branchName}>
+                              <div style={{ fontWeight: 600, color: workingAt && String(b.branch) !== workingAt ? '#b45309' : 'var(--text)' }}>{shortBranch(b.branchName)}</div>
                               {workingAt && String(b.branch) !== workingAt && <div style={{ fontSize: '0.68rem', color: '#b45309' }}>booked at another branch</div>}
-                              {b.transfers?.length > 0 && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>moved from {b.transfers[b.transfers.length - 1].fromName}</div>}
+                              {b.transfers?.length > 0 && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>moved from {shortBranch(b.transfers[b.transfers.length - 1].fromName)}</div>}
+                              {b.status === 'confirmed' && !workingAt && branches.length > 1 && (
+                                <select className="dash-filter-select lab-move-select" value="" title="The patient will visit another branch" onChange={e => e.target.value && transferBooking(b, e.target.value)}>
+                                  <option value="">Move to…</option>
+                                  {branches.filter((br: any) => String(br.branchId) !== String(b.branch) && offeredAt(tests.find((t: any) => t._id === b.labTest)).includes(String(br.branchId)))
+                                    .map((br: any) => <option key={br.branchId} value={br.branchId}>{shortBranch(br.name)}</option>)}
+                                </select>
+                              )}
                             </td>}
                             <td style={{ fontSize: '0.8rem' }}>
                               {b.paymentMethod === 'installment'
@@ -793,13 +809,6 @@ const LabDashboard = () => {
                               <div className="dash-row-actions">
                                 {b.status === 'confirmed' && workingAt && String(b.branch) !== workingAt && offeredAt(tests.find((t: any) => t._id === b.labTest)).includes(workingAt) && (
                                   <button className="dash-btn-primary accent" style={{ padding: '5px 12px', fontSize: '0.76rem' }} onClick={() => transferBooking(b, workingAt)}>Take visit here</button>
-                                )}
-                                {b.status === 'confirmed' && !workingAt && branches.length > 1 && (
-                                  <select className="dash-filter-select" style={{ height: 28, fontSize: '0.72rem' }} value="" onChange={e => e.target.value && transferBooking(b, e.target.value)}>
-                                    <option value="">Move to…</option>
-                                    {branches.filter((br: any) => String(br.branchId) !== String(b.branch) && offeredAt(tests.find((t: any) => t._id === b.labTest)).includes(String(br.branchId)))
-                                      .map((br: any) => <option key={br.branchId} value={br.branchId}>{br.name}</option>)}
-                                  </select>
                                 )}
                                 {b.status === 'confirmed' && (
                                   <button className="adm-approve-btn" onClick={() => advanceBooking(b, 'sample-collected')}>Sample collected</button>

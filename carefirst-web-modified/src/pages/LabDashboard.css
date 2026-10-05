@@ -64,6 +64,9 @@
 }
 
 .lab-catalog-table td { padding-top: 11px; padding-bottom: 11px; }
+
+/* Bookings: "Move to…" stays small whatever the branch names are */
+.dash-filter-select.lab-move-select { display: block; width: 116px; height: 26px; margin-top: 6px; font-size: 0.72rem; padding: 0 6px; color: var(--text-sub); }
 .lab-catalog-editing td { background: rgba(26, 86, 219, 0.03) !important; padding: 18px 20px !important; }
 
 .lab-toggle {
