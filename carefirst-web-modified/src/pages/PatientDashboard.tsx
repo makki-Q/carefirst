@@ -167,6 +167,7 @@ const PatientDashboard = () => {
   const [labTarget, setLabTarget]     = useState<{ lab: any; test: any } | null>(null);
   const [visitDate, setVisitDate]     = useState('');
   const [payWallet, setPayWallet]     = useState('');           // '' = pay at the lab
+  const [labBranch, setLabBranch]     = useState('');           // branch the patient will visit
   const [bookingBusy, setBookingBusy] = useState(false);
   const [bookingMsg, setBookingMsg]   = useState<{ ok: boolean; text: string } | null>(null);
   const [visitsMsg, setVisitsMsg]     = useState<{ ok: boolean; text: string } | null>(null);
@@ -391,7 +392,19 @@ const PatientDashboard = () => {
   // ── Lab visits ──────────────────────────────────────────────────────────────
   const startLabBooking = (lab: any, test: any) => {
     setLabTarget({ lab, test }); setVisitDate(pktToday()); setPayWallet(''); setBookingMsg(null);
+    const offering = branchesFor(lab, test);
+    setLabBranch(String(travelFor(lab, test)?.branchId || (offering.length === 1 ? offering[0].branchId : '')));
     navigate('bookLabTest');
+  };
+
+  // Go to another branch of the same lab (before the sample is collected)
+  const changeVisitBranch = async (b: any, branchId: string) => {
+    setVisitsMsg(null);
+    try {
+      const d: any = await api.put(`/patient/lab-bookings/${b._id}/branch`, { branchId });
+      setLabBookings(prev => prev.map(x => x._id === b._id ? d.booking : x));
+      setVisitsMsg({ ok: true, text: d.message });
+    } catch (err: any) { setVisitsMsg({ ok: false, text: err.message || 'Could not change the branch' }); }
   };
 
   const confirmLabBooking = async () => {
@@ -399,10 +412,11 @@ const PatientDashboard = () => {
     setBookingMsg(null); setBookingBusy(true);
     try {
       const b: any = await api.post('/patient/lab-bookings', {
-        labId: labTarget.lab.labId, testId: labTarget.test._id, visitDate, ...(payWallet ? { walletId: payWallet } : {}),
+        labId: labTarget.lab.labId, testId: labTarget.test._id, visitDate, branchId: labBranch || undefined,
+        ...(payWallet ? { walletId: payWallet } : {}),
       });
       setLabBookings(prev => [b, ...prev]);
-      setVisitsMsg({ ok: true, text: `${labTarget.test.name} booked at ${labTarget.lab.labName} for ${dayLabel(visitDate)}.` });
+      setVisitsMsg({ ok: true, text: `${labTarget.test.name} booked at ${b.branchName || labTarget.lab.labName} for ${dayLabel(visitDate)}.` });
       setLabTarget(null);
       navigate('appointments');
     } catch (err: any) {
@@ -623,10 +637,22 @@ const PatientDashboard = () => {
   // True Cost: travel per lab (null until calculated / when the lab has no location)
   const travelByLab: Record<string, any> = {};
   if (showTrueCost && travel) (travel.labs || []).forEach((l: any) => { travelByLab[String(l.labId)] = l; });
-  const travelFor = (lab: any) => {
+  // Branches of a lab that offer a test (all of them without a test)
+  const branchesFor = (lab: any, test?: any) =>
+    (lab.branches || []).filter((b: any) => !test || !test.branchIds || test.branchIds.map(String).includes(String(b.branchId)));
+  // Travel to the nearest branch (that offers the test, when given) → { …, branchId, branchName } or null
+  const travelFor = (lab: any, test?: any) => {
     const t = travelByLab[String(lab.labId)];
-    return t && t.travelCost !== null ? t : null;
+    if (!t) return null;
+    const allowed = new Set(branchesFor(lab, test).map((b: any) => String(b.branchId)));
+    const nearest = (t.branches || [])
+      .filter((b: any) => b.travelCost !== null && allowed.has(String(b.branchId)))
+      .sort((a: any, b: any) => a.distanceKm - b.distanceKm)[0];
+    if (!nearest) return t.branches ? null : (t.travelCost !== null ? t : null);
+    return { ...nearest, branchName: (lab.branches || []).find((b: any) => String(b.branchId) === String(nearest.branchId))?.name };
   };
+  const travelToBranch = (lab: any, branchId: string) =>
+    (travelByLab[String(lab.labId)]?.branches || []).find((b: any) => String(b.branchId) === String(branchId) && b.travelCost !== null) || null;
   const travelModes = travel?.modes || [
     { key: 'motorbike', label: 'Motorbike', ratePerKm: 8 }, { key: 'car', label: 'Car', ratePerKm: 25 },
     { key: 'ride', label: 'Rickshaw / ride-hailing', ratePerKm: 50 },
@@ -648,7 +674,9 @@ const PatientDashboard = () => {
     const rank = (lab: any) => {
       const t = travelFor(lab);
       if (!t) return Infinity;
-      return testSearch ? Math.min(...lab.tests.map((x: any) => x.price)) + t.travelCost : t.travelCost;
+      return testSearch
+        ? Math.min(...lab.tests.map((x: any) => x.price + (travelFor(lab, x)?.travelCost ?? Infinity)))
+        : t.travelCost;
     };
     filteredLabs.sort((a, b) => rank(a) - rank(b));
   }
@@ -1469,14 +1497,16 @@ const PatientDashboard = () => {
                           <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24" style={{ marginRight: 3, verticalAlign: 'middle' }}>
                             <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
                           </svg>
-                          {lab.location}
+                          {(lab.branches || []).length > 1
+                            ? `${lab.branches.length} branches · ${[...new Set(lab.branches.map((b: any) => b.area || b.name))].join(', ')}`
+                            : (lab.branches?.[0]?.address || lab.location)}
                         </div>
                         {travel && showTrueCost && (() => {
                           const t = travelFor(lab);
                           return (
                             <div style={{ fontSize: '0.74rem', marginTop: 3, color: t ? 'var(--text-sub)' : 'var(--text-muted)' }}>
                               {t
-                                ? <>{t.source === 'approx' ? '≈ ' : ''}{t.distanceKm} km · {t.durationMin} min · travel <strong style={{ color: 'var(--text)' }}>{pkr(t.travelCost)}</strong> there &amp; back</>
+                                ? <>{(lab.branches || []).length > 1 && <>Nearest: <strong style={{ color: 'var(--text)' }}>{t.branchName}</strong> · </>}{t.source === 'approx' ? '≈ ' : ''}{t.distanceKm} km · {t.durationMin} min · travel <strong style={{ color: 'var(--text)' }}>{pkr(t.travelCost)}</strong> there &amp; back</>
                                 : 'Lab has not set its location — travel cost unknown'}
                             </div>
                           );
@@ -1491,11 +1521,14 @@ const PatientDashboard = () => {
                             <span style={{ fontWeight: 600, color: 'var(--text)', fontSize: '0.84rem' }}>{t.name}</span>
                             <span className="pat-price-val">{pkr(t.price)}</span>
                           </div>
-                          {travelFor(lab) && (
+                          {travelFor(lab, t) && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem', color: 'var(--text-sub)' }}>
-                              <span>True cost (with travel)</span>
-                              <strong style={{ color: 'var(--text)' }}>{pkr(t.price + travelFor(lab).travelCost)}</strong>
+                              <span>True cost (with travel{(lab.branches || []).length > 1 ? ` to ${travelFor(lab, t).branchName}` : ''})</span>
+                              <strong style={{ color: 'var(--text)' }}>{pkr(t.price + travelFor(lab, t).travelCost)}</strong>
                             </div>
+                          )}
+                          {(lab.branches || []).length > 1 && t.branchIds && t.branchIds.length < lab.branches.length && (
+                            <div style={{ fontSize: '0.7rem', color: '#92400e' }}>Only at: {branchesFor(lab, t).map((b: any) => b.area || b.name).join(', ')}</div>
                           )}
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                             <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{t.category}</span>
@@ -1634,6 +1667,30 @@ const PatientDashboard = () => {
 
                   {banner(bookingMsg)}
 
+                  {(() => {
+                    const offering = branchesFor(labTarget.lab, labTarget.test)
+                      .map((b: any) => ({ ...b, travel: travelToBranch(labTarget.lab, b.branchId) }))
+                      .sort((a: any, b: any) => (a.travel?.distanceKm ?? Infinity) - (b.travel?.distanceKm ?? Infinity));
+                    return (
+                      <>
+                        <div className="pat-form-label" style={{ marginBottom: 8 }}>Branch {offering.length > 1 && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>— {offering.length} branches offer this test</span>}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+                          {offering.map((b: any) => (
+                            <label key={b.branchId} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer', padding: '10px 12px', borderRadius: 10,
+                              border: '1px solid ' + (String(labBranch) === String(b.branchId) ? 'var(--text)' : 'var(--border)'), fontSize: '0.82rem' }}>
+                              <input type="radio" name="labBranch" checked={String(labBranch) === String(b.branchId)} onChange={() => setLabBranch(String(b.branchId))} style={{ marginTop: 3 }} />
+                              <span style={{ flex: 1 }}>
+                                <strong style={{ color: 'var(--text)' }}>{b.name}</strong>
+                                <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: '0.76rem' }}>{b.address}{b.phone ? ` · ${b.phone}` : ''}{b.hours ? ` · ${b.hours}` : ''}</span>
+                              </span>
+                              {b.travel && <span style={{ fontSize: '0.74rem', color: 'var(--text-sub)', whiteSpace: 'nowrap' }}>{b.travel.distanceKm} km · {pkr(b.travel.travelCost)}</span>}
+                            </label>
+                          ))}
+                        </div>
+                      </>
+                    );
+                  })()}
+
                   <div className="pat-form-label" style={{ marginBottom: 8 }}>Visit date</div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
                     {visitDates.map(d => pickChip(d, d === visitDate, false, () => setVisitDate(d), <>
@@ -1666,7 +1723,7 @@ const PatientDashboard = () => {
                       <strong style={{ color: 'var(--text)' }}>{visitDate && dayLabel(visitDate, { weekday: 'long', day: 'numeric', month: 'long' })}</strong>
                       {' · '}{payWallet ? 'covered by your installment plan' : 'pay at the lab'}. You can cancel until the day before.
                     </div>
-                    <button type="button" className="pat-btn-primary pat-red" disabled={!visitDate || bookingBusy} onClick={confirmLabBooking}
+                    <button type="button" className="pat-btn-primary pat-red" disabled={!visitDate || bookingBusy || !labBranch} onClick={confirmLabBooking}
                       style={bookingBusy ? { opacity: 0.6, cursor: 'wait' } : {}}>
                       {bookingBusy ? 'Booking…' : 'Confirm Visit'}
                     </button>
@@ -1786,7 +1843,19 @@ const PatientDashboard = () => {
                               </td>
                               <td>
                                 <div style={{ fontWeight: 600, color: 'var(--text)' }}>{b.testName}</div>
-                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{b.labName}{b.labLocation ? ` · ${b.labLocation}` : ''}</div>
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{b.branchName || b.labName}{b.branchAddress ? ` · ${b.branchAddress}` : (b.labLocation ? ` · ${b.labLocation}` : '')}</div>
+                                {b.status === 'confirmed' && (() => {
+                                  const lab = allLabTests.find((l: any) => String(l.labId) === String(b.lab?._id || b.lab));
+                                  const test = lab?.tests.find((t: any) => String(t._id) === String(b.labTest));
+                                  const others = lab ? branchesFor(lab, test).filter((br: any) => String(br.branchId) !== String(b.branch)) : [];
+                                  return others.length > 0 && (
+                                    <select style={{ marginTop: 4, fontSize: '0.72rem', padding: '2px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-sub)' }}
+                                      value="" onChange={e => e.target.value && changeVisitBranch(b, e.target.value)}>
+                                      <option value="">Change branch…</option>
+                                      {others.map((br: any) => <option key={br.branchId} value={br.branchId}>{br.name}</option>)}
+                                    </select>
+                                  );
+                                })()}
                               </td>
                               <td style={{ fontSize: '0.8rem' }}>{b.paymentMethod === 'installment' ? 'Installment plan' : <>{pkr(b.price)}<div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>at the lab</div></>}</td>
                               <td><span className={`pat-badge ${st.cls}`}><span className="pat-badge-dot"></span>{st.label}</span></td>

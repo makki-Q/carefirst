@@ -3,7 +3,7 @@ import './LabDashboard.css';
 import { api, getSession, clearSession, downloadSlip } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { confirmDialog, alertDialog } from '../components/Dialog';
-import MapPicker, { currentPosition } from '../components/MapPicker';
+import LabBranches from '../components/LabBranches';
 import { ListenButton, UrduText } from '../components/Urdu';
 
 const TENURE_OPTIONS = [15, 20, 25, 30];
@@ -53,16 +53,17 @@ const LabDashboard = () => {
   const [paySaving, setPaySaving] = useState(false);
   const [payMsg, setPayMsg]       = useState<{ ok: boolean; text: string } | null>(null);
 
-  // Map pin — used for patients' True Cost (travel distance) comparison
-  const [pinDraft, setPinDraft]   = useState<{ lat: number; lng: number } | null>(null);
-  const [pinSaving, setPinSaving] = useState(false);
-  const [pinMsg, setPinMsg]       = useState<{ ok: boolean; text: string } | null>(null);
+  // Branches (a lab account is a chain) and the branch the staff member is working at
+  const [branches, setBranches]   = useState<any[]>([]);
+  const [workingAt, setWorkingAt] = useState(() => { try { return localStorage.getItem('cf_lab_branch') || ''; } catch { return ''; } });
+  const chooseWorkingAt = (id: string) => { setWorkingAt(id); try { localStorage.setItem('cf_lab_branch', id); } catch {} };
 
   // Add test form
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [addForm, setAddForm] = useState({
     name: '', category: '', price: '',
     installmentEnabled: false, installmentCount: '2', installmentTenureDays: '30',
+    branches: [] as string[], // [] = every branch
   });
   const [addLoading, setAddLoading] = useState(false);
 
@@ -71,6 +72,7 @@ const LabDashboard = () => {
   const [editForm, setEditForm] = useState({
     name: '', category: '', price: '',
     installmentEnabled: false, installmentCount: '2', installmentTenureDays: '30',
+    branches: [] as string[],
   });
 
   // Upload report form
@@ -100,9 +102,8 @@ const LabDashboard = () => {
         jazzCash:      d.profile?.jazzCash  || '',
         easyPaisa:     d.profile?.easyPaisa || '',
       });
-      const c = d.profile?.coordinates;
-      if (Number.isFinite(c?.lat) && Number.isFinite(c?.lng)) setPinDraft({ lat: c.lat, lng: c.lng });
     }).catch(() => {});
+    loadBranches();
     api.get('/lab/tests').then((d: any) => setTests(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/lab/reports').then((d: any) => setReports(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/lab/needy-patients').then((d: any) => setNeedyPats(Array.isArray(d) ? d : [])).catch(() => {});
@@ -187,9 +188,10 @@ const LabDashboard = () => {
         installmentEnabled:   addForm.installmentEnabled,
         installmentCount:     addForm.installmentEnabled ? Number(addForm.installmentCount) : 2,
         installmentTenureDays:addForm.installmentEnabled ? Number(addForm.installmentTenureDays) : 30,
+        branches:             addForm.branches,
       });
       setTests(prev => [...prev, created]);
-      setAddForm({ name: '', category: '', price: '', installmentEnabled: false, installmentCount: '2', installmentTenureDays: '30' });
+      setAddForm({ name: '', category: '', price: '', installmentEnabled: false, installmentCount: '2', installmentTenureDays: '30', branches: [] });
       setShowAddPanel(false);
     } catch {} finally { setAddLoading(false); }
   };
@@ -201,6 +203,7 @@ const LabDashboard = () => {
       installmentEnabled:   t.installmentEnabled   || false,
       installmentCount:     String(t.installmentCount     || 2),
       installmentTenureDays:String(t.installmentTenureDays || 30),
+      branches:             (t.branches || []).map(String),
     });
   };
   const cancelEdit = () => setEditingTest(null);
@@ -212,6 +215,7 @@ const LabDashboard = () => {
         installmentEnabled:   editForm.installmentEnabled,
         installmentCount:     editForm.installmentEnabled ? Number(editForm.installmentCount) : 2,
         installmentTenureDays:editForm.installmentEnabled ? Number(editForm.installmentTenureDays) : 30,
+        branches:             editForm.branches,
       });
       setTests(prev => prev.map((t: any) => t._id === id ? { ...t, ...updated } : t));
       setEditingTest(null);
@@ -316,25 +320,49 @@ const LabDashboard = () => {
     } catch (err: any) { alertDialog(err.message || 'Could not confirm the receipt'); }
   };
 
-  const useLabPosition = async () => {
-    setPinMsg(null);
-    try { setPinDraft(await currentPosition()); }
-    catch (err: any) { setPinMsg({ ok: false, text: err.message }); }
+  const loadBranches = () =>
+    api.get('/lab/branches').then((d: any) => setBranches(Array.isArray(d) ? d : [])).catch(() => {});
+  const branchesChanged = () => {
+    loadBranches();
+    api.get('/lab/tests').then((d: any) => setTests(Array.isArray(d) ? d : [])).catch(() => {}); // a removed branch can switch tests off
+    loadBookings();
   };
 
-  const saveLocation = async (coords: { lat: number; lng: number } | null) => {
-    setPinMsg(null); setPinSaving(true);
+  // Where a test is offered: ids of branches ([] / missing = every branch)
+  const offeredAt = (test: any) => (test?.branches?.length ? test.branches.map(String) : branches.map((b: any) => String(b.branchId)));
+  const branchName = (id: string) => branches.find((b: any) => String(b.branchId) === String(id))?.name || '—';
+
+  // The patient came to another branch: take the visit at the given branch
+  const transferBooking = async (b: any, branchId: string) => {
+    if (!(await confirmDialog(`Take ${b.patient?.name || 'this patient'}'s ${b.testName} visit at ${branchName(branchId)}? It was booked at ${b.branchName}. The patient is told.`, { confirmLabel: 'Take visit here' }))) return;
     try {
-      const updated: any = await api.put('/lab/profile', { coordinates: coords });
-      setLabProfile((prev: any) => ({ ...prev, profile: updated }));
-      if (!coords) setPinDraft(null);
-      setPinMsg({ ok: true, text: coords ? 'Location saved. Patients can now see their travel cost to your lab.' : 'Location removed.' });
-    } catch (err: any) {
-      setPinMsg({ ok: false, text: err.message || 'Could not save the location' });
-    } finally {
-      setPinSaving(false);
-    }
+      const d: any = await api.put(`/lab/bookings/${b._id}/transfer`, { branchId });
+      setBookings(prev => prev.map(x => x._id === b._id ? d.booking : x));
+    } catch (err: any) { alertDialog(err.message || 'Could not move the visit'); }
   };
+
+  // Which branches the "Offered at" checkboxes show as ticked; ticking all = every branch ([])
+  const toggleOffered = (current: string[], id: string) => {
+    const all = branches.map((b: any) => String(b.branchId));
+    const set = new Set(current.length ? current : all);
+    if (set.has(id)) set.delete(id); else set.add(id);
+    return set.size === all.length ? [] : [...set];
+  };
+  const offeredPicker = (value: string[], onChange: (v: string[]) => void) => branches.length > 1 && (
+    <div style={{ margin: '4px 0 12px' }}>
+      <div className="dash-form-label" style={{ marginBottom: 6 }}>Offered at</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px' }}>
+        {branches.map((br: any) => {
+          const on = !value.length || value.includes(String(br.branchId));
+          return (
+            <label key={br.branchId} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: 'var(--text)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={on} onChange={() => onChange(toggleOffered(value, String(br.branchId)))} /> {br.name}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   const savePaymentDetails = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -379,14 +407,13 @@ const LabDashboard = () => {
       {currentPage !== 'catalog' && <> <a style={{ textDecoration: 'underline', cursor: 'pointer', fontWeight: 600 }} onClick={() => setCurrentPage('catalog')}>Add them in Test Catalog</a>.</>}
     </div>
   );
-  const savedPin = Number.isFinite(lp?.coordinates?.lat) && Number.isFinite(lp?.coordinates?.lng) ? lp.coordinates : null;
-  const locationNotice = labProfile && !savedPin && (
+  const unplaced = branches.filter((b: any) => !b.hasLocation);
+  const locationNotice = branches.length > 0 && unplaced.length > 0 && (
     <div className="dash-card dash-fu" style={{ padding: '12px 18px', marginBottom: 18, background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', fontSize: '0.82rem' }}>
-      <strong>Set your lab's location on the map.</strong> Patients compare labs by true cost (test price + travel); without a location your lab is listed last.
-      {currentPage !== 'catalog' && <> <a style={{ textDecoration: 'underline', cursor: 'pointer', fontWeight: 600 }} onClick={() => setCurrentPage('catalog')}>Set it in Test Catalog</a>.</>}
+      <strong>{unplaced.length === branches.length ? "Set your branches' locations on the map." : `${unplaced.length} branch${unplaced.length === 1 ? ' has' : 'es have'} no map location.`}</strong> Patients compare labs by true cost (test price + travel); a branch without a location is listed last.
+      {currentPage !== 'branches' && <> <a style={{ textDecoration: 'underline', cursor: 'pointer', fontWeight: 600 }} onClick={() => setCurrentPage('branches')}>Set them under Branches</a>.</>}
     </div>
   );
-  const pinChanged = Boolean(pinDraft) && (pinDraft?.lat !== savedPin?.lat || pinDraft?.lng !== savedPin?.lng);
 
   const today = pktToday();
   const openBookings   = bookings.filter((b: any) => ['confirmed', 'sample_collected'].includes(b.status));
@@ -395,7 +422,8 @@ const LabDashboard = () => {
   // Slip numbers compare without dashes / spaces / case ("lb 7kq4m9xd" finds LB-7KQ4-M9XD)
   const slipKey = (v: string) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   const filteredBookings = bookings.filter((b: any) =>
-    slipKey(slipQuery)           ? slipKey(b.slipNumber).includes(slipKey(slipQuery))
+    slipKey(slipQuery)           ? slipKey(b.slipNumber).includes(slipKey(slipQuery)) // a slip is found at any branch
+    : workingAt && String(b.branch) !== workingAt ? false
     : bookingFilter === 'all'      ? true
     : bookingFilter === 'today'  ? b.visitDate === today
     : bookingFilter === 'upcoming' ? b.visitDate > today && b.status === 'confirmed'
@@ -408,6 +436,7 @@ const LabDashboard = () => {
     requests:     'Bookings',
     upload:       'Upload Reports',
     catalog:      'Test Catalog',
+    branches:     'Branches',
     revenue:      'Revenue',
     needyPatients:'Needy Patients',
     receipts:     'Receipts',
@@ -458,6 +487,12 @@ const LabDashboard = () => {
             <button className={`dash-nav-item ${currentPage === 'catalog' ? 'active' : ''}`} onClick={() => navigate('catalog')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
               Test Catalog
+            </button>
+
+            <button className={`dash-nav-item ${currentPage === 'branches' ? 'active' : ''}`} onClick={() => navigate('branches')}>
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              Branches
+              {branches.length > 1 && <span className="dash-nav-badge" style={{ background: 'var(--text-muted)' }}>{branches.length}</span>}
             </button>
 
             <button className={`dash-nav-item ${currentPage === 'needyPatients' ? 'active' : ''}`} onClick={() => navigate('needyPatients')}>
@@ -667,6 +702,12 @@ const LabDashboard = () => {
                 <div className="dash-filter-row dash-fu-1">
                   <input className="dash-filter-select" style={{ width: 190, backgroundImage: 'none', paddingRight: 12, cursor: 'text' }} type="text" placeholder="Check a slip number…"
                     value={slipQuery} onChange={e => setSlipQuery(e.target.value)} title="Type the number on the patient's slip to find their booking" />
+                  {branches.length > 1 && (
+                    <select className="dash-filter-select" value={workingAt} onChange={e => chooseWorkingAt(e.target.value)} title="Show the visits of the branch you are working at">
+                      <option value="">All branches</option>
+                      {branches.map((br: any) => <option key={br.branchId} value={String(br.branchId)}>Working at: {br.name}</option>)}
+                    </select>
+                  )}
                   <select className="dash-filter-select" value={bookingFilter} onChange={e => setBookingFilter(e.target.value as any)}>
                     <option value="open">Open</option>
                     <option value="today">Visiting today</option>
@@ -686,13 +727,13 @@ const LabDashboard = () => {
                 <div className="dash-table-wrap">
                   <table>
                     <thead>
-                      <tr><th>Visit</th><th>Patient</th><th>Test</th><th>Payment</th><th>Status</th><th style={{ textAlign: 'right' }}>Action</th></tr>
+                      <tr><th>Visit</th><th>Patient</th><th>Test</th><th>Branch</th><th>Payment</th><th>Status</th><th style={{ textAlign: 'right' }}>Action</th></tr>
                     </thead>
                     <tbody>
                       {!bookingsLoaded ? (
-                        <tr><td colSpan={6} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                        <tr><td colSpan={7} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)' }}>Loading…</td></tr>
                       ) : filteredBookings.length === 0 ? (
-                        <tr><td colSpan={6} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                        <tr><td colSpan={7} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
                           {slipKey(slipQuery)
                             ? 'No booking at your lab has this slip number. Check the number, or the slip may be for another lab.'
                             : bookings.length === 0 ? 'No bookings yet. Patients book visits from Book Tests.' : 'No bookings in this view.'}
@@ -710,6 +751,11 @@ const LabDashboard = () => {
                               <div className="dash-mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{[b.patient?.cnic, b.patient?.phone].filter(Boolean).join(' · ')}</div>
                             </td>
                             <td>{b.testName}</td>
+                            <td style={{ fontSize: '0.78rem' }}>
+                              <div style={{ fontWeight: 600, color: workingAt && String(b.branch) !== workingAt ? '#b45309' : 'var(--text)' }}>{b.branchName || '—'}</div>
+                              {workingAt && String(b.branch) !== workingAt && <div style={{ fontSize: '0.68rem', color: '#b45309' }}>booked at another branch</div>}
+                              {b.transfers?.length > 0 && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>moved from {b.transfers[b.transfers.length - 1].fromName}</div>}
+                            </td>
                             <td style={{ fontSize: '0.8rem' }}>
                               {b.paymentMethod === 'installment'
                                 ? <span style={{ color: '#1d4ed8', fontWeight: 600 }}>Installment plan</span>
@@ -721,6 +767,16 @@ const LabDashboard = () => {
                             </td>
                             <td style={{ textAlign: 'right' }}>
                               <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                {b.status === 'confirmed' && workingAt && String(b.branch) !== workingAt && offeredAt(tests.find((t: any) => t._id === b.labTest)).includes(workingAt) && (
+                                  <button className="dash-btn-primary accent" style={{ padding: '5px 12px', fontSize: '0.76rem' }} onClick={() => transferBooking(b, workingAt)}>Take visit here</button>
+                                )}
+                                {b.status === 'confirmed' && !workingAt && branches.length > 1 && (
+                                  <select className="dash-filter-select" style={{ height: 28, fontSize: '0.72rem' }} value="" onChange={e => e.target.value && transferBooking(b, e.target.value)}>
+                                    <option value="">Move to…</option>
+                                    {branches.filter((br: any) => String(br.branchId) !== String(b.branch) && offeredAt(tests.find((t: any) => t._id === b.labTest)).includes(String(br.branchId)))
+                                      .map((br: any) => <option key={br.branchId} value={br.branchId}>{br.name}</option>)}
+                                  </select>
+                                )}
                                 {b.status === 'confirmed' && (
                                   <button className="adm-approve-btn" onClick={() => advanceBooking(b, 'sample-collected')}>Sample collected</button>
                                 )}
@@ -931,6 +987,23 @@ const LabDashboard = () => {
             </section>
 
             {/* ══ TEST CATALOG ══════════════════════════════════ */}
+            {/* ══ BRANCHES ══════════════════════════════════════ */}
+            <section className={`dash-page-section ${currentPage === 'branches' ? 'active' : ''}`}>
+              <div className="dash-page-header dash-fu">
+                <div className="dash-page-title">Branches</div>
+                <div className="dash-page-rule"></div>
+                <div className="dash-page-subtitle">Every place patients can visit — each with its own address, phone, hours and map location</div>
+              </div>
+              {locationNotice}
+              <div className="dash-fu dash-fu-1">
+                <LabBranches branches={branches} labName={labName} onChanged={branchesChanged} />
+              </div>
+              <div className="dash-fu dash-fu-2" style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 18, lineHeight: 1.6 }}>
+                Patients choose a branch when they book. If one comes to the wrong branch, open Bookings, type their slip number and press
+                <strong> Take visit here</strong> — the visit moves to your branch and the patient is told. Limit a test to some branches in Test Catalog.
+              </div>
+            </section>
+
             <section className={`dash-page-section ${currentPage === 'catalog' ? 'active' : ''}`}>
               <div className="dash-page-header dash-fu" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                 <div>
@@ -979,35 +1052,6 @@ const LabDashboard = () => {
                 </form>
               </div>
 
-              {/* Lab location — patients' True Cost (travel distance) comparison */}
-              <div className="dash-card dash-fu" style={{ padding: '20px 28px', marginBottom: 20 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text)', marginBottom: 4 }}>Lab Location</div>
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                      Click the map or drag the pin to your entrance. Patients see the road distance and travel cost to your lab.
-                    </div>
-                  </div>
-                  <button type="button" className="dash-btn-ghost" onClick={useLabPosition} disabled={pinSaving}>Use my current location</button>
-                </div>
-                {pinMsg && (
-                  <div style={{ padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: '0.8rem', background: pinMsg.ok ? '#f0fdf4' : '#fef2f2', color: pinMsg.ok ? '#166534' : '#991b1b', border: '1px solid ' + (pinMsg.ok ? '#bbf7d0' : '#fecaca') }}>
-                    {pinMsg.text}
-                  </div>
-                )}
-                <MapPicker value={pinDraft} onChange={p => { setPinDraft(p); setPinMsg(null); }} />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-                  <span className="dash-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flex: 1 }}>
-                    {pinDraft ? `${pinDraft.lat.toFixed(5)}, ${pinDraft.lng.toFixed(5)}${pinChanged ? ' — not saved yet' : ''}` : 'No location set'}
-                  </span>
-                  {savedPin && <button type="button" className="dash-btn-ghost" onClick={() => saveLocation(null)} disabled={pinSaving}>Remove</button>}
-                  <button type="button" className="dash-btn-primary accent" disabled={!pinChanged || pinSaving} onClick={() => pinDraft && saveLocation(pinDraft)}
-                    style={!pinChanged || pinSaving ? { opacity: 0.55 } : {}}>
-                    {pinSaving ? 'Saving…' : 'Save Location'}
-                  </button>
-                </div>
-              </div>
-
               {showAddPanel && (
                 <div className="dash-card dash-fu" style={{ padding: '24px 28px', marginBottom: 20 }}>
                   <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text)', marginBottom: 16 }}>New Test</div>
@@ -1025,6 +1069,8 @@ const LabDashboard = () => {
                       <input className="dash-form-input" type="number" placeholder="0" value={addForm.price} onChange={e => setAddForm(f => ({ ...f, price: e.target.value }))} />
                     </div>
                   </div>
+
+                  {offeredPicker(addForm.branches, v => setAddForm(f => ({ ...f, branches: v })))}
 
                   {/* Installment Plan */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '4px 0 14px' }}>
@@ -1076,6 +1122,8 @@ const LabDashboard = () => {
                         <input className="dash-form-input" style={{ marginBottom: 8 }} type="text" placeholder="Category" value={editForm.category} onChange={e => setEditForm(f => ({ ...f, category: e.target.value }))} />
                         <input className="dash-form-input" style={{ marginBottom: 10 }} type="number" placeholder="Price" value={editForm.price} onChange={e => setEditForm(f => ({ ...f, price: e.target.value }))} />
 
+                        {offeredPicker(editForm.branches, v => setEditForm(f => ({ ...f, branches: v })))}
+
                         {/* Installment toggle in edit */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                           <button type="button" onClick={() => setEditForm(f => ({ ...f, installmentEnabled: !f.installmentEnabled }))} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
@@ -1106,6 +1154,11 @@ const LabDashboard = () => {
                         </div>
                         <div className="lab-test-name">{t.name}</div>
                         <div className="lab-test-cat">{t.category}</div>
+                        {branches.length > 1 && (
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                            {t.branches?.length ? `At: ${t.branches.map(branchName).join(', ')}` : 'At all branches'}
+                          </div>
+                        )}
                         {t.installmentEnabled && (
                           <div style={{ margin: '6px 0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span style={{ padding: '2px 8px', borderRadius: 20, background: 'rgba(220,38,38,0.1)', color: 'var(--accent, #e11d48)', fontSize: '0.7rem', fontWeight: 700 }}>
