@@ -134,7 +134,7 @@ const importDoctors = async () => {
   const labs = await importLabs();
   const doctors = await importDoctors();
   console.log('\nLAB CHAINS (password: password123)');
-  labs.forEach(l => console.log(`  ${l.name.padEnd(36)} ${l.email.padEnd(40)} ${l.branches} branches · ${l.tests} tests`));
+  labs.forEach(l => console.log(`  ${l.name.padEnd(36)} ${l.email.padEnd(40)} ${l.branches} branch${l.branches === 1 ? '' : 'es'} · ${l.tests} tests`));
   console.log(`\nDOCTORS: ${doctors.length} (password: password123), e.g.`);
   doctors.slice(0, 5).forEach(d => console.log(`  ${d.name.padEnd(32)} ${d.email.padEnd(48)} ${d.specialization}`));
   console.log('  … e-mail = <first.middle.last>@doctors.carefirst.test');
