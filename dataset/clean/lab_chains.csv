@@ -1,0 +1,6 @@
+chain_id,chain_name,phone,phone_source,website,bank_name,account_title,account_number,jazzcash,easypaisa,payment_details
+chughtai-lab,Chughtai Lab,03-111-456-789,Chughtai Lab's Faisalabad page (chughtailab.com/regional-lab/chughtai-lab-faisalabad-2),https://chughtailab.com,DEMO Bank (not a real account),Chughtai Lab (demo),DEMO-0001-0000,,,demo
+idc,Islamabad Diagnostic Centre (IDC),051-111-000-432,UAN printed on IDC Faisalabad reports,https://idc.net.pk,DEMO Bank (not a real account),Islamabad Diagnostic Centre (IDC) (demo),DEMO-0002-0000,,,demo
+citilab,Citilab & Research Centre,111-511-512,UAN on citilab.com.pk/contact,https://citilab.com.pk,DEMO Bank (not a real account),Citilab & Research Centre (demo),DEMO-0003-0000,,,demo
+excel-labs,Excel Labs,051-88-44-000,helpline on excel-labs.com/find-location,https://excel-labs.com,DEMO Bank (not a real account),Excel Labs (demo),DEMO-0004-0000,,,demo
+innova,Innova Labs and Diagnostics,042-111-466-682,main line on innovalab.com.pk/contact (Lahore head office),https://innovalab.com.pk,DEMO Bank (not a real account),Innova Labs and Diagnostics (demo),DEMO-0005-0000,,,demo

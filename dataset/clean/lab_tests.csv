@@ -1,0 +1,193 @@
+chain_id,test_name,also_known_as,category,price_pkr,instacare_discounted_price_pkr,installment_enabled,installment_count,installment_tenure_days,source_url,collected_on
+chughtai-lab,17-OH Progesterone,"17-OH Progesterone,17-Hydroprogesterone,17 Hydroxy Progeserone",Hormones & Special Chemistry,4600,3680,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/17-oh-progesterone,2026-10-05
+chughtai-lab,25 OH Vitamin D Total,,Hormones & Special Chemistry,4200,3150,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/25-oh-vitamin-d-total,2026-10-05
+chughtai-lab,A/G Ratio,"Liver Function Test, ALP, ALB, T.BILI, ALT, AST, GGT,LFT,TP,A/G Ratio",Biochemistry,1050,840,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/ag-ratio,2026-10-05
+chughtai-lab,Alkaline Phosphatase,"Alkaline Po4, ALK Po4, Alkaline Phosphatase (Serum)",Biochemistry,750,600,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/alkaline-phosphatase,2026-10-05
+chughtai-lab,Anti-HBs,Hepatitis B Surface Antibody,Serology & Immunology,2650,2120,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/anti-hbs,2026-10-05
+chughtai-lab,Anti-HCV,"Anti Hepatitis C Virus Antibodies, ANTI HCV,Hepatitis C Antibody",Serology & Immunology,3000,2400,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/anti-hcv,2026-10-05
+chughtai-lab,Anti-HIV - 1 & 2,"HIV-1 and HIV-2 Antibody,HIV Screening Test,AIDS Screening Test",Serology & Immunology,3700,2960,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/anti-hiv-1-2,2026-10-05
+chughtai-lab,Anti-Mullerian Hormone,"AMH,AMH Hormone Test",Hormones & Special Chemistry,7200,5760,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/anti-mullerian-hormone-amh,2026-10-05
+chughtai-lab,Anti-MuSK Antibodies,,Serology & Immunology,19750,15800,yes,2,30,https://instacare.pk/book-tests/lab/chughtai-lab-11081/anti-musk-antibodies,2026-10-05
+chughtai-lab,Basic Health Profile,,Biochemistry,5800,4640,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/basic-health-profile,2026-10-05
+chughtai-lab,"Basic Thyroid Profile (FT3, FT4, TSH)","Basic TFT, FT4,Thyroid Profile,TSH,Basic Thyroid Profile ,FT4",Hormones & Special Chemistry,6500,5200,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/basic-thyroid-profile-ft3-ft4-tsh,2026-10-05
+chughtai-lab,Beta hCG,"Total beta hCG,Quantitative hCG,Qualitative hCG,hCG Pregnancy",Hormones & Special Chemistry,2550,2040,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/beta-hcg,2026-10-05
+chughtai-lab,Complete Blood Count (CBC),"CBC, Blood For Analysis, Blood CP, Blood Complete Picture, Blood Routine Examination,Blood C/E Complete",Haematology,900,720,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/blood-ce-complete-cbc,2026-10-05
+chughtai-lab,Blood Glucose Random,"Random Glucose Test,Glucose Test (Random),Blood Sugar (Non-Fasting),CBG,Capillary Blood Glucose",Biochemistry,500,400,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/blood-glucose-random,2026-10-05
+chughtai-lab,Chromosomal Analysis / Karyotyping from blood,,Genetics,11500,9200,yes,2,30,https://instacare.pk/book-tests/lab/chughtai-lab-11081/chromosomal-analysis--karyotyping-from-blood,2026-10-05
+chughtai-lab,Cytology Body Fluid,,Histopathology & Cytology,2500,2000,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/cytology-body-fluid,2026-10-05
+chughtai-lab,Free PSA,,Hormones & Special Chemistry,11700,9360,yes,2,30,https://instacare.pk/book-tests/lab/chughtai-lab-11081/free-psa,2026-10-05
+chughtai-lab,Free T3,"Triiodothyronine,FT3,Total Triiodothyronine,Free Triiodothyronine",Hormones & Special Chemistry,3000,2400,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/free-t3,2026-10-05
+chughtai-lab,Free T4,"Thyroxine,Free Thyroxine",Hormones & Special Chemistry,3000,2400,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/free-t4,2026-10-05
+chughtai-lab,Gamma Glutamyl Transpeptidase,"GGT,GGTP,Gamma-GT,GTP",Biochemistry,650,520,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/ggt,2026-10-05
+chughtai-lab,Hemoglobin,"Hgb,HB",Haematology,600,480,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/hb,2026-10-05
+chughtai-lab,HbA1c,"Hemoglobin A1c,A1c,Glycohemoglobin,Glycosylated Hemoglobin,Glycated Hemoglobin",Biochemistry,2400,1800,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/hba1c-glycosylated-hemoglobin,2026-10-05
+chughtai-lab,HBsAg,"Hepatitis B Antigen,Hepatitis B Surface Antigen",Serology & Immunology,2150,1720,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/hbsag,2026-10-05
+chughtai-lab,HBV PCR (Viral Load / Quantitation),Hepatitis B Virus PCR (Quantitative),Molecular Diagnostics,14000,11200,yes,2,30,https://instacare.pk/book-tests/lab/chughtai-lab-11081/hbv-pcr-viral-load-quantitation,2026-10-05
+chughtai-lab,Luteinizing Hormone (LH),,Hormones & Special Chemistry,2400,1920,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/lh,2026-10-05
+chughtai-lab,Lipid Profile,"Lipid Panel, Coronary Risk Panel,Lipid Profile (Fasting),Lipid Profile (Random)",Biochemistry,2700,2025,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/lipid-profile,2026-10-05
+chughtai-lab,Liver Function Test (LFT),"LFT,Liver Profile,Liver Panel",Biochemistry,2200,1760,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/liver-function-test-with-ggt,2026-10-05
+chughtai-lab,PAP Smear for LBC," Cervical Smear,Papanicolaou Test",Histopathology & Cytology,5000,4000,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/pap-smear-for-lbc,2026-10-05
+chughtai-lab,Plasma Glucose (Fasting),,Biochemistry,600,480,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/plasma-glucose-fasting,2026-10-05
+chughtai-lab,Platelet Count,"Thrombocyte Count,PLT,Platelet Distribution Width,PDW,Mean Platelet Volume,MPV",Haematology,600,480,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/platelet-count,2026-10-05
+chughtai-lab,Prostate Specific Antigen (PSA),"Total PSA,Free PSA",Hormones & Special Chemistry,3800,3040,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/psa,2026-10-05
+chughtai-lab,Renal Function Tests,"RFT,Renal Panel",Biochemistry,2100,1680,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/renal-function-tests,2026-10-05
+chughtai-lab,Semen Analysis," Sperm Analysis,Sperm Coun,Seminal Fluid Analysis",Clinical Pathology,3450,2760,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/semen-for-analysis,2026-10-05
+chughtai-lab,"Thyroid Function Test (T3, T4, TSH)","FT3,Triiodothyronine,FT4, Thyroid-stimulating Hormone,Thyrotropin",Hormones & Special Chemistry,5000,4000,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/thyroid-function-test-t3-t4-tsh,2026-10-05
+chughtai-lab,Total T3,"Triiodothyronine,Total Triiodothyronine",Hormones & Special Chemistry,1800,1440,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/total-t3,2026-10-05
+chughtai-lab,Total T4,"Triiodothyronine,Total Triiodothyronine",Hormones & Special Chemistry,1800,1440,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/total-t4,2026-10-05
+chughtai-lab,TSH (Thyroid Stimulating Hormone),"TSH,Thyrotropin",Hormones & Special Chemistry,2000,1600,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/tsh,2026-10-05
+chughtai-lab,Uric Acid (Serum),"Serum Urate,UA",Biochemistry,900,720,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/uric-acid-serum,2026-10-05
+chughtai-lab,Urine C/E,"Urine Routine Examination,Urine Complete Examination,Urine R/E,Urine D/R,Urine Analysis,Urine C/E (Complete, Analysis)",Clinical Pathology,650,520,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/urine-ce,2026-10-05
+chughtai-lab,Vitamin B12,,Hormones & Special Chemistry,2600,2080,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/vitamin-b12,2026-10-05
+chughtai-lab,WBC Count (TLC)," Leukocyte Count,White Count",Haematology,600,480,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/wbc-count-tlc,2026-10-05
+chughtai-lab,CK-MB,CPK MB,Cardiology,2300,1840,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/ck-mb,2026-10-05
+chughtai-lab,Dengue NS1 Antigen,"Dengue Fever Virus,Dengue Fever Antibodies",Serology & Immunology,3450,2760,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/dengue-ns1-antigen,2026-10-05
+chughtai-lab,Erythrocyte Sedimentation Rate (ESR),"ESR,Sed Rate,Sedimentation Rate,Westergren Sedimentation Rate,Wintrobe Sedimentation Rate",Haematology,600,480,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/esr,2026-10-05
+chughtai-lab,X-Ray: Chest PA View,,Radiology,1500,1200,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/x-ray-chest-pa-view,2026-10-05
+chughtai-lab,Ultra Sound (USG): Abdomen & Pelvis,,Radiology,3500,2625,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/ultra-sound-usg-abdomen-pelvis,2026-10-05
+chughtai-lab,Ultra Sound (USG): Pelvis,,Radiology,3000,2250,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/ultra-sound-usg-pelvis,2026-10-05
+chughtai-lab,Ultra Sound (USG): Obstetrical USG 2nd Trimester with Anomaly Scan,,Radiology,3500,2625,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/ultra-sound-usg-obstetrical-usg-2nd-trimester-with-anomaly-scan,2026-10-05
+chughtai-lab,MRI Brain With Contrast,,Radiology,15000,12000,yes,2,30,https://instacare.pk/book-tests/lab/chughtai-lab-11081/mri-brain-with-contrast,2026-10-05
+chughtai-lab,MRI Knee Joint With Contrast,,Radiology,18000,14400,yes,2,30,https://instacare.pk/book-tests/lab/chughtai-lab-11081/mri-knee-joint-with-contrast,2026-10-05
+chughtai-lab,MRI Lumbar Spine Screening,,Radiology,10000,8000,no,,,https://instacare.pk/book-tests/lab/chughtai-lab-11081/mri-lumber-spine-screening,2026-10-05
+chughtai-lab,MRI Cervical Spine With Contrast,,Radiology,14000,11200,yes,2,30,https://instacare.pk/book-tests/lab/chughtai-lab-11081/mri-cervical-spine-with-contrast,2026-10-05
+chughtai-lab,MRCP + MRI Pancreas with contrast,"Magnetic Resonance Cholangiopancreatography,Magnetic Resonance Imaging Pancreas",Radiology,22000,17600,yes,2,30,https://instacare.pk/book-tests/lab/chughtai-lab-11081/mrcp-mri-pancreas-with-contrast,2026-10-05
+chughtai-lab,MR Mammography With Contrast,,Radiology,22000,17600,yes,2,30,https://instacare.pk/book-tests/lab/chughtai-lab-11081/mr-mammography-with-contrast,2026-10-05
+chughtai-lab,CT Angiography Neck and Brain,,Radiology,23000,18400,yes,2,30,https://instacare.pk/book-tests/lab/chughtai-lab-11081/ct-angiography-neck-and-brain,2026-10-05
+idc,17-OH Progesterone,"17-OH Progesterone,17-Hydroprogesterone,17 Hydroxy Progeserone",Hormones & Special Chemistry,6000,5400,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/17-oh-progesterone,2026-10-05
+idc,A/G Ratio,"Liver Function Test, ALP, ALB, T.BILI, ALT, AST, GGT,LFT,TP,A/G Ratio",Biochemistry,1500,1350,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/ag-ratio,2026-10-05
+idc,Alkaline Phosphatase,"Alkaline Po4, ALK Po4, Alkaline Phosphatase (Serum)",Biochemistry,950,855,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/alkaline-phosphatase,2026-10-05
+idc,Anti-HCV,"Anti Hepatitis C Virus Antibodies, ANTI HCV,Hepatitis C Antibody",Serology & Immunology,1100,990,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/anti-hcv,2026-10-05
+idc,Anti-Mullerian Hormone,"AMH,AMH Hormone Test",Hormones & Special Chemistry,6900,6210,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/anti-mullerian-hormone-amh,2026-10-05
+idc,Beta hCG,"Total beta hCG,Quantitative hCG,Qualitative hCG,hCG Pregnancy",Hormones & Special Chemistry,2550,2295,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/beta-hcg,2026-10-05
+idc,Bilirubin Total,"TBIL, Total Bilirubin",Biochemistry,950,855,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/bilirubin-total,2026-10-05
+idc,Complete Blood Count (CBC),"CBC, Blood For Analysis, Blood CP, Blood Complete Picture, Blood Routine Examination,Blood C/E Complete",Haematology,1200,1080,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/blood-ce-complete-cbc,2026-10-05
+idc,Cholesterol,,Biochemistry,1000,900,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/cholesterol,2026-10-05
+idc,Chromosomal Analysis / Karyotyping from blood,,Genetics,19500,17550,yes,2,30,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/chromosomal-analysis--karyotyping-from-blood,2026-10-05
+idc,Free PSA,,Hormones & Special Chemistry,6300,5670,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/free-psa,2026-10-05
+idc,Free T3,"Triiodothyronine,FT3,Total Triiodothyronine,Free Triiodothyronine",Hormones & Special Chemistry,2950,2655,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/free-t3,2026-10-05
+idc,Free T4,"Thyroxine,Free Thyroxine",Hormones & Special Chemistry,2900,2610,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/free-t4,2026-10-05
+idc,Hemoglobin,"Hgb,HB",Haematology,750,675,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/hb,2026-10-05
+idc,HbA1c,"Hemoglobin A1c,A1c,Glycohemoglobin,Glycosylated Hemoglobin,Glycated Hemoglobin",Biochemistry,2500,2250,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/hba1c-glycosylated-hemoglobin,2026-10-05
+idc,HBsAg,"Hepatitis B Antigen,Hepatitis B Surface Antigen",Serology & Immunology,1100,990,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/hbsag,2026-10-05
+idc,Luteinizing Hormone (LH),,Hormones & Special Chemistry,2400,2160,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/lh,2026-10-05
+idc,Lipid Profile,"Lipid Panel, Coronary Risk Panel,Lipid Profile (Fasting),Lipid Profile (Random)",Biochemistry,3000,2700,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/lipid-profile,2026-10-05
+idc,Liver Function Test (LFT),"LFT,Liver Profile,Liver Panel",Biochemistry,2400,2160,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/liver-function-test-with-ggt,2026-10-05
+idc,Pap Smear,,Histopathology & Cytology,4300,3870,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/pap-smear,2026-10-05
+idc,Platelet Count,"Thrombocyte Count,PLT,Platelet Distribution Width,PDW,Mean Platelet Volume,MPV",Haematology,850,765,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/platelet-count,2026-10-05
+idc,PSA Total,,Hormones & Special Chemistry,3700,3330,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/psa-total,2026-10-05
+idc,Renal Function Tests,"RFT,Renal Panel",Biochemistry,3200,2880,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/renal-function-tests,2026-10-05
+idc,Semen Analysis," Sperm Analysis,Sperm Coun,Seminal Fluid Analysis",Clinical Pathology,3500,3150,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/semen-for-analysis,2026-10-05
+idc,"Thyroid Function Test (T3, T4, TSH)","FT3,Triiodothyronine,FT4, Thyroid-stimulating Hormone,Thyrotropin",Hormones & Special Chemistry,4400,3960,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/thyroid-function-test-t3-t4-tsh,2026-10-05
+idc,Total Protein,,Biochemistry,1000,900,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/total-protein,2026-10-05
+idc,Total T3,"Triiodothyronine,Total Triiodothyronine",Hormones & Special Chemistry,2100,1890,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/total-t3,2026-10-05
+idc,Total T4,"Triiodothyronine,Total Triiodothyronine",Hormones & Special Chemistry,2200,1980,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/total-t4,2026-10-05
+idc,Triglycerides,,Biochemistry,1100,990,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/triglycerides,2026-10-05
+idc,TSH (Thyroid Stimulating Hormone),"TSH,Thyrotropin",Hormones & Special Chemistry,2200,1980,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/tsh,2026-10-05
+idc,Uric Acid (Serum),"Serum Urate,UA",Biochemistry,950,855,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/uric-acid-serum,2026-10-05
+idc,Urine C/E,"Urine Routine Examination,Urine Complete Examination,Urine R/E,Urine D/R,Urine Analysis,Urine C/E (Complete, Analysis)",Clinical Pathology,750,675,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/urine-ce,2026-10-05
+idc,Vitamin B12,,Hormones & Special Chemistry,2900,2610,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/vitamin-b12,2026-10-05
+idc,Stool R/E,,Clinical Pathology,900,810,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/stool-re,2026-10-05
+idc,Typhidot,,Serology & Immunology,1900,1710,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/typhidot,2026-10-05
+idc,CK-MB,CPK MB,Cardiology,2500,2250,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/ck-mb,2026-10-05
+idc,G6 PD Test,,Haematology,3500,3150,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/g6-pd-test,2026-10-05
+idc,Erythrocyte Sedimentation Rate (ESR),"ESR,Sed Rate,Sedimentation Rate,Westergren Sedimentation Rate,Wintrobe Sedimentation Rate",Haematology,800,720,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/esr,2026-10-05
+idc,Ultrasound Abdomen & Pelvis (Two Region),,Radiology,3500,3150,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/ultrasound-abdomen--pelvis-two-region,2026-10-05
+idc,MRI Brain,,Radiology,12500,11250,yes,2,30,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/mri-brain,2026-10-05
+idc,MRI Knee Joint,,Radiology,15500,13950,yes,2,30,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/mri-knee-joint,2026-10-05
+idc,MRI Lumbar Spine Screening,,Radiology,9000,8100,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/mri-lumber-spine-screening,2026-10-05
+idc,MRI Cervical Spine,,Radiology,12000,10800,yes,2,30,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/mri-cervical-spine,2026-10-05
+idc,CT Scan Brain,,Radiology,8556,7700,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/ct-scan-brain,2026-10-05
+idc,CT Scan Abdomen,,Radiology,12500,11250,yes,2,30,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/ct-scan-abdomen,2026-10-05
+idc,CT Scan Chest,,Radiology,12000,10800,yes,2,30,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/ct-scan-chest,2026-10-05
+idc,Biopsy Small,,Histopathology & Cytology,5500,4950,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/biopsy-small,2026-10-05
+idc,Biopsy Medium,,Histopathology & Cytology,6500,5850,no,,,https://instacare.pk/book-tests/lab/islamabad-diagnostic-centre-idc/biopsy-medium,2026-10-05
+citilab,17-OH Progesterone,"17-OH Progesterone,17-Hydroprogesterone,17 Hydroxy Progeserone",Hormones & Special Chemistry,3280,2788,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/17-oh-progesterone,2026-10-05
+citilab,A/G Ratio,"Liver Function Test, ALP, ALB, T.BILI, ALT, AST, GGT,LFT,TP,A/G Ratio",Biochemistry,720,612,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/ag-ratio,2026-10-05
+citilab,Alkaline Phosphatase,"Alkaline Po4, ALK Po4, Alkaline Phosphatase (Serum)",Biochemistry,450,383,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/alkaline-phosphatase,2026-10-05
+citilab,Anti-HIV - 1 & 2,"HIV-1 and HIV-2 Antibody,HIV Screening Test,AIDS Screening Test",Serology & Immunology,2250,1913,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/anti-hiv-1-2,2026-10-05
+citilab,Anti-Mullerian Hormone,"AMH,AMH Hormone Test",Hormones & Special Chemistry,5660,4811,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/anti-mullerian-hormone-amh,2026-10-05
+citilab,Beta hCG,"Total beta hCG,Quantitative hCG,Qualitative hCG,hCG Pregnancy",Hormones & Special Chemistry,1530,1301,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/beta-hcg,2026-10-05
+citilab,Bilirubin Total,"TBIL, Total Bilirubin",Biochemistry,400,340,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/bilirubin-total,2026-10-05
+citilab,Free T3,"Triiodothyronine,FT3,Total Triiodothyronine,Free Triiodothyronine",Hormones & Special Chemistry,1800,1530,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/free-t3,2026-10-05
+citilab,Free T4,"Thyroxine,Free Thyroxine",Hormones & Special Chemistry,1800,1530,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/free-t4,2026-10-05
+citilab,Gamma Glutamyl Transpeptidase,"GGT,GGTP,Gamma-GT,GTP",Biochemistry,450,383,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/ggt,2026-10-05
+citilab,Hemoglobin,"Hgb,HB",Haematology,400,340,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/hb,2026-10-05
+citilab,HbA1c,"Hemoglobin A1c,A1c,Glycohemoglobin,Glycosylated Hemoglobin,Glycated Hemoglobin",Biochemistry,1480,1258,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/hba1c-glycosylated-hemoglobin,2026-10-05
+citilab,Luteinizing Hormone (LH),,Hormones & Special Chemistry,1480,1258,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/lh,2026-10-05
+citilab,Lipid Profile,"Lipid Panel, Coronary Risk Panel,Lipid Profile (Fasting),Lipid Profile (Random)",Biochemistry,1980,1683,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/lipid-profile,2026-10-05
+citilab,Liver Function Test (LFT),"LFT,Liver Profile,Liver Panel",Biochemistry,1485,1262,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/liver-function-test-with-ggt,2026-10-05
+citilab,Pap Smear,,Histopathology & Cytology,2480,2108,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/pap-smear,2026-10-05
+citilab,Platelet Count,"Thrombocyte Count,PLT,Platelet Distribution Width,PDW,Mean Platelet Volume,MPV",Haematology,400,340,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/platelet-count,2026-10-05
+citilab,Prostate Specific Antigen (PSA),"Total PSA,Free PSA",Hormones & Special Chemistry,1980,1683,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/psa,2026-10-05
+citilab,Renal Function Tests,"RFT,Renal Panel",Biochemistry,1080,918,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/renal-function-tests,2026-10-05
+citilab,Semen Analysis," Sperm Analysis,Sperm Coun,Seminal Fluid Analysis",Clinical Pathology,1980,1188,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/semen-for-analysis,2026-10-05
+citilab,Total Protein,,Biochemistry,540,459,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/total-protein,2026-10-05
+citilab,Uric Acid (Serum),"Serum Urate,UA",Biochemistry,630,536,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/uric-acid-serum,2026-10-05
+citilab,Urine C/E,"Urine Routine Examination,Urine Complete Examination,Urine R/E,Urine D/R,Urine Analysis,Urine C/E (Complete, Analysis)",Clinical Pathology,360,306,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/urine-ce,2026-10-05
+citilab,Vitamin B12,,Hormones & Special Chemistry,1710,1454,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/vitamin-b12,2026-10-05
+citilab,ECG,,Cardiology,500,425,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/ecg,2026-10-05
+citilab,CK-MB,CPK MB,Cardiology,1300,1105,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/ck-mb,2026-10-05
+citilab,Erythrocyte Sedimentation Rate (ESR),"ESR,Sed Rate,Sedimentation Rate,Westergren Sedimentation Rate,Wintrobe Sedimentation Rate",Haematology,270,230,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/esr,2026-10-05
+citilab,X-Ray: Chest PA View,,Radiology,1200,1020,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/x-ray-chest-pa-view,2026-10-05
+citilab,Ultra Sound (USG): Pelvis,,Radiology,2000,1700,no,,,https://instacare.pk/book-tests/lab/citilab-research-centre/ultra-sound-usg-pelvis,2026-10-05
+excel-labs,A/G Ratio,"Liver Function Test, ALP, ALB, T.BILI, ALT, AST, GGT,LFT,TP,A/G Ratio",Biochemistry,1350,1080,no,,,https://instacare.pk/book-tests/lab/excel-labs/ag-ratio,2026-10-05
+excel-labs,Anti-MuSK Antibodies,,Serology & Immunology,9600,7680,no,,,https://instacare.pk/book-tests/lab/excel-labs/anti-musk-antibodies,2026-10-05
+excel-labs,Beta hCG,"Total beta hCG,Quantitative hCG,Qualitative hCG,hCG Pregnancy",Hormones & Special Chemistry,4400,3520,no,,,https://instacare.pk/book-tests/lab/excel-labs/beta-hcg,2026-10-05
+excel-labs,Bilirubin Total,"TBIL, Total Bilirubin",Biochemistry,850,680,no,,,https://instacare.pk/book-tests/lab/excel-labs/bilirubin-total,2026-10-05
+excel-labs,Complete Blood Count (CBC),"CBC, Blood For Analysis, Blood CP, Blood Complete Picture, Blood Routine Examination,Blood C/E Complete",Haematology,1050,840,no,,,https://instacare.pk/book-tests/lab/excel-labs/blood-ce-complete-cbc,2026-10-05
+excel-labs,Cholesterol,,Biochemistry,950,760,no,,,https://instacare.pk/book-tests/lab/excel-labs/cholesterol,2026-10-05
+excel-labs,Free PSA,,Hormones & Special Chemistry,6050,4840,no,,,https://instacare.pk/book-tests/lab/excel-labs/free-psa,2026-10-05
+excel-labs,Free T3,"Triiodothyronine,FT3,Total Triiodothyronine,Free Triiodothyronine",Hormones & Special Chemistry,2750,2200,no,,,https://instacare.pk/book-tests/lab/excel-labs/free-t3,2026-10-05
+excel-labs,Free T4,"Thyroxine,Free Thyroxine",Hormones & Special Chemistry,2750,2200,no,,,https://instacare.pk/book-tests/lab/excel-labs/free-t4,2026-10-05
+excel-labs,Hemoglobin,"Hgb,HB",Haematology,650,520,no,,,https://instacare.pk/book-tests/lab/excel-labs/hb,2026-10-05
+excel-labs,Lipid Profile,"Lipid Panel, Coronary Risk Panel,Lipid Profile (Fasting),Lipid Profile (Random)",Biochemistry,2700,2160,no,,,https://instacare.pk/book-tests/lab/excel-labs/lipid-profile,2026-10-05
+excel-labs,Liver Function Test (LFT),"LFT,Liver Profile,Liver Panel",Biochemistry,2200,1760,no,,,https://instacare.pk/book-tests/lab/excel-labs/liver-function-test-with-ggt,2026-10-05
+excel-labs,Pap Smear,,Histopathology & Cytology,4300,3440,no,,,https://instacare.pk/book-tests/lab/excel-labs/pap-smear,2026-10-05
+excel-labs,PAP Smear for LBC," Cervical Smear,Papanicolaou Test",Histopathology & Cytology,5650,4520,no,,,https://instacare.pk/book-tests/lab/excel-labs/pap-smear-for-lbc,2026-10-05
+excel-labs,Prostate Specific Antigen (PSA),"Total PSA,Free PSA",Hormones & Special Chemistry,3400,2720,no,,,https://instacare.pk/book-tests/lab/excel-labs/psa,2026-10-05
+excel-labs,Renal Function Tests,"RFT,Renal Panel",Biochemistry,2200,1760,no,,,https://instacare.pk/book-tests/lab/excel-labs/renal-function-tests,2026-10-05
+excel-labs,Serum Creatinine for CT Scan,,Biochemistry,1000,800,no,,,https://instacare.pk/book-tests/lab/excel-labs/serum-creatinine-for-ct-scan,2026-10-05
+excel-labs,Total Protein,,Biochemistry,950,760,no,,,https://instacare.pk/book-tests/lab/excel-labs/total-protein,2026-10-05
+excel-labs,Triglycerides,,Biochemistry,1050,840,no,,,https://instacare.pk/book-tests/lab/excel-labs/triglycerides,2026-10-05
+excel-labs,TSH (Thyroid Stimulating Hormone),"TSH,Thyrotropin",Hormones & Special Chemistry,1950,1560,no,,,https://instacare.pk/book-tests/lab/excel-labs/tsh,2026-10-05
+excel-labs,Uric Acid (Serum),"Serum Urate,UA",Biochemistry,950,760,no,,,https://instacare.pk/book-tests/lab/excel-labs/uric-acid-serum,2026-10-05
+excel-labs,ECG,,Cardiology,850,680,no,,,https://instacare.pk/book-tests/lab/excel-labs/ecg,2026-10-05
+excel-labs,CK-MB,CPK MB,Cardiology,2350,1880,no,,,https://instacare.pk/book-tests/lab/excel-labs/ck-mb,2026-10-05
+excel-labs,Dengue NS1 Antigen,"Dengue Fever Virus,Dengue Fever Antibodies",Serology & Immunology,2050,1640,no,,,https://instacare.pk/book-tests/lab/excel-labs/dengue-ns1-antigen,2026-10-05
+excel-labs,Erythrocyte Sedimentation Rate (ESR),"ESR,Sed Rate,Sedimentation Rate,Westergren Sedimentation Rate,Wintrobe Sedimentation Rate",Haematology,650,520,no,,,https://instacare.pk/book-tests/lab/excel-labs/esr,2026-10-05
+innova,17-OH Progesterone,"17-OH Progesterone,17-Hydroprogesterone,17 Hydroxy Progeserone",Hormones & Special Chemistry,4500,3600,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/17-oh-progesterone,2026-10-05
+innova,Alkaline Phosphatase,"Alkaline Po4, ALK Po4, Alkaline Phosphatase (Serum)",Biochemistry,550,440,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/alkaline-phosphatase,2026-10-05
+innova,Anti-HBs,Hepatitis B Surface Antibody,Serology & Immunology,1700,1360,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/anti-hbs,2026-10-05
+innova,Anti-HCV,"Anti Hepatitis C Virus Antibodies, ANTI HCV,Hepatitis C Antibody",Serology & Immunology,2200,1760,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/anti-hcv,2026-10-05
+innova,Anti-Mullerian Hormone,"AMH,AMH Hormone Test",Hormones & Special Chemistry,5500,4400,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/anti-mullerian-hormone-amh,2026-10-05
+innova,Beta hCG,"Total beta hCG,Quantitative hCG,Qualitative hCG,hCG Pregnancy",Hormones & Special Chemistry,2000,1600,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/beta-hcg,2026-10-05
+innova,Bilirubin Total,"TBIL, Total Bilirubin",Biochemistry,500,400,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/bilirubin-total,2026-10-05
+innova,Complete Blood Count (CBC),"CBC, Blood For Analysis, Blood CP, Blood Complete Picture, Blood Routine Examination,Blood C/E Complete",Haematology,750,600,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/blood-ce-complete-cbc,2026-10-05
+innova,Cholesterol,,Biochemistry,600,480,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/cholesterol,2026-10-05
+innova,Free T3,"Triiodothyronine,FT3,Total Triiodothyronine,Free Triiodothyronine",Hormones & Special Chemistry,2400,1920,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/free-t3,2026-10-05
+innova,Free T4,"Thyroxine,Free Thyroxine",Hormones & Special Chemistry,2400,1920,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/free-t4,2026-10-05
+innova,Hemoglobin,"Hgb,HB",Haematology,400,320,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/hb,2026-10-05
+innova,HbA1c,"Hemoglobin A1c,A1c,Glycohemoglobin,Glycosylated Hemoglobin,Glycated Hemoglobin",Biochemistry,1650,1320,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/hba1c-glycosylated-hemoglobin,2026-10-05
+innova,HBsAg,"Hepatitis B Antigen,Hepatitis B Surface Antigen",Serology & Immunology,1600,1280,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/hbsag,2026-10-05
+innova,Luteinizing Hormone (LH),,Hormones & Special Chemistry,2000,1600,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/lh,2026-10-05
+innova,Lipid Profile,"Lipid Panel, Coronary Risk Panel,Lipid Profile (Fasting),Lipid Profile (Random)",Biochemistry,2200,1760,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/lipid-profile,2026-10-05
+innova,Liver Function Test (LFT),"LFT,Liver Profile,Liver Panel",Biochemistry,1800,1440,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/liver-function-test-with-ggt,2026-10-05
+innova,Pap Smear,,Histopathology & Cytology,2500,2000,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/pap-smear,2026-10-05
+innova,Platelet Count,"Thrombocyte Count,PLT,Platelet Distribution Width,PDW,Mean Platelet Volume,MPV",Haematology,300,240,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/platelet-count,2026-10-05
+innova,Prostate Specific Antigen (PSA),"Total PSA,Free PSA",Hormones & Special Chemistry,2800,2240,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/psa,2026-10-05
+innova,"Thyroid Function Test (T3, T4, TSH)","FT3,Triiodothyronine,FT4, Thyroid-stimulating Hormone,Thyrotropin",Hormones & Special Chemistry,3850,3080,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/thyroid-function-test-t3-t4-tsh,2026-10-05
+innova,Total Protein,,Biochemistry,400,320,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/total-protein,2026-10-05
+innova,Triglycerides,,Biochemistry,600,480,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/triglycerides,2026-10-05
+innova,TSH (Thyroid Stimulating Hormone),"TSH,Thyrotropin",Hormones & Special Chemistry,1500,1200,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/tsh,2026-10-05
+innova,Urine C/E,"Urine Routine Examination,Urine Complete Examination,Urine R/E,Urine D/R,Urine Analysis,Urine C/E (Complete, Analysis)",Clinical Pathology,500,400,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/urine-ce,2026-10-05
+innova,Vitamin B12,,Hormones & Special Chemistry,2200,1760,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/vitamin-b12,2026-10-05
+innova,WBC Count (TLC)," Leukocyte Count,White Count",Haematology,450,360,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/wbc-count-tlc,2026-10-05
+innova,CK-MB,CPK MB,Cardiology,1500,1200,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/ck-mb,2026-10-05
+innova,G6 PD Test,,Haematology,2000,1600,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/g6-pd-test,2026-10-05
+innova,Dengue NS1 Antigen,"Dengue Fever Virus,Dengue Fever Antibodies",Serology & Immunology,1500,1200,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/dengue-ns1-antigen,2026-10-05
+innova,Erythrocyte Sedimentation Rate (ESR),"ESR,Sed Rate,Sedimentation Rate,Westergren Sedimentation Rate,Wintrobe Sedimentation Rate",Haematology,300,240,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/esr,2026-10-05
+innova,Ultra Sound (USG): Abdomen & Pelvis,,Radiology,2200,1650,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/ultra-sound-usg-abdomen-pelvis,2026-10-05
+innova,Ultra Sound (USG): Pelvis,,Radiology,1700,1275,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/ultra-sound-usg-pelvis,2026-10-05
+innova,HCV RNA by PCR Qualitative,,Molecular Diagnostics,6500,5200,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/hcv-rna-by-pcr-qualitative,2026-10-05
+innova,Biopsy Medium,,Histopathology & Cytology,3800,3040,no,,,https://instacare.pk/book-tests/lab/innova-labs-and-diagnostics/biopsy-medium,2026-10-05
