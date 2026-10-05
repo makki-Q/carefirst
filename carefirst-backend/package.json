@@ -8,7 +8,8 @@
     "dev": "nodemon server.js",
     "test:e2e": "node tests/e2e.js",
     "seed": "node scripts/seed.js --reset",
-    "test:unit": "node tests/reportInterpreter.test.js"
+    "test:unit": "node tests/reportInterpreter.test.js",
+    "import:dataset": "node scripts/import-dataset.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

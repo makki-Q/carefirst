@@ -10,7 +10,8 @@ Data used to fill CareFirst with real Faisalabad labs and doctors for the demo a
 | `faisalabad_lab_tests_public.csv` | First lab sample (2 chains, 11 tests) | Team, 2026-10-02 — **replaced** by the files below, kept for reference |
 | `raw/instacare_lab_branches.csv` | Faisalabad branches of each lab chain + approximate map pin | `scripts/collect-lab-branches.js` |
 | `raw/instacare_lab_prices.csv` | Each chain's test prices (discounted and regular) | `scripts/collect-lab-prices.js` |
-| `clean/lab_chains.csv`, `clean/lab_branches.csv`, `clean/lab_tests.csv` | The files CareFirst imports | `scripts/prepare-labs.js` (from the raw files) |
+| `clean/lab_chains.csv`, `clean/lab_branches.csv`, `clean/lab_tests.csv` | The lab files CareFirst imports | `scripts/prepare-labs.js` (from the raw files) |
+| `clean/doctors.csv` | 28 doctors CareFirst imports | `scripts/prepare-doctors.js` (from `faisalabad_doctors_public.csv`) |
 
 The original files are never changed: the scripts write new files next to them.
 
@@ -20,7 +21,27 @@ The original files are never changed: the scripts write new files next to them.
 node dataset/scripts/collect-lab-branches.js   # ~1 minute
 node dataset/scripts/collect-lab-prices.js     # ~40 minutes (one page at a time)
 node dataset/scripts/prepare-labs.js           # instant
+node dataset/scripts/prepare-doctors.js        # instant
 ```
+
+## Importing into CareFirst
+
+```bash
+cd carefirst-backend
+npm run import:dataset    # into the database in MONGO_URI (.env)
+```
+
+Adds the 5 lab chains (one account each, with their Faisalabad branches and tests) and the 28 doctors as
+active accounts, password `password123`:
+
+- labs: `<chain_id>@labs.carefirst.test`, e.g. `chughtai-lab@labs.carefirst.test`, `idc@labs.carefirst.test`
+  (ids in `clean/lab_chains.csv`)
+- doctors: `<first.middle.last>@doctors.carefirst.test` (title and "Dr." left out), e.g.
+  `hafiz.muhammad.junaid@doctors.carefirst.test` — the import prints the first few
+
+Nothing is deleted. Running it again updates the same accounts (matched by e-mail), branches and tests (matched
+by name), so existing bookings keep their branch. Imported tests are offered at every branch of the chain; a lab
+can limit a test to some branches in its Test Catalog. Run it after `npm run seed` (the seed wipes the database).
 
 ## How the data is collected (rules we keep)
 
@@ -48,6 +69,9 @@ node dataset/scripts/prepare-labs.js           # instant
 | Bank / JazzCash / EasyPaisa | **Demo** — `DEMO Bank (not a real account)`. Real details can only come from the lab itself. |
 | Installment plans | **Demo** (CareFirst's own idea): tests above PKR 10,000 → 2 installments up to 25,000, 3 up to 50,000, 4 above 50,000, every 30 days |
 | Test category | Assigned by CareFirst from the test name |
+| Doctor name, specialty, experience, rating, clinic address | **Real** (Oladoc / InstaCare listings). Online-only doctors and non-doctors (nutritionist, psychologist) are left out. |
+| Doctor phone | **Real** where listed; helpline and placeholder numbers (`0415068065`, `04238900939`, `03001234567`) are dropped |
+| Consultation fee, appointment length, clinic timings | **Filled in** (decided with Makki, shown in the app like any other doctor's): typical Faisalabad fee for the main specialty (GP / dentist 1,000 · physician / paediatrics 1,500 · gynae / ENT 2,000 · cardio / neuro / gastro / pulmo 2,500 · neurosurgery / oncology 3,000), 20 min (GP 15, dentist 30), Mon–Sat 5–9 PM. The `filled_in` column lists them; doctors change them in their portal. |
 
 Real businesses and doctors are named in this data. Use it for local demos and the evaluation; anything shown
 publicly must be clearly marked as sample data, and real partners replace it through onboarding.
