@@ -71,7 +71,7 @@ const LabBranches = ({ branches, labName, onChanged }: { branches: Branch[]; lab
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14, marginBottom: 18 }}>
         {branches.map(b => (
-          <div key={b.branchId} className="dash-card" style={{ padding: '16px 18px' }}>
+          <div key={b.branchId} className="dash-card" style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column' }}>
             <div style={{ fontWeight: 700, color: 'var(--text)', fontSize: '0.9rem' }}>{b.name}</div>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-sub)', marginTop: 4 }}>{b.address}</div>
             <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.6 }}>
@@ -81,7 +81,7 @@ const LabBranches = ({ branches, labName, onChanged }: { branches: Branch[]; lab
                 {b.hasLocation ? '● On the map' : '● No map location — patients see it last in True Cost'}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <div style={{ display: 'flex', gap: 8, marginTop: 'auto', paddingTop: 12 }}>{/* buttons line up across a row */}
               <button className="dash-btn-ghost" style={{ padding: '5px 12px', fontSize: '0.76rem' }} onClick={() => open(b)}>Edit</button>
               {branches.length > 1 && (
                 <button className="dash-btn-ghost" style={{ padding: '5px 12px', fontSize: '0.76rem', color: '#b91c1c' }} onClick={() => remove(b)}>Remove</button>

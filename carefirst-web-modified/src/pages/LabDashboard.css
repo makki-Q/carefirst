@@ -45,56 +45,27 @@
   font-family: 'DM Sans', sans-serif;
 }
 
-/* ── Lab-specific: Test catalog grid ────────────────────────── */
-.lab-test-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
-  margin-top: 8px;
-}
-
-.lab-test-card {
-  background: var(--glass-bg-strong);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  padding: 20px;
-  box-shadow: var(--glass-shadow);
-  transition: transform 0.18s, box-shadow 0.18s;
-}
-
-.lab-test-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow);
-}
-
-.lab-test-icon {
-  width: 40px; height: 40px;
-  border-radius: var(--radius-xs);
-  background: var(--accent-light);
-  display: grid;
-  place-items: center;
-  color: var(--accent);
-  margin-bottom: 14px;
-}
-
-.lab-test-name  { font-size: 0.875rem; font-weight: 700; color: var(--text); margin-bottom: 4px; }
-.lab-test-cat   { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 12px; }
-
-.lab-test-footer {
+/* ── Lab-specific: Test catalog ─────────────────────────────── */
+.lab-pay-summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
+  padding: 16px 22px;
+  margin-bottom: 20px;
 }
 
-.lab-test-price {
-  font-family: 'DM Serif Display', serif;
-  font-size: 1.15rem;
-  color: var(--text);
+.lab-pay-line {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.76rem;
+  color: var(--text-sub);
+  margin-top: 3px;
+  white-space: pre-wrap;
 }
 
-/* ── Toggle switch ───────────────────────────────────────────── */
+.lab-catalog-table td { padding-top: 11px; padding-bottom: 11px; }
+.lab-catalog-editing td { background: rgba(26, 86, 219, 0.03) !important; padding: 18px 20px !important; }
+
 .lab-toggle {
   width: 36px; height: 20px;
   border-radius: 20px;

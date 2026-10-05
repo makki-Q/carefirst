@@ -20,7 +20,7 @@ const BOOKING_STATUS: Record<string, { label: string; cls: string }> = {
 };
 
 const LabDashboard = () => {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !(window.innerWidth <= 900)); // closed on phones
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [dateString, setDateString] = useState('');
 
@@ -68,6 +68,9 @@ const LabDashboard = () => {
   const [addLoading, setAddLoading] = useState(false);
 
   // Edit test form
+  const [catalogSearch, setCatalogSearch]     = useState('');
+  const [catalogCategory, setCatalogCategory] = useState('');
+  const [editPayment, setEditPayment]         = useState(false);
   const [editingTest, setEditingTest] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
     name: '', category: '', price: '',
@@ -330,6 +333,7 @@ const LabDashboard = () => {
 
   // Where a test is offered: ids of branches ([] / missing = every branch)
   const offeredAt = (test: any) => (test?.branches?.length ? test.branches.map(String) : branches.map((b: any) => String(b.branchId)));
+  const multiBranch = branches.length > 1; // single-branch labs don't need a Branch column
   const branchName = (id: string) => branches.find((b: any) => String(b.branchId) === String(id))?.name || '—';
 
   // The patient came to another branch: take the visit at the given branch
@@ -382,6 +386,7 @@ const LabDashboard = () => {
       });
       setLabProfile((prev: any) => ({ ...prev, profile: updated }));
       setPayMsg({ ok: true, text: 'Payment details saved. Patients can now apply for installments at your lab.' });
+      setEditPayment(false);
     } catch (err: any) {
       setPayMsg({ ok: false, text: err.message || 'Could not save payment details' });
     } finally {
@@ -389,7 +394,7 @@ const LabDashboard = () => {
     }
   };
 
-  const navigate = (page: string) => setCurrentPage(page);
+  const navigate = (page: string) => { setCurrentPage(page); if (window.innerWidth <= 900) setSidebarOpen(false); };
 
   const labName     = labProfile?.profile?.labName || (sessionUser as any)?.name || 'Lab Dashboard';
   const labLocation = labProfile?.profile?.location || '';
@@ -400,6 +405,12 @@ const LabDashboard = () => {
   const lp = labProfile?.profile;
   const hasPaymentDetails = Boolean((lp?.bankDetails?.bankName && lp?.bankDetails?.accountNumber) || lp?.jazzCash || lp?.easyPaisa);
   const offersInstallments = tests.some((t: any) => t.installmentEnabled);
+  // Test Catalog filters
+  const catalogCategories = [...new Set(tests.map((t: any) => t.category).filter(Boolean))].sort() as string[];
+  const catalogTests = tests
+    .filter((t: any) => (!catalogCategory || t.category === catalogCategory) &&
+      (!catalogSearch || `${t.name} ${t.category}`.toLowerCase().includes(catalogSearch.toLowerCase().trim())))
+    .sort((a: any, b: any) => a.name.localeCompare(b.name));
   const paymentDetailsNotice = labProfile && !hasPaymentDetails && (
     <div className="dash-card dash-fu" style={{ padding: '12px 18px', marginBottom: 18, background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', fontSize: '0.82rem' }}>
       <strong>Add your payment details.</strong> Patients pay the down payment and installments directly to your lab, so they
@@ -459,9 +470,9 @@ const LabDashboard = () => {
 
           <div className="dash-sidebar-user">
             <div className="dash-avatar">{labName[0]?.toUpperCase() || 'L'}</div>
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div className="dash-user-name">{labName}</div>
-              <div className="dash-user-role">Lab Partner{labLocation ? ` · ${labLocation}` : ''}</div>
+              <div className="dash-user-role" title={labLocation}>Lab Partner · {branches.length > 1 ? `${branches.length} branches` : (labLocation || 'Laboratory')}</div>
             </div>
           </div>
 
@@ -492,7 +503,6 @@ const LabDashboard = () => {
             <button className={`dash-nav-item ${currentPage === 'branches' ? 'active' : ''}`} onClick={() => navigate('branches')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
               Branches
-              {branches.length > 1 && <span className="dash-nav-badge" style={{ background: 'var(--text-muted)' }}>{branches.length}</span>}
             </button>
 
             <button className={`dash-nav-item ${currentPage === 'needyPatients' ? 'active' : ''}`} onClick={() => navigate('needyPatients')}>
@@ -597,7 +607,9 @@ const LabDashboard = () => {
                   <div className="dash-hero-left">
                     <div className="dash-hero-eyebrow">CareFirst Lab Partner</div>
                     <div className="dash-hero-name">{labName}</div>
-                    <div className="dash-hero-sub">{labLocation || 'Location not set'}</div>
+                    <div className="dash-hero-sub">
+                      {multiBranch ? `${branches.length} branches · ${[...new Set(branches.map((b: any) => b.area || b.name))].join(', ')}` : (labLocation || 'Location not set')}
+                    </div>
                     <div className="dash-hero-pills">
                       <div className="dash-hero-pill">{tests.length} Tests in Catalog</div>
                       {pendingNeedyCount > 0 && <div className="dash-hero-pill green">{pendingNeedyCount} Needy Pending</div>}
@@ -699,22 +711,6 @@ const LabDashboard = () => {
                   <div className="dash-page-rule"></div>
                   <div className="dash-page-subtitle">Patients' lab visits — collect the sample, then upload the report to complete the booking</div>
                 </div>
-                <div className="dash-filter-row dash-fu-1">
-                  <input className="dash-filter-select" style={{ width: 190, backgroundImage: 'none', paddingRight: 12, cursor: 'text' }} type="text" placeholder="Check a slip number…"
-                    value={slipQuery} onChange={e => setSlipQuery(e.target.value)} title="Type the number on the patient's slip to find their booking" />
-                  {branches.length > 1 && (
-                    <select className="dash-filter-select" value={workingAt} onChange={e => chooseWorkingAt(e.target.value)} title="Show the visits of the branch you are working at">
-                      <option value="">All branches</option>
-                      {branches.map((br: any) => <option key={br.branchId} value={String(br.branchId)}>Working at: {br.name}</option>)}
-                    </select>
-                  )}
-                  <select className="dash-filter-select" value={bookingFilter} onChange={e => setBookingFilter(e.target.value as any)}>
-                    <option value="open">Open</option>
-                    <option value="today">Visiting today</option>
-                    <option value="upcoming">Upcoming</option>
-                    <option value="all">All bookings</option>
-                  </select>
-                </div>
               </div>
 
               {bookingMsg && (
@@ -724,16 +720,43 @@ const LabDashboard = () => {
               )}
 
               <div className="dash-card dash-fu dash-fu-2">
+                <div className="dash-toolbar">
+                  <div className="dash-search">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input type="text" placeholder="Check a slip number…" value={slipQuery} onChange={e => setSlipQuery(e.target.value)}
+                      title="Type the number on the patient's slip to find their booking" />
+                  </div>
+                  <div className="dash-toolbar-right">
+                    {branches.length > 1 && (
+                      <label className="dash-toolbar-field">
+                        <span>Working at</span>
+                        <select className="dash-filter-select" value={workingAt} onChange={e => chooseWorkingAt(e.target.value)} title="Show the visits of the branch you are working at">
+                          <option value="">All branches</option>
+                          {branches.map((br: any) => <option key={br.branchId} value={String(br.branchId)}>{br.name}</option>)}
+                        </select>
+                      </label>
+                    )}
+                    <label className="dash-toolbar-field">
+                      <span>Show</span>
+                      <select className="dash-filter-select" value={bookingFilter} onChange={e => setBookingFilter(e.target.value as any)}>
+                        <option value="open">Open</option>
+                        <option value="today">Visiting today</option>
+                        <option value="upcoming">Upcoming</option>
+                        <option value="all">All bookings</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
                 <div className="dash-table-wrap">
                   <table>
                     <thead>
-                      <tr><th>Visit</th><th>Patient</th><th>Test</th><th>Branch</th><th>Payment</th><th>Status</th><th style={{ textAlign: 'right' }}>Action</th></tr>
+                      <tr><th>Visit</th><th>Patient</th><th>Test</th>{multiBranch && <th>Branch</th>}<th>Payment</th><th>Status</th><th style={{ textAlign: 'right' }}>Action</th></tr>
                     </thead>
                     <tbody>
                       {!bookingsLoaded ? (
-                        <tr><td colSpan={7} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                        <tr><td colSpan={multiBranch ? 7 : 6} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)' }}>Loading…</td></tr>
                       ) : filteredBookings.length === 0 ? (
-                        <tr><td colSpan={7} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                        <tr><td colSpan={multiBranch ? 7 : 6} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
                           {slipKey(slipQuery)
                             ? 'No booking at your lab has this slip number. Check the number, or the slip may be for another lab.'
                             : bookings.length === 0 ? 'No bookings yet. Patients book visits from Book Tests.' : 'No bookings in this view.'}
@@ -748,17 +771,18 @@ const LabDashboard = () => {
                             </td>
                             <td>
                               <div style={{ fontWeight: 600, color: 'var(--text)' }}>{b.patient?.name || '—'}</div>
-                              <div className="dash-mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{[b.patient?.cnic, b.patient?.phone].filter(Boolean).join(' · ')}</div>
+                              {b.patient?.cnic && <div className="dash-mono" style={{ fontSize: '0.72rem' }}>{b.patient.cnic}</div>}
+                              {b.patient?.phone && <div className="dash-mono" style={{ fontSize: '0.72rem' }}>{b.patient.phone}</div>}
                             </td>
                             <td>{b.testName}</td>
-                            <td style={{ fontSize: '0.78rem' }}>
+                            {multiBranch && <td style={{ fontSize: '0.78rem' }}>
                               <div style={{ fontWeight: 600, color: workingAt && String(b.branch) !== workingAt ? '#b45309' : 'var(--text)' }}>{b.branchName || '—'}</div>
                               {workingAt && String(b.branch) !== workingAt && <div style={{ fontSize: '0.68rem', color: '#b45309' }}>booked at another branch</div>}
                               {b.transfers?.length > 0 && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>moved from {b.transfers[b.transfers.length - 1].fromName}</div>}
-                            </td>
+                            </td>}
                             <td style={{ fontSize: '0.8rem' }}>
                               {b.paymentMethod === 'installment'
-                                ? <span style={{ color: '#1d4ed8', fontWeight: 600 }}>Installment plan</span>
+                                ? <span style={{ color: '#1d4ed8', fontWeight: 600, whiteSpace: 'nowrap' }}>Installment plan</span>
                                 : <>PKR {Number(b.price).toLocaleString()}<div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>collect at the lab</div></>}
                             </td>
                             <td>
@@ -766,7 +790,7 @@ const LabDashboard = () => {
                               {b.report?.reportUrl && <div><a href={b.report.reportUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.72rem', color: '#166534', fontWeight: 600 }}>Report ↗</a></div>}
                             </td>
                             <td style={{ textAlign: 'right' }}>
-                              <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                              <div className="dash-row-actions">
                                 {b.status === 'confirmed' && workingAt && String(b.branch) !== workingAt && offeredAt(tests.find((t: any) => t._id === b.labTest)).includes(workingAt) && (
                                   <button className="dash-btn-primary accent" style={{ padding: '5px 12px', fontSize: '0.76rem' }} onClick={() => transferBooking(b, workingAt)}>Take visit here</button>
                                 )}
@@ -1020,7 +1044,20 @@ const LabDashboard = () => {
               {paymentDetailsNotice}
               {locationNotice}
 
-              {/* Payment details — where patients pay the down payment and installments */}
+              {/* Payment details — where patients pay the down payment and installments (one line once saved) */}
+              {hasPaymentDetails && !editPayment ? (
+                <div className="dash-card dash-fu lab-pay-summary">
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: '0.84rem', color: 'var(--text)' }}>Payment details</div>
+                    <div className="lab-pay-line">
+                      {[lp?.bankDetails?.bankName && `${lp.bankDetails.bankName}${lp.bankDetails.accountNumber ? ` · ${lp.bankDetails.accountNumber}` : ''}`,
+                        lp?.jazzCash && `JazzCash ${lp.jazzCash}`, lp?.easyPaisa && `EasyPaisa ${lp.easyPaisa}`].filter(Boolean).join('   ·   ')}
+                    </div>
+                    {payMsg?.ok && <div style={{ fontSize: '0.74rem', color: '#166534', marginTop: 4 }}>{payMsg.text}</div>}
+                  </div>
+                  <button className="dash-btn-ghost" style={{ padding: '7px 14px', fontSize: '0.8rem' }} onClick={() => { setPayMsg(null); setEditPayment(true); }}>Edit</button>
+                </div>
+              ) : (
               <div className="dash-card dash-fu" style={{ padding: '20px 28px', marginBottom: 20 }}>
                 <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text)', marginBottom: 4 }}>Payment Details</div>
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 14 }}>
@@ -1046,11 +1083,15 @@ const LabDashboard = () => {
                       </div>
                     ))}
                   </div>
-                  <button type="submit" className="dash-btn-primary accent" disabled={paySaving} style={paySaving ? { opacity: 0.6 } : {}}>
-                    {paySaving ? 'Saving…' : 'Save Payment Details'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button type="submit" className="dash-btn-primary accent" disabled={paySaving} style={paySaving ? { opacity: 0.6 } : {}}>
+                      {paySaving ? 'Saving…' : 'Save Payment Details'}
+                    </button>
+                    {hasPaymentDetails && <button type="button" className="dash-btn-ghost" onClick={() => setEditPayment(false)}>Cancel</button>}
+                  </div>
                 </form>
               </div>
+              )}
 
               {showAddPanel && (
                 <div className="dash-card dash-fu" style={{ padding: '24px 28px', marginBottom: 20 }}>
@@ -1111,77 +1152,115 @@ const LabDashboard = () => {
                 </div>
               )}
 
-              <div className="lab-test-grid dash-fu dash-fu-2">
-                {tests.length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: 16 }}>No tests in catalog yet. Add your first test above.</div>}
-                {tests.map((t: any) => (
-                  <div key={t._id}>
-                    {editingTest === t._id ? (
-                      <div className="lab-test-card" style={{ padding: 16 }}>
-                        <div style={{ fontWeight: 600, fontSize: '0.8rem', marginBottom: 10, color: 'var(--text)' }}>Edit Test</div>
-                        <input className="dash-form-input" style={{ marginBottom: 8 }} type="text" placeholder="Test name" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
-                        <input className="dash-form-input" style={{ marginBottom: 8 }} type="text" placeholder="Category" value={editForm.category} onChange={e => setEditForm(f => ({ ...f, category: e.target.value }))} />
-                        <input className="dash-form-input" style={{ marginBottom: 10 }} type="number" placeholder="Price" value={editForm.price} onChange={e => setEditForm(f => ({ ...f, price: e.target.value }))} />
-
-                        {offeredPicker(editForm.branches, v => setEditForm(f => ({ ...f, branches: v })))}
-
-                        {/* Installment toggle in edit */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                          <button type="button" onClick={() => setEditForm(f => ({ ...f, installmentEnabled: !f.installmentEnabled }))} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                            <div style={{ width: 32, height: 18, borderRadius: 9, background: editForm.installmentEnabled ? 'var(--accent, #e11d48)' : '#d1d5db', position: 'relative', flexShrink: 0 }}>
-                              <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#fff', position: 'absolute', top: 3, left: editForm.installmentEnabled ? 17 : 3, transition: 'left 0.2s' }}></div>
-                            </div>
-                            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text)' }}>Installment Plan</span>
-                          </button>
-                        </div>
-                        {editForm.installmentEnabled && (
-                          <>
-                            <input className="dash-form-input" style={{ marginBottom: 8 }} type="number" min="2" max="12" placeholder="# of installments" value={editForm.installmentCount} onChange={e => setEditForm(f => ({ ...f, installmentCount: e.target.value }))} />
-                            <select className="dash-form-input" style={{ marginBottom: 10, height: 38 }} value={editForm.installmentTenureDays} onChange={e => setEditForm(f => ({ ...f, installmentTenureDays: e.target.value }))}>
-                              {TENURE_OPTIONS.map(d => <option key={d} value={d}>{d} days per installment</option>)}
-                            </select>
-                          </>
-                        )}
-
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <button className="dash-btn-primary accent" style={{ flex: 1, justifyContent: 'center', fontSize: '0.75rem', padding: '6px 0' }} onClick={() => saveEditTest(t._id)}>Save</button>
-                          <button className="dash-btn-ghost" style={{ flex: 1, fontSize: '0.75rem', padding: '6px 0' }} onClick={cancelEdit}>Cancel</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="lab-test-card">
-                        <div className="lab-test-icon">
-                          <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-                        </div>
-                        <div className="lab-test-name">{t.name}</div>
-                        <div className="lab-test-cat">{t.category}</div>
-                        {branches.length > 1 && (
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                            {t.branches?.length ? `At: ${t.branches.map(branchName).join(', ')}` : 'At all branches'}
-                          </div>
-                        )}
-                        {t.installmentEnabled && (
-                          <div style={{ margin: '6px 0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ padding: '2px 8px', borderRadius: 20, background: 'rgba(220,38,38,0.1)', color: 'var(--accent, #e11d48)', fontSize: '0.7rem', fontWeight: 700 }}>
-                              {t.installmentCount} installments · every {t.installmentTenureDays} days
-                            </span>
-                          </div>
-                        )}
-                        <div className="lab-test-footer">
-                          <div className="lab-test-price">PKR {Number(t.price).toLocaleString()}</div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <button className={`lab-toggle ${t.isActive ? 'on' : ''}`} onClick={() => toggleActive(t)} title={t.isActive ? 'Active — click to deactivate' : 'Inactive — click to activate'}></button>
-                            <button className="dash-action-btn" title="Edit" onClick={() => startEdit(t)}>
-                              <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                            </button>
-                            <button className="dash-action-btn" title="Delete" style={{ color: '#ef4444' }} onClick={() => deleteTest(t._id)}>
-                              <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
+              <div className="dash-card dash-fu dash-fu-2">
+                <div className="dash-toolbar">
+                  <div className="dash-search">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input type="text" placeholder={`Search ${tests.length} tests…`} value={catalogSearch} onChange={e => setCatalogSearch(e.target.value)} />
+                  </div>
+                  <div className="dash-toolbar-right">
+                    {catalogCategories.length > 1 && (
+                      <select className="dash-filter-select" value={catalogCategory} onChange={e => setCatalogCategory(e.target.value)} aria-label="Category">
+                        <option value="">All categories</option>
+                        {catalogCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
                     )}
                   </div>
-                ))}
+                </div>
+                <div className="dash-table-wrap">
+                  <table className="lab-catalog-table">
+                    <thead>
+                      <tr>
+                        <th>Test</th>
+                        <th style={{ textAlign: 'right' }}>Price</th>
+                        <th>Installments</th>
+                        {branches.length > 1 && <th>Offered at</th>}
+                        <th>Active</th>
+                        <th style={{ textAlign: 'right' }}>Edit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tests.length === 0 ? (
+                        <tr><td colSpan={6} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>No tests in your catalog yet. Use Add Test above.</td></tr>
+                      ) : catalogTests.length === 0 ? (
+                        <tr><td colSpan={6} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>No tests match your search.</td></tr>
+                      ) : catalogTests.map((t: any) => editingTest === t._id ? (
+                        <tr key={t._id} className="lab-catalog-editing">
+                          <td colSpan={6}>
+                            <div style={{ fontWeight: 700, fontSize: '0.82rem', marginBottom: 12, color: 'var(--text)' }}>Edit {t.name}</div>
+                            <div className="dash-form-row">
+                              <div className="dash-form-group">
+                                <label className="dash-form-label">Test Name</label>
+                                <input className="dash-form-input" type="text" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
+                              </div>
+                              <div className="dash-form-group">
+                                <label className="dash-form-label">Category</label>
+                                <input className="dash-form-input" type="text" value={editForm.category} onChange={e => setEditForm(f => ({ ...f, category: e.target.value }))} />
+                              </div>
+                              <div className="dash-form-group" style={{ maxWidth: 160 }}>
+                                <label className="dash-form-label">Price (PKR)</label>
+                                <input className="dash-form-input" type="number" value={editForm.price} onChange={e => setEditForm(f => ({ ...f, price: e.target.value }))} />
+                              </div>
+                            </div>
+                            {offeredPicker(editForm.branches, v => setEditForm(f => ({ ...f, branches: v })))}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', margin: '4px 0 14px' }}>
+                              <button type="button" onClick={() => setEditForm(f => ({ ...f, installmentEnabled: !f.installmentEnabled }))} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                                <div style={{ width: 36, height: 20, borderRadius: 10, background: editForm.installmentEnabled ? 'var(--accent, #e11d48)' : '#d1d5db', position: 'relative', flexShrink: 0 }}>
+                                  <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#fff', position: 'absolute', top: 3, left: editForm.installmentEnabled ? 19 : 3, transition: 'left 0.2s' }}></div>
+                                </div>
+                                <span style={{ fontSize: '0.83rem', fontWeight: 600, color: 'var(--text)' }}>Installment Plan</span>
+                              </button>
+                              {editForm.installmentEnabled && (
+                                <>
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', color: 'var(--text-sub)' }}>
+                                    <input className="dash-form-input" style={{ width: 70, height: 36 }} type="number" min="2" max="12" value={editForm.installmentCount} onChange={e => setEditForm(f => ({ ...f, installmentCount: e.target.value }))} />
+                                    installments, every
+                                  </label>
+                                  <select className="dash-filter-select" value={editForm.installmentTenureDays} onChange={e => setEditForm(f => ({ ...f, installmentTenureDays: e.target.value }))}>
+                                    {TENURE_OPTIONS.map(d => <option key={d} value={d}>{d} days</option>)}
+                                  </select>
+                                </>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                              <button className="dash-btn-ghost" onClick={cancelEdit}>Cancel</button>
+                              <button className="dash-btn-primary accent" onClick={() => saveEditTest(t._id)}>Save</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr key={t._id} style={t.isActive ? {} : { opacity: 0.55 }}>
+                          <td>
+                            <div style={{ fontWeight: 600, color: 'var(--text)' }}>{t.name}</div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{t.category}</div>
+                          </td>
+                          <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>PKR {Number(t.price).toLocaleString()}</td>
+                          <td style={{ whiteSpace: 'nowrap', fontSize: '0.78rem' }}>
+                            {t.installmentEnabled ? <>{t.installmentCount} × every {t.installmentTenureDays} days</> : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                          </td>
+                          {branches.length > 1 && (
+                            <td style={{ fontSize: '0.78rem' }} title={t.branches?.length ? t.branches.map(branchName).join(', ') : ''}>
+                              {t.branches?.length ? `${t.branches.length} of ${branches.length} branches` : 'All branches'}
+                            </td>
+                          )}
+                          <td>
+                            <button className={`lab-toggle ${t.isActive ? 'on' : ''}`} onClick={() => toggleActive(t)} title={t.isActive ? 'Active — click to hide it from patients' : 'Hidden from patients — click to activate'}></button>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <div className="dash-row-actions">
+                              <button className="dash-action-btn" title="Edit" onClick={() => startEdit(t)}>
+                                <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                              </button>
+                              <button className="dash-action-btn" title="Delete" style={{ color: '#ef4444' }} onClick={() => deleteTest(t._id)}>
+                                <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </section>
 
