@@ -45,6 +45,18 @@ const timeAgo = (d?: string | Date) => {
 };
 
 const drName = (name?: string) => (!name ? 'Doctor' : /^dr\.?\s/i.test(name) ? name : `Dr. ${name}`);
+
+// "Cardiology" / "Cardiologist" and "Gynaecology" / "Gynecologist" are one specialty filter
+const specialtyKey = (s: string) => (s || '').toLowerCase().replace(/ae/g, 'e').replace(/(ologist|ology)\b/g, 'olog').replace(/[^a-z]/g, '');
+
+// ['Monday', 'Tuesday', …] → "Mon–Sat" (runs of 3+ days joined, others listed)
+const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const compactDays = (days: string[]) => {
+  const idx = [...new Set(days.map(d => WEEK_DAYS.indexOf(d.slice(0, 3))).filter(i => i >= 0))].sort((a, b) => a - b);
+  const runs: number[][] = [];
+  idx.forEach(i => { const last = runs[runs.length - 1]; if (last && i === last[last.length - 1] + 1) last.push(i); else runs.push([i]); });
+  return runs.map(r => (r.length >= 3 ? `${WEEK_DAYS[r[0]]}–${WEEK_DAYS[r[r.length - 1]]}` : r.map(i => WEEK_DAYS[i]).join(', '))).join(', ');
+};
 const shortId = (id?: string) => (id ? id.toString().slice(-6).toUpperCase() : '—');
 
 const CNIC_STATUS: Record<string, { label: string; pill: string; badge: string }> = {
@@ -128,7 +140,7 @@ const PatientDashboard = () => {
   const isPatient = Boolean(session.token) && session.user?.role === 'patient';
 
   // ── UI state ────────────────────────────────────────────────────────────────
-  const [sidebarOpen, setSidebarOpen]         = useState(true);
+  const [sidebarOpen, setSidebarOpen]         = useState(() => !(window.innerWidth <= 900)); // closed on phones
   const [currentPage, setCurrentPage]         = useState('dashboard');
   const [dateString, setDateString]           = useState('');
   const [activeSpecialty, setActiveSpecialty] = useState('All');
@@ -143,6 +155,9 @@ const PatientDashboard = () => {
   const [travelBusy, setTravelBusy]   = useState(false);
   const [travelMsg, setTravelMsg]     = useState<{ ok: boolean; text: string } | null>(null);
   const [testSearch, setTestSearch]           = useState('');
+  const [labViewId, setLabViewId]             = useState('');   // lab whose tests page is open
+  const [labPageSearch, setLabPageSearch]     = useState('');
+  const [labPageCategory, setLabPageCategory] = useState('');
   const [topSearch, setTopSearch]             = useState('');
   const [reportFilter, setReportFilter]       = useState('all');
 
@@ -301,7 +316,7 @@ const PatientDashboard = () => {
   }, [wallets]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
-  const navigate = (page: string) => setCurrentPage(page);
+  const navigate = (page: string) => { setCurrentPage(page); if (window.innerWidth <= 900) setSidebarOpen(false); };
 
   const markNotifRead = async (n: any) => {
     if (n.read) return;
@@ -626,9 +641,16 @@ const PatientDashboard = () => {
   const latestApp     = communityApps[0];
   const hasPendingApp = communityApps.some(a => a.status === 'pending');
 
-  const specialties = ['All', ...[...new Set(doctors.map(d => d.specialization).filter(Boolean))].sort()] as string[];
+  // Specialty filter: one entry per specialty, labelled with the "-ist" / "-ian" form when doctors use both
+  const specialtyLabels: Record<string, string> = {};
+  doctors.forEach(d => {
+    if (!d.specialization) return;
+    const key = specialtyKey(d.specialization), cur = specialtyLabels[key];
+    if (!cur || (/(ist|ian)$/i.test(d.specialization) && !/(ist|ian)$/i.test(cur))) specialtyLabels[key] = d.specialization;
+  });
+  const specialties = Object.entries(specialtyLabels).sort((a, b) => a[1].localeCompare(b[1]));
   const filteredDoctors = doctors.filter(d =>
-    (activeSpecialty === 'All' || d.specialization === activeSpecialty) &&
+    (activeSpecialty === 'All' || specialtyKey(d.specialization) === activeSpecialty) &&
     (!doctorSearch ||
       d.name?.toLowerCase().includes(doctorSearch.toLowerCase()) ||
       d.specialization?.toLowerCase().includes(doctorSearch.toLowerCase()))
@@ -654,18 +676,20 @@ const PatientDashboard = () => {
   const travelToBranch = (lab: any, branchId: string) =>
     (travelByLab[String(lab.labId)]?.branches || []).find((b: any) => String(b.branchId) === String(branchId) && b.travelCost !== null) || null;
   const travelModes = travel?.modes || [
-    { key: 'motorbike', label: 'Motorbike', ratePerKm: 8 }, { key: 'car', label: 'Car', ratePerKm: 25 },
-    { key: 'ride', label: 'Rickshaw / ride-hailing', ratePerKm: 50 },
+    { key: 'motorbike', label: 'Motorbike', ratePerKm: 10 }, { key: 'car', label: 'Car', ratePerKm: 35 },
+    { key: 'ride', label: 'Rickshaw / ride-hailing', ratePerKm: 55 },
   ];
 
+  const matchRank = (t: any, q: string) => {
+    const name = t.name.toLowerCase(), query = q.toLowerCase().trim();
+    return !query ? 0 : name.startsWith(query) ? 1 : name.includes(query) ? 2 : (t.category || '').toLowerCase().includes(query) ? 3 : 0;
+  };
   const filteredLabs = allLabTests
     .map(lab => ({
       ...lab,
-      tests: lab.tests.filter((t: any) =>
-        !testSearch ||
-        t.name.toLowerCase().includes(testSearch.toLowerCase()) ||
-        t.category.toLowerCase().includes(testSearch.toLowerCase())
-      ),
+      tests: testSearch
+        ? lab.tests.filter((t: any) => matchRank(t, testSearch) > 0).sort((a: any, b: any) => matchRank(a, testSearch) - matchRank(b, testSearch))
+        : lab.tests,
     }))
     .filter(lab => lab.tests.length > 0);
 
@@ -725,11 +749,68 @@ const PatientDashboard = () => {
     : !lab.acceptsInstallments     ? 'This lab has not added payment details yet'
     : openPlanCount >= maxOpenPlans ? `You already have ${maxOpenPlans} open installment plans`
     : null;
+  // Said once on the page instead of on every test
+  const planNotice = cnicStatus === 'rejected' ? 'To pay in installments, first correct your CNIC on your Profile page.'
+    : openPlanCount >= maxOpenPlans ? `You already have ${maxOpenPlans} open installment plans — you can apply for another once one is completed.`
+    : null;
+
+  // One test of a lab: name + price, then category / installments + Book (Book Tests cards and a lab's own page)
+  const testRow = (lab: any, t: any) => {
+    const travelTo = travelFor(lab, t);
+    const offersPlan = t.installmentEnabled && lab.acceptsInstallments; // a lab without payment details can't take plans
+    const blocker = offersPlan ? planBlocker(lab) : null;
+    const est = offersPlan ? planEstimate(t.price, t.installmentCount, downPct) : null;
+    const onlyAt = (lab.branches || []).length > 1 && t.branchIds && t.branchIds.length < lab.branches.length
+      ? branchesFor(lab, t).map((b: any) => b.area || b.name) : null;
+    return (
+      <div className="pat-test-row" key={t._id}>
+        <div className="pat-test-info">
+          <div className="pat-test-name">{t.name}</div>
+          <div className="pat-test-meta">
+            <span>{t.category}</span>
+            {est && <span className="pat-test-tag" title={`${pkr(est.down)} down, then ${t.installmentCount} × about ${pkr(est.perInstallment)} every ${t.installmentTenureDays} days`}>Installments</span>}
+            {onlyAt && <span className="pat-test-only" title={`Only at: ${onlyAt.join(', ')}`}>Only at {onlyAt.length} branch{onlyAt.length > 1 ? 'es' : ''}</span>}
+          </div>
+        </div>
+        <div className="pat-test-price">
+          {pkr(t.price)}
+          {travelTo && (
+            <span className="pat-test-true" title={`Test price + travel to ${travelTo.branchName || lab.labName} and back`}>
+              {pkr(t.price + travelTo.travelCost)} with travel
+            </span>
+          )}
+        </div>
+        <div className="pat-test-actions">
+          {est && (
+            <button type="button" className="pat-test-btn" disabled={Boolean(blocker)}
+              title={blocker || `${pkr(est.down)} down, then ${t.installmentCount} × about ${pkr(est.perInstallment)} every ${t.installmentTenureDays} days`}
+              onClick={() => startPlanApplication(lab, t)}>
+              Installments
+            </button>
+          )}
+          <button type="button" className="pat-test-btn primary" title="Choose the branch and day of your visit" onClick={() => startLabBooking(lab, t)}>Book</button>
+        </div>
+      </div>
+    );
+  };
+  const branchSummary = (lab: any) => (lab.branches || []).length > 1
+    ? `${lab.branches.length} branches · ${[...new Set(lab.branches.map((b: any) => b.area || b.name))].join(', ')}`
+    : (lab.branches?.[0]?.address || lab.location);
+  const openLabTests = (lab: any) => {
+    setLabViewId(String(lab.labId)); setLabPageSearch(testSearch); setLabPageCategory('');
+    navigate('labTests');
+  };
+  const labView = allLabTests.find(l => String(l.labId) === labViewId) || null;
+  const labPageCategories = labView ? [...new Set(labView.tests.map((t: any) => t.category).filter(Boolean))].sort() as string[] : [];
+  const labPageTests = labView ? labView.tests
+    .filter((t: any) => (!labPageCategory || t.category === labPageCategory) && (!labPageSearch || matchRank(t, labPageSearch) > 0))
+    .sort((a: any, b: any) => (labPageSearch ? matchRank(a, labPageSearch) - matchRank(b, labPageSearch) : 0) || a.name.localeCompare(b.name)) : [];
 
   const pageBreadcrumbs: Record<string, string> = {
     dashboard:     'Dashboard',
     findDoctors:   'Find Doctors',
     bookTests:     'Book Tests',
+    labTests:      'Lab Tests',
     myReports:     'My Reports',
     myWallet:      'My Wallet',
     applyPlan:     'Apply for Installments',
@@ -1295,28 +1376,22 @@ const PatientDashboard = () => {
                 </div>
               </div>
 
-              <div className="pat-card pat-fade-up pat-fade-up-1" style={{ padding: '20px 22px' }}>
-                <div className="pat-search-input-wrap">
-                  <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
-                    <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                  </svg>
-                  <input className="pat-form-input" type="text" placeholder="Search by doctor name or specialty…" value={doctorSearch} onChange={e => setDoctorSearch(e.target.value)} />
+              <div className="pat-card pat-fade-up pat-fade-up-1" style={{ padding: '16px 22px' }}>
+                <div className="pat-toolbar">
+                  <div className="pat-search-input-wrap" style={{ flex: 1 }}>
+                    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
+                      <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <input className="pat-form-input" type="text" placeholder="Search by doctor name or specialty…" value={doctorSearch} onChange={e => setDoctorSearch(e.target.value)} />
+                  </div>
+                  {specialties.length > 1 && (
+                    <select className="pat-form-input pat-toolbar-select" value={activeSpecialty} onChange={e => setActiveSpecialty(e.target.value)} aria-label="Specialty">
+                      <option value="All">All specialties</option>
+                      {specialties.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                    </select>
+                  )}
                 </div>
               </div>
-
-              {specialties.length > 1 && (
-                <div className="pat-specialty-chips pat-fade-up pat-fade-up-2">
-                  {specialties.map((s) => (
-                    <button
-                      key={s}
-                      className={`pat-spec-chip ${activeSpecialty === s ? 'active' : ''}`}
-                      onClick={() => setActiveSpecialty(s)}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              )}
 
               <div className="pat-doctors-grid pat-fade-up pat-fade-up-3">
                 {!loaded.doctors && (
@@ -1331,14 +1406,9 @@ const PatientDashboard = () => {
                   <div className="pat-doctor-card" key={doc.doctorId}>
                     <div className="pat-doctor-card-header">
                       <div className="pat-doc-avatar">{(doc.name || 'D').replace(/^dr\.?\s*/i, '')[0]?.toUpperCase()}</div>
-                      <div style={{ flex: 1 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="pat-doc-name">{drName(doc.name)}</div>
                         <div className="pat-doc-spec">{doc.specialization}</div>
-                        {(doc.clinicName || doc.clinicAddress) && (
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                            {[doc.clinicName, doc.clinicAddress].filter(Boolean).join(' · ')}
-                          </div>
-                        )}
                       </div>
                       <div className="pat-doc-rating">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="#d97706" stroke="none">
@@ -1347,32 +1417,36 @@ const PatientDashboard = () => {
                         {doc.rating > 0 ? doc.rating.toFixed(1) : 'New'}
                       </div>
                     </div>
-                    <div className="pat-doc-divider"></div>
-                    <div className="pat-doc-info-row">
-                      <span className="pat-doc-exp">
-                        <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24" style={{ marginRight: 4, verticalAlign: 'middle' }}>
-                          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                    {(doc.clinicName || doc.clinicAddress) && (
+                      <div className="pat-doc-clinic" title={[doc.clinicName, doc.clinicAddress].filter(Boolean).join(' · ')}>
+                        <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
+                          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
                         </svg>
-                        {doc.experience} yrs experience
-                      </span>
-                      <span className="pat-doc-fee">{doc.consultationFee > 0 ? pkr(doc.consultationFee) : 'Fee not set'}</span>
+                        <span>{doc.clinicName && <strong>{doc.clinicName}</strong>}{doc.clinicName && doc.clinicAddress ? ' · ' : ''}{doc.clinicAddress}</span>
+                      </div>
+                    )}
+                    <div className="pat-doc-footer">
+                      <div className="pat-doc-info-row">
+                        <span className="pat-doc-exp">
+                          {doc.availableDays.length ? compactDays(doc.availableDays) : 'No schedule yet'}
+                          {doc.experience > 0 && <> · {doc.experience} yrs exp.</>}
+                        </span>
+                        <span className="pat-doc-fee">{doc.consultationFee > 0 ? pkr(doc.consultationFee) : 'Fee not set'}</span>
+                      </div>
+                      <button
+                        className="pat-btn-primary pat-red"
+                        style={{ width: '100%', justifyContent: 'center', ...(doc.availableDays.length ? {} : { opacity: 0.55, cursor: 'not-allowed' }) }}
+                        disabled={!doc.availableDays.length}
+                        title={doc.availableDays.length ? 'See free times and book a clinic visit' : 'This doctor has not published a schedule yet'}
+                        onClick={() => startAppointment(doc)}
+                      >
+                        <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/>
+                          <line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/>
+                        </svg>
+                        Book Appointment
+                      </button>
                     </div>
-                    <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '-4px 0 12px' }}>
-                      {doc.availableDays.length ? `Available: ${doc.availableDays.map((d: string) => d.slice(0, 3)).join(', ')}` : 'Schedule not published yet'}
-                    </div>
-                    <button
-                      className="pat-btn-primary pat-red"
-                      style={{ width: '100%', justifyContent: 'center', ...(doc.availableDays.length ? {} : { opacity: 0.55, cursor: 'not-allowed' }) }}
-                      disabled={!doc.availableDays.length}
-                      title={doc.availableDays.length ? 'See free times and book a clinic visit' : 'This doctor has not published a schedule yet'}
-                      onClick={() => startAppointment(doc)}
-                    >
-                      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/>
-                        <line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/>
-                      </svg>
-                      Book Appointment
-                    </button>
                   </div>
                 ))}
               </div>
@@ -1436,32 +1510,26 @@ const PatientDashboard = () => {
                 </div>
               )}
 
-              <div className="pat-card pat-fade-up pat-fade-up-2" style={{ padding: '20px 22px', marginBottom: 24 }}>
+              <div className="pat-card pat-fade-up pat-fade-up-2" style={{ padding: '16px 22px', marginBottom: 20 }}>
                 <div className="pat-search-input-wrap">
                   <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
                     <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                   </svg>
-                  <input className="pat-form-input" type="text" placeholder="Search for a test (CBC, MRI, X-Ray…)" value={testSearch} onChange={e => setTestSearch(e.target.value)} />
+                  <input className="pat-form-input" type="text" placeholder="Search for a test to compare labs (CBC, MRI, X-Ray…)" value={testSearch} onChange={e => setTestSearch(e.target.value)} />
                 </div>
+                {prescribedTests.length > 0 && (
+                  <div className="pat-prescribed-row">
+                    <span>Your prescribed tests:</span>
+                    {prescribedTests.map((t) => (
+                      <button type="button" key={t} className={`pat-spec-chip ${testSearch === t ? 'active' : ''}`} onClick={() => setTestSearch(t)} title="Compare labs offering this test">{t}</button>
+                    ))}
+                    {testSearch && <button type="button" className="pat-link-btn" onClick={() => setTestSearch('')}>Clear</button>}
+                  </div>
+                )}
               </div>
 
-              {prescribedTests.length > 0 && (
-                <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '0.845rem', fontWeight: 600, color: 'var(--text)' }}>Prescribed Tests:</span>
-                  {prescribedTests.map((t) => (
-                    <span
-                      key={t}
-                      onClick={() => setTestSearch(t)}
-                      title="Show labs offering this test"
-                      style={{ cursor: 'pointer', padding: '4px 12px', background: testSearch === t ? 'var(--red)' : 'var(--red-light)', color: testSearch === t ? '#fff' : 'var(--red)', borderRadius: 20, fontSize: '0.78rem', fontWeight: 600, border: '1px solid var(--red-mid)' }}
-                    >
-                      {t}
-                    </span>
-                  ))}
-                  {testSearch && (
-                    <span onClick={() => setTestSearch('')} style={{ cursor: 'pointer', fontSize: '0.78rem', color: 'var(--text-muted)', textDecoration: 'underline' }}>Clear</span>
-                  )}
-                </div>
+              {planNotice && allLabTests.some(l => l.acceptsInstallments) && (
+                <div className="pat-info-note pat-fade-up">{planNotice}</div>
               )}
 
               <div className="pat-labs-grid pat-fade-up pat-fade-up-3">
@@ -1475,102 +1543,106 @@ const PatientDashboard = () => {
                     {allLabTests.length === 0 ? 'No labs have published tests yet.' : 'No tests match your search.'}
                   </div>
                 )}
-                {filteredLabs.map((lab: any) => (
-                  <div className="pat-lab-card" key={lab.labId}>
-                    <div className="pat-lab-card-header">
-                      <div className="pat-lab-icon">
-                        <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
-                          <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/>
-                        </svg>
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div className="pat-lab-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          {lab.labName}
-                          {lab.isCharityPartner && (
-                            <span style={{ fontSize: '0.65rem', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', borderRadius: 10, padding: '1px 7px', fontWeight: 700 }}>Charity Partner</span>
-                          )}
-                          {lab.labId === bestValueLabId && (
-                            <span style={{ fontSize: '0.65rem', background: 'var(--text)', color: '#fff', borderRadius: 10, padding: '1px 8px', fontWeight: 700 }}>Best value</span>
-                          )}
-                        </div>
-                        <div className="pat-lab-location">
-                          <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24" style={{ marginRight: 3, verticalAlign: 'middle' }}>
-                            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+                {filteredLabs.map((lab: any) => {
+                  const full = allLabTests.find(l => l.labId === lab.labId) || lab;
+                  const shown = testSearch ? lab.tests.slice(0, 3) : [];
+                  const near = showTrueCost && travel ? travelFor(lab) : null;
+                  const planTests = lab.acceptsInstallments ? full.tests.filter((t: any) => t.installmentEnabled).length : 0;
+                  return (
+                    <div className="pat-lab-card" key={lab.labId}>
+                      <div className="pat-lab-card-header">
+                        <div className="pat-lab-icon">
+                          <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
+                            <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/>
                           </svg>
-                          {(lab.branches || []).length > 1
-                            ? `${lab.branches.length} branches · ${[...new Set(lab.branches.map((b: any) => b.area || b.name))].join(', ')}`
-                            : (lab.branches?.[0]?.address || lab.location)}
                         </div>
-                        {travel && showTrueCost && (() => {
-                          const t = travelFor(lab);
-                          return (
-                            <div style={{ fontSize: '0.74rem', marginTop: 3, color: t ? 'var(--text-sub)' : 'var(--text-muted)' }}>
-                              {t
-                                ? <>{(lab.branches || []).length > 1 && <>Nearest: <strong style={{ color: 'var(--text)' }}>{t.branchName}</strong> · </>}{t.source === 'approx' ? '≈ ' : ''}{t.distanceKm} km · {t.durationMin} min · travel <strong style={{ color: 'var(--text)' }}>{pkr(t.travelCost)}</strong> there &amp; back</>
-                                : 'Lab has not set its location — travel cost unknown'}
-                            </div>
-                          );
-                        })()}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="pat-lab-name">{lab.labName}</div>
+                          <div className="pat-lab-location" title={branchSummary(lab)}>{branchSummary(lab)}</div>
+                        </div>
+                      </div>
+                      {(lab.isCharityPartner || lab.labId === bestValueLabId) && (
+                        <div className="pat-lab-badges">
+                          {lab.labId === bestValueLabId && <span className="pat-tag-dark">Best value</span>}
+                          {lab.isCharityPartner && <span className="pat-tag-green" title="Takes care of patients approved for community support">Charity Partner</span>}
+                        </div>
+                      )}
+                      {showTrueCost && travel && (
+                        <div className="pat-lab-travel">
+                          {near
+                            ? <>{(lab.branches || []).length > 1 && <>Nearest: <strong>{near.branchName}</strong> · </>}{near.source === 'approx' ? '≈ ' : ''}{near.distanceKm} km · travel <strong>{pkr(near.travelCost)}</strong> there &amp; back</>
+                            : 'This lab has not set its location — travel cost unknown'}
+                        </div>
+                      )}
+
+                      {testSearch ? (
+                        <div className="pat-lab-tests">{shown.map((t: any) => testRow(lab, t))}</div>
+                      ) : (
+                        <div className="pat-lab-stats">
+                          <div><strong>{full.tests.length}</strong><span>tests</span></div>
+                          <div><strong>{pkr(Math.min(...full.tests.map((t: any) => t.price)))}</strong><span>lowest price</span></div>
+                          <div><strong>{planTests || '—'}</strong><span>on installments</span></div>
+                        </div>
+                      )}
+
+                      <div className="pat-lab-card-footer">
+                        <button type="button" className="pat-btn-ghost" onClick={() => openLabTests(lab)}>
+                          {testSearch && lab.tests.length > shown.length ? `See all ${lab.tests.length} matching tests` : `View all ${full.tests.length} tests`}
+                          <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+                        </button>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            </section>
 
-                    <div className="pat-lab-prices">
-                      {lab.tests.map((t: any, ti: number) => (
-                        <div key={t._id} style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 0', borderBottom: ti < lab.tests.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontWeight: 600, color: 'var(--text)', fontSize: '0.84rem' }}>{t.name}</span>
-                            <span className="pat-price-val">{pkr(t.price)}</span>
-                          </div>
-                          {travelFor(lab, t) && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem', color: 'var(--text-sub)' }}>
-                              <span>True cost (with travel{(lab.branches || []).length > 1 ? ` to ${travelFor(lab, t).branchName}` : ''})</span>
-                              <strong style={{ color: 'var(--text)' }}>{pkr(t.price + travelFor(lab, t).travelCost)}</strong>
-                            </div>
-                          )}
-                          {(lab.branches || []).length > 1 && t.branchIds && t.branchIds.length < lab.branches.length && (
-                            <div style={{ fontSize: '0.7rem', color: '#92400e' }}>Only at: {branchesFor(lab, t).map((b: any) => b.area || b.name).join(', ')}</div>
-                          )}
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{t.category}</span>
-                            {t.installmentEnabled && (() => {
-                              const est = planEstimate(t.price, t.installmentCount, downPct);
-                              return (
-                                <span style={{ fontSize: '0.68rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: 10, padding: '1px 7px', fontWeight: 700 }}>
-                                  {pkr(est.down)} down · {t.installmentCount} × ~{pkr(est.perInstallment)} every {t.installmentTenureDays} days
-                                </span>
-                              );
-                            })()}
-                          </div>
-                          {(() => {
-                            const blocker = t.installmentEnabled ? planBlocker(lab) : null;
-                            return (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
-                                <button type="button" className="pat-upload-receipt-btn" style={{ color: 'var(--blue)' }}
-                                  title="Pick a visit date — pay at the lab or with an installment plan" onClick={() => startLabBooking(lab, t)}>
-                                  Book visit
-                                </button>
-                                {t.installmentEnabled && (
-                                  <button
-                                    type="button"
-                                    className="pat-upload-receipt-btn"
-                                    disabled={Boolean(blocker)}
-                                    title={blocker || 'Pay for this test in installments'}
-                                    style={blocker ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
-                                    onClick={() => startPlanApplication(lab, t)}
-                                  >
-                                    Apply for installments
-                                  </button>
-                                )}
-                                {blocker && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{blocker}</span>}
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      ))}
+            {/* ══ LAB TESTS (one lab's catalogue) ═══════════════════ */}
+            <section className={`pat-page-section ${currentPage === 'labTests' ? 'active' : ''}`}>
+              {!labView ? (
+                <div className="pat-card" style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.88rem' }}>
+                  Choose a lab in <a style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => navigate('bookTests')}>Book Tests</a>.
+                </div>
+              ) : (
+                <>
+                  <div className="pat-page-header pat-fade-up" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="pat-page-title">{labView.labName}</div>
+                      <div className="pat-page-title-rule"></div>
+                      <div className="pat-page-subtitle">{branchSummary(labView)}</div>
+                    </div>
+                    <button type="button" className="pat-btn-ghost" onClick={() => navigate('bookTests')}>
+                      <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+                      All labs
+                    </button>
+                  </div>
+
+                  <div className="pat-card pat-fade-up pat-fade-up-1" style={{ padding: '16px 22px', marginBottom: 20 }}>
+                    <div className="pat-toolbar">
+                      <div className="pat-search-input-wrap" style={{ flex: 1 }}>
+                        <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
+                          <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                        </svg>
+                        <input className="pat-form-input" type="text" placeholder={`Search ${labView.tests.length} tests…`} value={labPageSearch} onChange={e => setLabPageSearch(e.target.value)} />
+                      </div>
+                      {labPageCategories.length > 1 && (
+                        <select className="pat-form-input pat-toolbar-select" value={labPageCategory} onChange={e => setLabPageCategory(e.target.value)} aria-label="Category">
+                          <option value="">All categories</option>
+                          {labPageCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      )}
                     </div>
                   </div>
-                ))}
-              </div>
+
+                  {planNotice && labView.acceptsInstallments && <div className="pat-info-note">{planNotice}</div>}
+
+                  <div className="pat-card pat-fade-up pat-fade-up-2 pat-lab-page-list">
+                    {labPageTests.length === 0
+                      ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.86rem' }}>No tests match your search.</div>
+                      : labPageTests.map((t: any) => testRow(labView, t))}
+                  </div>
+                </>
+              )}
             </section>
 
             {/* ══ BOOK APPOINTMENT (opened from Find Doctors) ═════ */}

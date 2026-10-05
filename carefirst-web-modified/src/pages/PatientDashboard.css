@@ -750,6 +750,7 @@
 }
 
 .pat-table-wrap th {
+  white-space: nowrap;
   padding: 11px 16px;
   text-align: left;
   font-size: 0.7rem;
@@ -937,6 +938,8 @@
   padding: 22px;
   box-shadow: var(--glass-shadow);
   transition: transform 0.18s, box-shadow 0.18s;
+  display: flex;
+  flex-direction: column;
 }
 
 .pat-doctor-card:hover {
@@ -987,10 +990,33 @@
   color: #d97706;
 }
 
-.pat-doc-divider {
-  height: 1px;
-  background: var(--border);
-  margin-bottom: 14px;
+.pat-doc-clinic {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  margin: -2px 0 14px;
+}
+
+.pat-doc-clinic svg { flex-shrink: 0; margin-top: 2px; }
+
+.pat-doc-clinic strong { font-weight: 600; color: var(--text-sub); }
+
+/* long addresses stop after two lines (full text on hover) */
+.pat-doc-clinic span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* fee + button always sit at the bottom, so buttons line up across a row */
+.pat-doc-footer {
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
 .pat-doc-info-row {
@@ -1009,7 +1035,13 @@
 }
 
 .pat-doc-exp {
-  font-size: 0.775rem;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 10px;
 }
 
 /* ─── Specialty Chips ────────────────────────────────────────── */
@@ -1048,9 +1080,9 @@
 /* ─── Lab Cards ──────────────────────────────────────────────── */
 .pat-labs-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 18px;
-  margin-top: 24px;
+  margin-top: 4px;
 }
 
 .pat-lab-card {
@@ -1061,13 +1093,15 @@
   border-radius: var(--radius-sm);
   padding: 22px;
   box-shadow: var(--glass-shadow);
+  display: flex;
+  flex-direction: column;
 }
 
 .pat-lab-card-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .pat-lab-icon {
@@ -1088,9 +1122,133 @@
 }
 
 .pat-lab-location {
-  font-size: 0.775rem;
-  color: var(--text-sub);
+  font-size: 0.76rem;
+  color: var(--text-muted);
   margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pat-lab-badges { display: flex; gap: 6px; flex-wrap: wrap; margin: -2px 0 12px; }
+
+.pat-tag-dark,
+.pat-tag-green {
+  font-size: 0.66rem;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.pat-tag-dark  { background: var(--text); color: #fff; }
+.pat-tag-green { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+
+.pat-lab-travel {
+  font-size: 0.74rem;
+  color: var(--text-sub);
+  background: rgba(0, 0, 0, 0.025);
+  border-radius: var(--radius-xs);
+  padding: 7px 10px;
+  margin-bottom: 12px;
+}
+
+.pat-lab-travel strong { color: var(--text); font-weight: 600; }
+
+/* Lab summary when not searching: tests · lowest price · installments */
+.pat-lab-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  margin-bottom: 14px;
+}
+
+.pat-lab-stats > div { padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.pat-lab-stats > div + div { border-left: 1px solid var(--border); }
+.pat-lab-stats strong { font-size: 0.9rem; color: var(--text); white-space: nowrap; }
+.pat-lab-stats span { font-size: 0.68rem; color: var(--text-muted); }
+
+.pat-lab-tests { margin-bottom: 12px; }
+
+.pat-lab-card-footer { margin-top: auto; display: flex; }
+.pat-lab-card-footer .pat-btn-ghost { width: 100%; justify-content: center; }
+
+/* One test: name / price on the first line, category + tags / buttons on the second */
+.pat-test-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "info price" "info actions";
+  column-gap: 14px;
+  row-gap: 6px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pat-test-row:last-child { border-bottom: none; }
+.pat-test-info    { grid-area: info; min-width: 0; }
+.pat-test-price   { grid-area: price; text-align: right; font-weight: 700; font-size: 0.86rem; color: var(--text); white-space: nowrap; }
+.pat-test-actions { grid-area: actions; display: flex; gap: 6px; justify-content: flex-end; align-self: end; }
+
+.pat-test-name { font-weight: 600; font-size: 0.85rem; color: var(--text); line-height: 1.35; }
+
+.pat-test-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.pat-test-tag {
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-radius: 10px;
+  padding: 1px 7px;
+  cursor: help;
+}
+
+.pat-test-only { color: #92400e; cursor: help; }
+
+.pat-test-true { display: block; font-size: 0.7rem; font-weight: 500; color: var(--text-sub); margin-top: 2px; }
+
+.pat-test-btn {
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-family: inherit;
+  border: 1px solid var(--border-md);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.pat-test-btn:hover:not(:disabled) { border-color: var(--text); }
+.pat-test-btn.primary { background: var(--text); border-color: var(--text); color: #fff; }
+.pat-test-btn.primary:hover { opacity: 0.85; }
+.pat-test-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* A lab's own page: the same rows, wider */
+.pat-lab-page-list { padding: 4px 22px; }
+.pat-lab-page-list .pat-test-row {
+  grid-template-columns: minmax(0, 1fr) 170px 190px; /* fixed columns: prices and Book buttons line up */
+  grid-template-areas: "info price actions";
+  align-items: center;
+}
+.pat-lab-page-list .pat-test-actions { align-self: center; }
+
+@media (max-width: 640px) {
+  .pat-lab-page-list .pat-test-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "info price" "info actions";
+  }
 }
 
 .pat-lab-prices {
@@ -1227,6 +1385,7 @@
 .pat-badge {
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
   gap: 5px;
   padding: 3px 9px;
   border-radius: 20px;
@@ -1398,6 +1557,45 @@
   position: relative;
   display: flex;
   align-items: center;
+  min-width: 0;
+}
+
+/* Search + filter on one line (wraps on small screens) */
+.pat-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.pat-toolbar .pat-search-input-wrap { min-width: 220px; }
+.pat-toolbar-select { width: 240px; max-width: 100%; flex-shrink: 0; cursor: pointer; }
+
+.pat-prescribed-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 0.8rem;
+  color: var(--text-sub);
+}
+
+.pat-prescribed-row > span { font-weight: 600; color: var(--text); margin-right: 2px; }
+
+.pat-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.pat-info-note {
+  font-size: 0.8rem;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-xs);
+  padding: 9px 14px;
+  margin-bottom: 16px;
 }
 
 .pat-search-input-wrap svg {
@@ -1442,3 +1640,13 @@
 /* Cards stacked on a page get breathing room (margins collapse, so a card's own
    bottom margin is not doubled) */
 .pat-page-section > :is(.pat-card, .pat-wallet-summary) + :is(.pat-card, .pat-wallet-summary) { margin-top: 22px; }
+
+/* Phones / small tablets: the sidebar slides over the page instead of pushing it sideways */
+/* the main column may shrink below its content: wide tables scroll inside their own box */
+.pat-main { min-width: 0; }
+
+@media (max-width: 900px) {
+  .pat-main { margin-left: 0; }
+  .pat-content { padding: 20px 16px; }
+  .pat-search-wrap, .pat-date-chip { display: none; }
+}
