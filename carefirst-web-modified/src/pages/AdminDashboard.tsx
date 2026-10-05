@@ -33,11 +33,12 @@ const ACTIVITY_COLORS: Record<string, string> = {
 
 const AdminDashboard = () => {
   // ── UI state ──────────────────────────────────────────────────────────────────
-  const [sidebarOpen, setSidebarOpen]             = useState(true);
+  const [sidebarOpen, setSidebarOpen]             = useState(() => !(window.innerWidth <= 900)); // closed on phones
   const [currentPage, setCurrentPage]             = useState('dashboard');
   const [dateString, setDateString]               = useState('');
   const [roleFilter, setRoleFilter]               = useState('All');
   const [userSearch, setUserSearch]               = useState('');
+  const [usersPage, setUsersPage]                 = useState(0);
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
   const [overview, setOverview]                   = useState<any>(null);   // GET /admin/overview
   const [reports, setReports]                     = useState<any>(null);   // GET /admin/reports
@@ -294,7 +295,7 @@ const AdminDashboard = () => {
   };
 
   // ── Navigation ────────────────────────────────────────────────────────────────
-  const navigate = (page: string) => { setCurrentPage(page); setShowNotifDropdown(false); };
+  const navigate = (page: string) => { setCurrentPage(page); setShowNotifDropdown(false); if (window.innerWidth <= 900) setSidebarOpen(false); };
 
   const breadcrumbs: Record<string, string> = {
     dashboard:     'Dashboard',
@@ -335,8 +336,14 @@ const AdminDashboard = () => {
   });
   const filteredUsers = !userSearch ? byRole : byRole.filter((u: any) =>
     u.name?.toLowerCase().includes(userSearch.toLowerCase()) ||
-    u.email?.toLowerCase().includes(userSearch.toLowerCase())
+    u.email?.toLowerCase().includes(userSearch.toLowerCase()) ||
+    (u.profile?.cnic || '').includes(userSearch.trim())
   );
+  // 20 users per page
+  const USERS_PER_PAGE = 20;
+  const usersPageCount = Math.max(1, Math.ceil(filteredUsers.length / USERS_PER_PAGE));
+  const usersPageNow = Math.min(usersPage, usersPageCount - 1);
+  const pagedUsers = filteredUsers.slice(usersPageNow * USERS_PER_PAGE, (usersPageNow + 1) * USERS_PER_PAGE);
 
   const pendingCnicCount = apiUsers.filter((u: any) => u.role === 'patient' && u.profile?.cnicStatus === 'unverified').length;
 
@@ -698,7 +705,7 @@ const AdminDashboard = () => {
                 </div>
               </div>
 
-              <div className="dash-stats-grid dash-fu dash-fu-1" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+              <div className="dash-stats-grid dash-fu dash-fu-1" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
                 {[
                   { label: 'Pending Review', value: allRegs.filter(u => u.status === 'pending').length,   cls: 'dash-amber', filter: 'pending',   icon: <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></> },
                   { label: 'Approved',        value: allRegs.filter(u => u.status === 'active').length,    cls: 'dash-green', filter: 'active',    icon: <><polyline points="20 6 9 17 4 12"/></> },
@@ -821,7 +828,7 @@ const AdminDashboard = () => {
 
               <div className="dash-chip-row dash-fu dash-fu-1">
                 {ROLE_FILTERS.map((f) => (
-                  <button key={f} className={`dash-chip ${roleFilter === f ? 'active' : ''}`} onClick={() => setRoleFilter(f)}>
+                  <button key={f} className={`dash-chip ${roleFilter === f ? 'active' : ''}`} onClick={() => { setRoleFilter(f); setUsersPage(0); }}>
                     {f}
                     {f === 'CNIC Review' && pendingCnicCount > 0 && <span style={{ marginLeft: 6, opacity: 0.7 }}>({pendingCnicCount})</span>}
                   </button>
@@ -829,6 +836,23 @@ const AdminDashboard = () => {
               </div>
 
               <div className="dash-card dash-fu dash-fu-2">
+                <div className="dash-toolbar">
+                  <div className="dash-search">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input type="text" placeholder="Search name, email or CNIC…" value={userSearch} onChange={e => { setUserSearch(e.target.value); setUsersPage(0); }} />
+                  </div>
+                  <div className="dash-toolbar-right">
+                    <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                      {filteredUsers.length === 0 ? 'No users' : `${usersPageNow * USERS_PER_PAGE + 1}–${Math.min(filteredUsers.length, (usersPageNow + 1) * USERS_PER_PAGE)} of ${filteredUsers.length}`}
+                    </span>
+                    {usersPageCount > 1 && (
+                      <>
+                        <button className="dash-btn-ghost" style={{ padding: '6px 12px', fontSize: '0.78rem' }} disabled={usersPageNow === 0} onClick={() => setUsersPage(usersPageNow - 1)}>Previous</button>
+                        <button className="dash-btn-ghost" style={{ padding: '6px 12px', fontSize: '0.78rem' }} disabled={usersPageNow >= usersPageCount - 1} onClick={() => setUsersPage(usersPageNow + 1)}>Next</button>
+                      </>
+                    )}
+                  </div>
+                </div>
                 <div className="dash-table-wrap">
                   <table>
                     <thead>
@@ -839,7 +863,7 @@ const AdminDashboard = () => {
                         <tr><td colSpan={8} style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                           {userSearch ? `No users matching "${userSearch}"` : 'No users found.'}
                         </td></tr>
-                      ) : filteredUsers.map((u: any) => {
+                      ) : pagedUsers.map((u: any) => {
                         const cnicStatus = u.role === 'patient' ? (u.profile?.cnicStatus || 'unverified') : null;
                         return (
                         <React.Fragment key={u._id}>
@@ -858,10 +882,10 @@ const AdminDashboard = () => {
                               </div>
                             ) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                           </td>
-                          <td>{u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
                           <td><span className={`dash-badge ${statusClass(u.status)}`}><span className="dash-badge-dot"></span>{statusLabel(u.status)}</span></td>
                           <td style={{ textAlign: 'right' }}>
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4, flexWrap: 'wrap' }}>
+                            <div className="dash-row-actions" style={{ gap: 4 }}>
                               {cnicStatus && cnicStatus !== 'verified' && u.profile && (
                                 <>
                                   <button className="adm-approve-btn" style={{ fontSize: '0.68rem', padding: '4px 10px' }} onClick={() => verifyCnic(u._id)}>Verify CNIC</button>

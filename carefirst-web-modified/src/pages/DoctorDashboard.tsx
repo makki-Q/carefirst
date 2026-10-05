@@ -54,7 +54,7 @@ const statusPill = (s: string) => {
 };
 
 const DoctorDashboard = () => {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !(window.innerWidth <= 900)); // closed on phones
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [dateString, setDateString]   = useState('');
 
@@ -305,7 +305,7 @@ const DoctorDashboard = () => {
 
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
   const toggleDay = (id: number) => setAvailability(prev => prev.map(d => d.id === id ? { ...d, active: !d.active } : d));
-  const navigate  = (page: string) => { setCurrentPage(page); setShowNotifDropdown(false); };
+  const navigate  = (page: string) => { setCurrentPage(page); setShowNotifDropdown(false); if (window.innerWidth <= 900) setSidebarOpen(false); };
 
   // ── Display variables (real data if available, dummy fallback otherwise) ─────
   // Only the doctor's own data — a new account starts empty

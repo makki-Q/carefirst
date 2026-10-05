@@ -90,6 +90,9 @@
   font-size: 0.72rem;
   color: var(--text-sub);
   margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dash-sidebar-nav {
@@ -584,6 +587,7 @@
   color: var(--text-muted);
   background: rgba(0,0,0,0.02);
   border-bottom: 1px solid var(--border);
+  white-space: nowrap;
 }
 
 .dash-table-wrap td {
@@ -598,6 +602,7 @@
 
 .dash-mono {
   font-family: 'DM Mono', monospace;
+  white-space: nowrap; /* slip numbers, CNICs and phones never break */
   font-size: 0.78rem;
   color: var(--text-muted) !important;
 }
@@ -606,6 +611,7 @@
 .dash-badge {
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
   gap: 5px;
   font-size: 0.7rem;
   font-weight: 600;
@@ -681,6 +687,72 @@
 }
 
 .dash-btn-ghost:hover { background: var(--surface); color: var(--text); }
+.dash-btn-ghost:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Toolbar on top of a table card: search left, filters right ── */
+.dash-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dash-toolbar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.dash-toolbar-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.dash-toolbar .dash-filter-select { max-width: 300px; text-overflow: ellipsis; }
+
+.dash-search {
+  position: relative;
+  flex: 1;
+  min-width: 200px;
+  max-width: 340px;
+}
+
+.dash-search svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.dash-search input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px 0 34px;
+  border: 1px solid var(--border-md);
+  border-radius: var(--radius-xs);
+  background: var(--surface);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.825rem;
+  color: var(--text);
+  outline: none;
+}
+
+.dash-search input:focus { border-color: var(--text-muted); }
+
+/* Buttons in a table's last column: one row, right-aligned */
+.dash-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
 
 /* ── Filter row ──────────────────────────────────────────────── */
 .dash-filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -872,3 +944,13 @@
 /* Cards stacked on a page get breathing room (margins collapse, so a card's own
    bottom margin is not doubled) */
 .dash-page-section > .dash-card + .dash-card { margin-top: 22px; }
+
+/* Phones / small tablets: the sidebar slides over the page instead of pushing it sideways */
+/* the main column may shrink below its content: wide tables scroll inside their own box */
+.dash-main { min-width: 0; }
+
+@media (max-width: 900px) {
+  .dash-main { margin-left: 0; }
+  .dash-content { padding: 20px 16px; }
+  .dash-search-wrap, .dash-date-chip { display: none; }
+}

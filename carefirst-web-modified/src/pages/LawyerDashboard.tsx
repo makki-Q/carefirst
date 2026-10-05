@@ -38,7 +38,7 @@ interface Defaulter {
 
 
 const LawyerDashboard = () => {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !(window.innerWidth <= 900)); // closed on phones
   const [currentPage, setCurrentPage] = useState('defaulters');
   const [selectedCase, setSelectedCase] = useState<Defaulter | null>(null);
   const [agreementUrdu, setAgreementUrdu] = useState(false); // show the Urdu version of the agreement
@@ -136,6 +136,7 @@ const LawyerDashboard = () => {
   const navigate = (page: string) => {
     setCurrentPage(page);
     if (page !== 'caseDetail') setSelectedCase(null);
+    if (window.innerWidth <= 900) setSidebarOpen(false);
   };
 
   const openCase = (c: Defaulter) => {

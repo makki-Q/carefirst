@@ -514,6 +514,7 @@
 .doc-patient-time { font-size: 0.72rem; color: var(--text-muted); }
 
 .doc-status-badge {
+  white-space: nowrap;
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 0.7rem; font-weight: 600;
   padding: 3px 9px;
@@ -531,6 +532,7 @@
 .doc-table-wrap table { width: 100%; border-collapse: collapse; }
 .doc-table-wrap thead tr { background: rgba(255,255,255,0.50); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
 .doc-table-wrap th {
+  white-space: nowrap;
   padding: 13px 20px;
   text-align: left;
   font-size: 0.68rem;
@@ -841,3 +843,13 @@
 /* Cards stacked on a page get breathing room (margins collapse, so a card's own
    bottom margin is not doubled) */
 .doc-page-section > .doc-card + .doc-card { margin-top: 22px; }
+
+/* Phones / small tablets: the sidebar slides over the page instead of pushing it sideways */
+/* the main column may shrink below its content: wide tables scroll inside their own box */
+.doc-main { min-width: 0; }
+
+@media (max-width: 900px) {
+  .doc-main { margin-left: 0; }
+  .doc-content { padding: 20px 16px; }
+  .doc-search-wrap, .doc-date-chip { display: none; }
+}
