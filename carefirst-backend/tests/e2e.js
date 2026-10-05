@@ -77,6 +77,7 @@ const call = async (method, urlPath, { token, body, files, raw } = {}) => {
 const get  = (p, opts) => call('GET', p, opts);
 const post = (p, opts) => call('POST', p, opts);
 const put  = (p, opts) => call('PUT', p, opts);
+const del  = (p, opts) => call('DELETE', p, opts);
 
 const listUploads = () => new Set(
   UPLOAD_DIRS.flatMap(dir => (fs.existsSync(dir) ? fs.readdirSync(dir).map(f => path.join(dir, f)) : []))
@@ -1497,6 +1498,89 @@ const testAdminInsights = async () => {
   check('only admins can change settings (403)', (await put('/api/admin/settings', { token: tokens.patient, body: { careFirstAccount: { jazzCash: '0300-1234567' } } })).status === 403);
 };
 
+const testLabBranches = async () => {
+  section('Lab branches (one account per chain)');
+  const LabProfile = require('../models/LabProfile');
+  const LabBooking = require('../models/LabBooking');
+  const { pktDate, addDays } = require('../utils/schedule');
+  const tomorrow = addDays(pktDate(), 1);
+
+  const list = await get('/api/lab/branches', { token: tokens.lab });
+  check('a lab starts with one branch from its registration', list.status === 200 && list.data.length === 1 && list.data[0].name === users.lab.labName, list.data);
+  const main = list.data[0];
+
+  check('a branch needs a name and address (400)', (await post('/api/lab/branches', { token: tokens.lab, body: { name: 'X' } })).status === 400);
+  check('branch names are unique within the lab (409)', (await post('/api/lab/branches', { token: tokens.lab, body: { name: main.name, address: 'Somewhere' } })).status === 409);
+  const added = await post('/api/lab/branches', { token: tokens.lab, body: {
+    name: 'E2E Diagnostics – Satiana Road', address: '12 Satiana Road, Faisalabad', area: 'Satiana Road',
+    phone: '041-1234567', hours: 'Mon–Sat 8 AM – 10 PM', coordinates: { lat: 31.3935, lng: 73.1173 },
+  } });
+  check('the lab adds a second branch with its own pin', added.status === 201 && added.data.hasLocation && added.data.phone === '041-1234567', added.data);
+  const satiana = added.data;
+  check('a branch is edited', (await put(`/api/lab/branches/${satiana.branchId}`, { token: tokens.lab, body: { hours: 'Daily 9 AM – 9 PM' } })).data.hours === 'Daily 9 AM – 9 PM');
+  check("the old single-pin profile update is refused once there are several branches (400)",
+    (await put('/api/lab/profile', { token: tokens.lab, body: { coordinates: { lat: 31.4, lng: 73.1 } } })).status === 400);
+
+  // CBC only at the new branch
+  check('an unknown branch on a test is refused (400)', (await put(`/api/lab/tests/${ids.cbcTest}`, { token: tokens.lab, body: { branches: [ids.lab] } })).status === 400);
+  const limited = await put(`/api/lab/tests/${ids.cbcTest}`, { token: tokens.lab, body: { branches: [satiana.branchId] } });
+  check('a test can be limited to some branches', limited.status === 200 && limited.data.branches.length === 1, limited.data);
+  const pub = (await get('/api/public/tests')).data.find(l => l.labId === ids.lab);
+  check('patients see the branches and where each test is offered',
+    pub.branches.length === 2 && pub.tests.find(t => t._id === ids.cbcTest).branchIds.join() === satiana.branchId &&
+    pub.tests.find(t => t._id === ids.mriTest).branchIds.length === 2, pub);
+
+  // Booking at a branch
+  const book = (body) => post('/api/patient/lab-bookings', { token: tokens.patient2, body: { labId: ids.lab, visitDate: tomorrow, ...body } });
+  const cbc = await book({ testId: ids.cbcTest });
+  check('a test offered at one branch is booked there automatically', cbc.status === 201 && cbc.data.branch === satiana.branchId && cbc.data.branchName === satiana.name, cbc.data);
+  check('a test offered at several branches needs the branch chosen (400)', (await book({ testId: ids.mriTest })).status === 400);
+  check("a branch that doesn't offer the test can't be chosen (400)", (await book({ testId: ids.cbcTest, branchId: main.branchId })).status === 400);
+  const mri = await book({ testId: ids.mriTest, branchId: main.branchId });
+  check('the patient books MRI at the main branch', mri.status === 201 && mri.data.branchName === main.name && mri.data.branchAddress === main.address, mri.data);
+
+  // The patient changes branch; the lab takes the visit at its branch
+  const moved = await put(`/api/patient/lab-bookings/${mri.data._id}/branch`, { token: tokens.patient2, body: { branchId: satiana.branchId } });
+  check('the patient moves the visit to another branch', moved.status === 200 && moved.data.booking.branchName === satiana.name && moved.data.booking.transfers[0].by === 'patient', moved.data);
+  check('the lab is told', (await get('/api/lab/notifications', { token: tokens.lab })).data.some(n => n.title === 'Visit Moved to Another Branch'));
+  check("the CBC visit can't move to a branch that doesn't offer CBC (400)",
+    (await put(`/api/lab/bookings/${cbc.data._id}/transfer`, { token: tokens.lab, body: { branchId: main.branchId } })).status === 400);
+  const back = await put(`/api/lab/bookings/${mri.data._id}/transfer`, { token: tokens.lab, body: { branchId: main.branchId } });
+  check('wrong branch: the lab takes the visit at its own branch', back.status === 200 && back.data.booking.branchName === main.name && back.data.booking.transfers.length === 2, back.data);
+  check('the patient is told where the visit is now',
+    (await get('/api/patient/notifications', { token: tokens.patient2 })).data.some(n => n.title === 'Lab Visit Moved' && n.message.includes(main.name)));
+  check('another lab cannot move it (404)', (await put(`/api/lab/bookings/${mri.data._id}/transfer`, { token: tokens.lab2, body: { branchId: main.branchId } })).status === 404);
+  const slip = await fetch(`${BASE}/api/documents/slips/lab-booking/${mri.data._id}`, { headers: { Authorization: `Bearer ${tokens.patient2}` } });
+  check('the slip is still available after the move', slip.status === 200);
+
+  // Removing branches
+  check("a branch with open visits can't be removed (409)", (await del(`/api/lab/branches/${main.branchId}`, { token: tokens.lab })).status === 409);
+  check("a lab's last branch can't be removed (400)",
+    (await del(`/api/lab/branches/${(await get('/api/lab/branches', { token: tokens.lab2 })).data[0].branchId}`, { token: tokens.lab2 })).status === 400);
+  await put(`/api/lab/bookings/${mri.data._id}/sample-collected`, { token: tokens.lab });
+  check('a visit whose sample is collected stays where it is (400)',
+    (await put(`/api/lab/bookings/${mri.data._id}/transfer`, { token: tokens.lab, body: { branchId: satiana.branchId } })).status === 400);
+
+  // True Cost per branch
+  const tc = await get('/api/public/true-cost?lat=31.40&lng=73.10&mode=car');
+  const mine = tc.data.labs.find(l => l.labId === ids.lab);
+  check('True Cost gives every branch its distance and the lab its nearest branch',
+    mine.branches.length === 2 && mine.branches.every(b => b.distanceKm !== null) &&
+    mine.branchId === mine.branches.slice().sort((a, b) => a.distanceKm - b.distanceKm)[0].branchId, mine);
+
+  // Labs and visits from before branches get one at startup
+  const { backfillLabBranches } = require('../utils/labBranches');
+  const old = await LabProfile.collection.insertOne({ user: new mongoose.Types.ObjectId(), labName: 'Old Lab', location: 'Jail Road, Faisalabad', coordinates: { lat: 31.42, lng: 73.08 }, tests: [] });
+  const oldVisit = await LabBooking.collection.insertOne({ patient: new mongoose.Types.ObjectId(), lab: (await LabProfile.findById(old.insertedId)).user, labTest: new mongoose.Types.ObjectId(), testName: 'CBC', price: 1, visitDate: tomorrow, status: 'confirmed' });
+  await backfillLabBranches();
+  const oldLab = await LabProfile.findById(old.insertedId).lean();
+  check('an older lab gets a branch from its address and pin',
+    oldLab.branches.length === 1 && oldLab.branches[0].address === 'Jail Road, Faisalabad' && oldLab.branches[0].coordinates.lat === 31.42, oldLab.branches);
+  check("an older visit gets its lab's branch", String((await LabBooking.findById(oldVisit.insertedId).lean()).branch) === String(oldLab.branches[0]._id));
+  await LabProfile.deleteOne({ _id: old.insertedId });
+  await LabBooking.deleteOne({ _id: oldVisit.insertedId });
+};
+
 const testMisc = async () => {
   section('Notifications & error handling');
   const readAll = await put('/api/patient/notifications/read-all', { token: tokens.patient });
@@ -1540,6 +1624,7 @@ const main = async () => {
     await testAutoSummary();
     await testDueReminders();
     await testAdminInsights();
+    await testLabBranches();
     await testMisc();
   } catch (err) {
     failures.push(`crashed: ${err.message}`);

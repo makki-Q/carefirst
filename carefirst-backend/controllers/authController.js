@@ -46,7 +46,8 @@ const register = async (req, res) => {
       } else if (role === 'lab') {
         const { labName, location, licenseNumber } = extra;
         if (!labName || !location) throw new Error('labName and location are required for labs');
-        await LabProfile.create({ user: user._id, labName, location, licenseNumber, phone });
+        // A new lab starts with one branch (its own address); more can be added in the portal
+        await LabProfile.create({ user: user._id, labName, location, licenseNumber, phone, branches: [{ name: labName, address: location, phone }] });
 
       } else if (role === 'doctor') {
         const { specialization, experience } = extra;

@@ -8,6 +8,22 @@ const testSchema = new mongoose.Schema({
   installmentEnabled:   { type: Boolean, default: false },
   installmentCount:     { type: Number, min: 1, default: 2 },
   installmentTenureDays:{ type: Number, enum: [15, 20, 25, 30], default: 30 },
+  // Branches that offer this test (LabProfile.branches[]._id); empty = every branch
+  branches: [{ type: mongoose.Schema.Types.ObjectId }],
+});
+
+// A lab account is a chain; each branch is a place patients visit (decided 2026-10-05, "Option B")
+const branchSchema = new mongoose.Schema({
+  name:     { type: String, required: true, trim: true, maxlength: 80 },  // e.g. "Chughtai Lab – Susan Road"
+  address:  { type: String, required: true, trim: true, maxlength: 200 },
+  area:     { type: String, trim: true, maxlength: 60 },
+  phone:    { type: String, trim: true, maxlength: 30 },
+  hours:    { type: String, trim: true, maxlength: 80 },
+  // Map pin for True Cost Analysis (travel distance from the patient)
+  coordinates: {
+    lat: { type: Number, min: -90,  max: 90 },
+    lng: { type: Number, min: -180, max: 180 },
+  },
 });
 
 const labProfileSchema = new mongoose.Schema(
@@ -28,12 +44,13 @@ const labProfileSchema = new mongoose.Schema(
     // CareFirst collects no donations.
     isCharityPartner:    { type: Boolean, default: false },
     charityPartnerSince: { type: Date },
-    // Map pin for True Cost Analysis (travel distance from the patient)
+    // Legacy single map pin (before branches) — copied into the first branch at startup
     coordinates: {
       lat: { type: Number, min: -90,  max: 90 },
       lng: { type: Number, min: -180, max: 180 },
     },
     tests:           [testSchema],
+    branches:        [branchSchema], // at least one; labs from before branches get one at startup
   },
   { timestamps: true }
 );

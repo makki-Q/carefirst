@@ -7,7 +7,7 @@ const {
   getWallets, uploadPaymentReceipt, uploadServiceFeeReceipt,
   getInstallmentConfig, previewInstallmentPlan, applyForInstallmentPlan,
   getAppointments, bookAppointment, cancelAppointment,
-  getLabBookings, bookLabTest, cancelLabBooking,
+  getLabBookings, bookLabTest, cancelLabBooking, changeLabBranch,
   getCommunityApplications, createCommunityApplication,
   getNotifications, markRead, markAllRead,
 } = require('../controllers/patientController');
@@ -50,6 +50,7 @@ router.put('/appointments/:id/cancel',  ...guard, cancelAppointment);
 router.get('/lab-bookings',             ...guard, getLabBookings);
 router.post('/lab-bookings',            ...guard, bookLabTest);
 router.put('/lab-bookings/:id/cancel',  ...guard, cancelLabBooking);
+router.put('/lab-bookings/:id/branch',  ...guard, changeLabBranch);  // go to another branch
 
 // Community support
 router.get('/community-applications',  ...guard, getCommunityApplications);

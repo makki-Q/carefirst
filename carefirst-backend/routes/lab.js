@@ -7,7 +7,8 @@ const {
   getReceiptsPendingApproval, approveReceipt,
   getNeedyPatients, markTestConducted, setCommunitySupport, getEarnings,
   getLabPatients,
-  getBookings, markSampleCollected, completeBooking,
+  getBookings, markSampleCollected, completeBooking, transferBooking,
+  getBranches, addBranch, updateBranch, deleteBranch,
   getNotifications, markRead,
 } = require('../controllers/labController');
 const { protect, requireRole, requireActive } = require('../middleware/auth');
@@ -18,6 +19,12 @@ const guard = [protect, requireRole('lab'), requireActive];
 // Profile
 router.get('/profile',  ...guard, getProfile);
 router.put('/profile',  ...guard, updateProfile);
+
+// Branches (a lab account is a chain of branches)
+router.get('/branches',              ...guard, getBranches);
+router.post('/branches',             ...guard, addBranch);
+router.put('/branches/:branchId',    ...guard, updateBranch);
+router.delete('/branches/:branchId', ...guard, deleteBranch);
 
 // Test catalog
 router.get('/tests',           ...guard, getTests);
@@ -48,6 +55,7 @@ router.get('/earnings', ...guard, getEarnings);
 router.get('/bookings',                        ...guard, getBookings);
 router.put('/bookings/:id/sample-collected',   ...guard, markSampleCollected);
 router.put('/bookings/:id/complete',           ...guard, completeBooking);
+router.put('/bookings/:id/transfer',           ...guard, transferBooking); // take the visit at another branch
 
 // Patients linked to this lab (for report upload dropdown)
 router.get('/patients', ...guard, getLabPatients);

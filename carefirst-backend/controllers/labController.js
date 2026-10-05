@@ -11,6 +11,7 @@ const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
 const { withPatientDetails } = require('../utils/patientProfiles');
 const { findLabPayment }     = require('../utils/installmentPlan');
 const { isLatLng }           = require('../utils/travel');
+const { cleanBranchInput, branchView, offersTest, same } = require('../utils/labBranches');
 const { translateToUrdu }     = require('../utils/azure');
 const { processReport, processReportInBackground } = require('../utils/reportPipeline');
 const { docIntelConfigured } = require('../utils/reportReader');
@@ -32,21 +33,25 @@ const updateProfile = async (req, res) => {
     const { labName, location, phone, bankDetails, jazzCash, easyPaisa } = req.body;
     const update = { labName, location, phone, bankDetails, jazzCash, easyPaisa };
 
-    // coordinates: { lat, lng } sets the map pin, null removes it
-    if (req.body.coordinates === null) {
-      update.$unset = { coordinates: 1 };
-    } else if (req.body.coordinates !== undefined) {
-      const lat = Number(req.body.coordinates?.lat);
-      const lng = Number(req.body.coordinates?.lng);
-      if (!isLatLng({ lat, lng })) return res.status(400).json({ message: 'Invalid map location' });
-      update.coordinates = { lat, lng };
+    // coordinates: { lat, lng } / null — the map pin of a lab with ONE branch (older clients);
+    // labs with several branches set each branch's pin under /api/lab/branches
+    let pin;
+    if (req.body.coordinates !== undefined) {
+      if (req.body.coordinates !== null) {
+        pin = { lat: Number(req.body.coordinates?.lat), lng: Number(req.body.coordinates?.lng) };
+        if (!isLatLng(pin)) return res.status(400).json({ message: 'Invalid map location' });
+      } else pin = null;
     }
 
-    const profile = await LabProfile.findOneAndUpdate(
-      { user: req.user._id },
-      update,
-      { new: true, runValidators: true }
-    );
+    const profile = await LabProfile.findOne({ user: req.user._id });
+    if (!profile) return res.status(404).json({ message: 'Lab profile not found' });
+    for (const [k, v] of Object.entries(update)) if (v !== undefined) profile[k] = v;
+    if (pin !== undefined) {
+      if (profile.branches.length !== 1) return res.status(400).json({ message: 'Set the map location of each branch under Branches' });
+      profile.branches[0].coordinates = pin || undefined;
+      profile.coordinates = pin || undefined;
+    }
+    await profile.save();
     res.json(profile);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -63,6 +68,15 @@ const getTests = async (req, res) => {
   }
 };
 
+// Test's branches from the request: ids of this lab's branches; [] / missing = every branch
+const branchIdsFrom = (profile, value) => {
+  if (value === undefined) return { ids: undefined };
+  if (!Array.isArray(value)) return { error: 'branches must be a list of branch ids' };
+  const ids = [...new Set(value.map(String))];
+  if (ids.some(id => !profile.branches.some(b => same(b._id, id)))) return { error: 'Unknown branch' };
+  return { ids: ids.length === profile.branches.length ? [] : ids };
+};
+
 // ─── POST /api/lab/tests ──────────────────────────────────────────────────────
 const addTest = async (req, res) => {
   try {
@@ -72,8 +86,10 @@ const addTest = async (req, res) => {
     }
 
     const profile = await LabProfile.findOne({ user: req.user._id });
+    const { ids, error } = branchIdsFrom(profile, req.body.branches);
+    if (error) return res.status(400).json({ message: error });
     profile.tests.push({
-      name, category, price: Number(price), isActive: true,
+      name, category, price: Number(price), isActive: true, branches: ids || [],
       installmentEnabled:   Boolean(installmentEnabled),
       installmentCount:     installmentEnabled ? (Number(installmentCount) || 2) : 2,
       installmentTenureDays:installmentEnabled ? (Number(installmentTenureDays) || 30) : 30,
@@ -103,6 +119,9 @@ const updateTest = async (req, res) => {
     if (installmentEnabled  !== undefined) test.installmentEnabled   = Boolean(installmentEnabled);
     if (installmentCount    !== undefined) test.installmentCount     = Number(installmentCount);
     if (installmentTenureDays !== undefined) test.installmentTenureDays = Number(installmentTenureDays);
+    const { ids, error } = branchIdsFrom(profile, req.body.branches);
+    if (error) return res.status(400).json({ message: error });
+    if (ids !== undefined) test.branches = ids;
 
     await profile.save();
     res.json(test);
@@ -263,6 +282,88 @@ const readReportAgain = async (req, res) => {
   }
 };
 
+// ─── Branches ────────────────────────────────────────────────────────────────
+
+// ─── GET /api/lab/branches ───────────────────────────────────────────────────
+const getBranches = async (req, res) => {
+  try {
+    const profile = await LabProfile.findOne({ user: req.user._id });
+    res.json((profile?.branches || []).map(branchView));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── POST /api/lab/branches ──────────────────────────────────────────────────
+// Body: { name, address, area?, phone?, hours?, coordinates?: { lat, lng } }
+const addBranch = async (req, res) => {
+  try {
+    const { branch, error } = cleanBranchInput(req.body);
+    if (error) return res.status(400).json({ message: error });
+    const profile = await LabProfile.findOne({ user: req.user._id });
+    if (!profile) return res.status(404).json({ message: 'Lab profile not found' });
+    if (profile.branches.some(b => b.name.toLowerCase() === branch.name.toLowerCase())) {
+      return res.status(409).json({ message: 'You already have a branch with this name' });
+    }
+    // Tests limited to some branches stay that way; tests for "every branch" include the new one automatically
+    profile.branches.push({ ...branch, coordinates: branch.coordinates || undefined });
+    await profile.save();
+    res.status(201).json(branchView(profile.branches[profile.branches.length - 1]));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PUT /api/lab/branches/:branchId ─────────────────────────────────────────
+const updateBranch = async (req, res) => {
+  try {
+    const { branch, error } = cleanBranchInput(req.body, { partial: true });
+    if (error) return res.status(400).json({ message: error });
+    const profile = await LabProfile.findOne({ user: req.user._id });
+    const target = profile?.branches.id(req.params.branchId);
+    if (!target) return res.status(404).json({ message: 'Branch not found' });
+    if (branch.name && profile.branches.some(b => !same(b._id, target._id) && b.name.toLowerCase() === branch.name.toLowerCase())) {
+      return res.status(409).json({ message: 'You already have a branch with this name' });
+    }
+    for (const [k, v] of Object.entries(branch)) target[k] = k === 'coordinates' ? (v || undefined) : v;
+    await profile.save();
+    // Keep the name / address shown on open bookings in step
+    if (branch.name || branch.address) {
+      await LabBooking.updateMany({ lab: req.user._id, branch: target._id, status: { $in: ['confirmed', 'sample_collected'] } },
+        { $set: { branchName: target.name, branchAddress: target.address } });
+    }
+    res.json(branchView(target));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── DELETE /api/lab/branches/:branchId ──────────────────────────────────────
+// Not the last branch, and not while patients have open visits there
+const deleteBranch = async (req, res) => {
+  try {
+    const profile = await LabProfile.findOne({ user: req.user._id });
+    const target = profile?.branches.id(req.params.branchId);
+    if (!target) return res.status(404).json({ message: 'Branch not found' });
+    if (profile.branches.length === 1) return res.status(400).json({ message: 'A lab needs at least one branch' });
+    const open = await LabBooking.countDocuments({ lab: req.user._id, branch: target._id, status: { $in: ['confirmed', 'sample_collected'] } });
+    if (open > 0) {
+      return res.status(409).json({ message: `${open} open visit${open === 1 ? ' is' : 's are'} booked at this branch — move or finish ${open === 1 ? 'it' : 'them'} first`, open });
+    }
+    for (const test of profile.tests) {
+      if (test.branches?.length) {
+        test.branches = test.branches.filter(id => !same(id, target._id));
+        if (test.branches.length === 0) test.isActive = false; // it was offered only here
+      }
+    }
+    target.deleteOne();
+    await profile.save();
+    res.json({ message: 'Branch removed' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── Bookings (patients' lab visits) ─────────────────────────────────────────
 
 const visitDay = (date) =>
@@ -318,6 +419,46 @@ const advanceBooking = (from, to) => async (req, res) => {
 };
 const markSampleCollected = advanceBooking('confirmed', 'sample_collected');
 const completeBooking     = advanceBooking('sample_collected', 'completed');
+
+// ─── PUT /api/lab/bookings/:id/transfer ──────────────────────────────────────
+// Body: { branchId } — the patient came to another branch: take the visit there.
+// Only before the sample is collected, and only to a branch that offers the test.
+const transferBooking = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Booking not found' });
+    const booking = await LabBooking.findOne({ _id: req.params.id, lab: req.user._id });
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    if (booking.status !== 'confirmed') return res.status(400).json({ message: 'Only a visit whose sample is not collected yet can move to another branch' });
+
+    const profile = await LabProfile.findOne({ user: req.user._id });
+    const to = profile.branches.id(req.body.branchId);
+    if (!to) return res.status(404).json({ message: 'Branch not found' });
+    if (same(to._id, booking.branch)) return res.status(400).json({ message: 'The visit is already at this branch' });
+    const test = profile.tests.id(booking.labTest);
+    if (test && !offersTest(test, to)) return res.status(400).json({ message: `${to.name} does not offer ${booking.testName}` });
+
+    const fromName = booking.branchName;
+    booking.transfers.push({ fromName, toName: to.name, by: 'lab' });
+    booking.branch = to._id;
+    booking.branchName = to.name;
+    booking.branchAddress = to.address;
+    await booking.save();
+
+    const notif = await Notification.create({
+      recipient: booking.patient,
+      title:     'Lab Visit Moved',
+      message:   `Your ${booking.testName} visit was moved from ${fromName || 'the booked branch'} to ${to.name} (${to.address}). Your slip number stays the same.`,
+      type:      'lab_booking_updated',
+      meta:      { bookingId: booking._id },
+    });
+    sendNotification(booking.patient.toString(), notif);
+
+    const [enriched] = await withPatientDetails(await findBookings({ _id: booking._id }));
+    res.json({ message: `Visit moved to ${to.name}`, booking: enriched });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 
 // ─── GET /api/lab/reports ────────────────────────────────────────────────────
 const getReports = async (req, res) => {
@@ -434,7 +575,7 @@ const getEarnings = async (req, res) => {
 
     const [visits, wallets] = await Promise.all([
       LabBooking.find({ lab: req.user._id, status: 'completed', paymentMethod: 'at_lab', visitDate: { $gte: `${prev}-01` } })
-        .populate('patient', 'name').select('patient testName price visitDate slipNumber').lean(),
+        .populate('patient', 'name').select('patient testName price visitDate slipNumber branchName').lean(),
       Wallet.find({ lab: req.user._id, $or: [{ 'downPayment.labApprovedAt': { $gte: since } }, { 'installments.labApprovedAt': { $gte: since } }] })
         .populate('patient', 'name').select('patient testName downPayment installments').lean(),
     ]);
@@ -442,7 +583,7 @@ const getEarnings = async (req, res) => {
     const entries = [];
     for (const v of visits) {
       entries.push({ kind: 'visit', at: new Date(`${v.visitDate}T12:00:00+05:00`), patient: v.patient?.name || '—', testName: v.testName,
-        detail: `Visit paid at the lab · slip ${v.slipNumber || '—'}`, amount: Math.round(v.price || 0) });
+        detail: `Visit paid at ${v.branchName || 'the lab'} · slip ${v.slipNumber || '—'}`, amount: Math.round(v.price || 0) });
     }
     for (const w of wallets) {
       if (w.downPayment?.labApprovedAt && w.downPayment.labApprovedAt >= since) {
@@ -612,6 +753,7 @@ module.exports = {
   getReceiptsPendingApproval, approveReceipt,
   getNeedyPatients, markTestConducted, setCommunitySupport, getEarnings,
   getLabPatients,
-  getBookings, markSampleCollected, completeBooking,
+  getBookings, markSampleCollected, completeBooking, transferBooking,
+  getBranches, addBranch, updateBranch, deleteBranch,
   getNotifications, markRead,
 };

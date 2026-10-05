@@ -7,6 +7,7 @@ const Appointment   = require('../models/Appointment');
 const mongoose      = require('mongoose');
 const { hasPaymentDetails } = require('../utils/installmentPlan');
 const { isLatLng, routeDistances } = require('../utils/travel');
+const { branchView, offersTest } = require('../utils/labBranches');
 const { TRAVEL_MODES, DEFAULT_TRAVEL_MODE, TRIPS_PER_VISIT } = require('../config/travel');
 const {
   freeSlots, formatTime12, bookingDates, DEFAULT_CONSULTATION_MINUTES, BOOKING_WINDOW_DAYS,
@@ -18,7 +19,7 @@ router.get('/tests', async (req, res) => {
     const activeLabIds = await User.find({ role: 'lab', status: 'active' }).distinct('_id');
     const labs = await LabProfile.find({ user: { $in: activeLabIds } })
       .populate('user', 'name')
-      .select('labName location user tests isCharityPartner bankDetails jazzCash easyPaisa coordinates');
+      .select('labName location user tests branches isCharityPartner bankDetails jazzCash easyPaisa');
 
     const result = labs
       .filter(lab => lab.user && lab.tests.some(t => t.isActive))
@@ -29,10 +30,12 @@ router.get('/tests', async (req, res) => {
         isCharityPartner: lab.isCharityPartner,
         // Installment plans need the lab's payment details (down payment + installments go to the lab)
         acceptsInstallments: hasPaymentDetails(lab),
-        hasLocation:      isLatLng(lab.coordinates),
+        hasLocation:      lab.branches.some(b => isLatLng(b.coordinates)),
+        branches:         lab.branches.map(branchView),
         tests: lab.tests
           .filter(t => t.isActive)
           .map(t => ({
+            branchIds:            lab.branches.filter(b => offersTest(t, b)).map(b => b._id), // where it is offered
             _id:                  t._id,
             name:                 t.name,
             category:             t.category,
@@ -84,7 +87,8 @@ router.get('/doctors', async (req, res) => {
 });
 
 // GET /api/public/true-cost?lat=&lng=&mode= — travel distance, drive time and
-// round-trip travel cost from the patient's position to every active lab.
+// round-trip travel cost from the patient's position to every branch of every active lab.
+// Each lab also carries its nearest branch's figures (labs[].distanceKm …, branchId).
 // The position is used for this calculation only and is never stored.
 router.get('/true-cost', async (req, res) => {
   try {
@@ -95,27 +99,34 @@ router.get('/true-cost', async (req, res) => {
     if (!mode) return res.status(400).json({ message: `mode must be one of: ${TRAVEL_MODES.map(m => m.key).join(', ')}` });
 
     const activeLabIds = await User.find({ role: 'lab', status: 'active' }).distinct('_id');
-    const labs   = await LabProfile.find({ user: { $in: activeLabIds } }).select('user coordinates');
-    const placed = labs.filter(l => isLatLng(l.coordinates));
-    const routes = await routeDistances(origin, placed.map(l => ({ lat: l.coordinates.lat, lng: l.coordinates.lng })));
+    const labs   = await LabProfile.find({ user: { $in: activeLabIds } }).select('user branches');
+    const placed = labs.flatMap(l => l.branches.filter(b => isLatLng(b.coordinates)).map(b => ({ lab: l, branch: b })));
+    const routes = await routeDistances(origin, placed.map(p => ({ lat: p.branch.coordinates.lat, lng: p.branch.coordinates.lng })));
 
-    const byLab = {};
-    placed.forEach((l, i) => {
+    const byBranch = {};
+    placed.forEach((p, i) => {
       const r = routes[i];
-      byLab[l.user.toString()] = {
+      byBranch[p.branch._id.toString()] = {
         distanceKm:  Math.round(r.distanceKm * 10) / 10,
         durationMin: Math.round(r.durationMin),
         travelCost:  Math.round(r.distanceKm * TRIPS_PER_VISIT * mode.ratePerKm),
         source:      r.source, // 'road' (OSRM) or 'approx' (straight line × road factor)
       };
     });
+    const noLocation = { distanceKm: null, durationMin: null, travelCost: null, source: 'no_location' };
+    const byLab = {};
+    for (const l of labs) {
+      const branches = l.branches.map(b => ({ branchId: b._id, ...(byBranch[b._id.toString()] || noLocation) }));
+      const nearest = branches.filter(b => b.distanceKm !== null).sort((a, b) => a.distanceKm - b.distanceKm)[0];
+      byLab[l.user.toString()] = { ...(nearest || noLocation), branchId: nearest?.branchId || null, branches };
+    }
 
     res.json({
       mode:          mode.key,
       ratePerKm:     mode.ratePerKm,
       tripsPerVisit: TRIPS_PER_VISIT,
       modes:         TRAVEL_MODES,
-      labs: labs.map(l => ({ labId: l.user, ...(byLab[l.user.toString()] || { distanceKm: null, travelCost: null, source: 'no_location' }) })),
+      labs: labs.map(l => ({ labId: l.user, ...byLab[l.user.toString()] })),
     });
   } catch (err) {
     res.status(500).json({ message: err.message });

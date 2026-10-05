@@ -12,6 +12,18 @@ const labBookingSchema = new mongoose.Schema(
     price:    { type: Number, required: true },   // test price when booked
     visitDate: { type: String, required: true },  // PKT calendar day, "YYYY-MM-DD" (no time)
 
+    // The branch the patient visits (LabProfile.branches[]._id) with a copy of its name / address
+    branch:        { type: mongoose.Schema.Types.ObjectId },
+    branchName:    { type: String },
+    branchAddress: { type: String },
+    // Every move to another branch (patient changed it, or the lab took the patient at another branch)
+    transfers: [{
+      fromName: String,
+      toName:   String,
+      by:       { type: String, enum: ['patient', 'lab'] },
+      at:       { type: Date, default: Date.now },
+    }],
+
     paymentMethod: { type: String, enum: ['at_lab', 'installment'], default: 'at_lab' },
     wallet:        { type: mongoose.Schema.Types.ObjectId, ref: 'Wallet' }, // when paid by installment plan
 

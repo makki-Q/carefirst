@@ -18,6 +18,7 @@ const {
 const { normalizeCnic }    = require('../utils/cnic');
 const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
 const { CNIC_PICTURES }    = require('../middleware/upload');
+const { branchesOffering, offersTest, same } = require('../utils/labBranches');
 const { getPlatformSettings } = require('../utils/platformSettings');
 const { generateInstallmentAgreement, generateInstallmentAgreementUrdu } = require('../utils/legalAgreementTemplate');
 const {
@@ -641,11 +642,12 @@ const getLabBookings = async (req, res) => {
 };
 
 // ─── POST /api/patient/lab-bookings ───────────────────────────────────────────
-// Body: { labId, testId, visitDate: "YYYY-MM-DD", walletId? } — auto-confirmed.
+// Body: { labId, testId, visitDate: "YYYY-MM-DD", branchId?, walletId? } — auto-confirmed.
+// branchId: where the patient will go (required when several branches offer the test).
 // With walletId the test is paid through that installment plan, otherwise at the lab.
 const bookLabTest = async (req, res) => {
   try {
-    const { labId, testId, visitDate, walletId } = req.body;
+    const { labId, testId, visitDate, walletId, branchId } = req.body;
     if (!mongoose.isValidObjectId(labId) || !mongoose.isValidObjectId(testId)) return res.status(404).json({ message: 'Test not found' });
     if (!isValidDate(visitDate)) return res.status(400).json({ message: 'Please pick a visit date' });
     if (!isWithinBookingWindow(visitDate)) {
@@ -656,6 +658,14 @@ const bookLabTest = async (req, res) => {
     const labProfile = labUser && await LabProfile.findOne({ user: labUser._id });
     const test       = labProfile?.tests.id(testId);
     if (!test || !test.isActive) return res.status(404).json({ message: 'Test not found' });
+
+    const offering = branchesOffering(labProfile, test);
+    let branch = branchId ? offering.find(b => same(b._id, branchId)) : offering.length === 1 ? offering[0] : null;
+    if (branchId && !branch) {
+      return res.status(labProfile.branches.some(b => same(b._id, branchId)) ? 400 : 404)
+        .json({ message: labProfile.branches.some(b => same(b._id, branchId)) ? 'That branch does not offer this test' : 'Branch not found' });
+    }
+    if (!branch) return res.status(400).json({ message: 'Please choose the branch you will visit' });
 
     let wallet = null;
     if (walletId) {
@@ -681,6 +691,9 @@ const bookLabTest = async (req, res) => {
       testName:      test.name,
       price:         test.price,
       visitDate,
+      branch:        branch._id,
+      branchName:    branch.name,
+      branchAddress: branch.address,
       paymentMethod: wallet ? 'installment' : 'at_lab',
       wallet:        wallet?._id,
     });
@@ -688,13 +701,13 @@ const bookLabTest = async (req, res) => {
     const payNote = wallet ? 'paid through their installment plan' : 'to be paid at the lab';
     await notifyUser(labUser._id, {
       title:   'New Test Booking',
-      message: `${req.user.name} booked ${test.name} for ${visitDay(visitDate)} (PKR ${test.price.toLocaleString()}, ${payNote}).`,
+      message: `${req.user.name} booked ${test.name} at ${branch.name} for ${visitDay(visitDate)} (PKR ${test.price.toLocaleString()}, ${payNote}).`,
       type:    'lab_booking_created',
       meta:    { bookingId: booking._id },
     });
     await notifyUser(req.user._id, {
       title:   'Test Booked',
-      message: `Your ${test.name} visit at ${labProfile.labName} on ${visitDay(visitDate)} is confirmed. ` +
+      message: `Your ${test.name} visit at ${branch.name} (${branch.address}) on ${visitDay(visitDate)} is confirmed. ` +
                (wallet ? 'It is covered by your installment plan.' : `Pay PKR ${test.price.toLocaleString()} at the lab.`),
       type:    'lab_booking_created',
       meta:    { bookingId: booking._id },
@@ -702,6 +715,43 @@ const bookLabTest = async (req, res) => {
 
     const [enriched] = await withLabInfo(await findLabBookings({ _id: booking._id }), 'lab');
     res.status(201).json(enriched);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PUT /api/patient/lab-bookings/:id/branch ─────────────────────────────────
+// Body: { branchId } — go to another branch of the same lab (before the sample is collected)
+const changeLabBranch = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Booking not found' });
+    const booking = await LabBooking.findOne({ _id: req.params.id, patient: req.user._id });
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    if (booking.status !== 'confirmed') return res.status(400).json({ message: 'The branch can only be changed before your sample is collected' });
+
+    const profile = await LabProfile.findOne({ user: booking.lab });
+    const to = profile?.branches.id(req.body.branchId);
+    if (!to) return res.status(404).json({ message: 'Branch not found' });
+    if (same(to._id, booking.branch)) return res.status(400).json({ message: 'Your visit is already at this branch' });
+    const test = profile.tests.id(booking.labTest);
+    if (test && !offersTest(test, to)) return res.status(400).json({ message: `${to.name} does not offer ${booking.testName}` });
+
+    const fromName = booking.branchName;
+    booking.transfers.push({ fromName, toName: to.name, by: 'patient' });
+    booking.branch = to._id;
+    booking.branchName = to.name;
+    booking.branchAddress = to.address;
+    await booking.save();
+
+    await notifyUser(booking.lab, {
+      title:   'Visit Moved to Another Branch',
+      message: `${req.user.name} moved their ${booking.testName} visit (${visitDay(booking.visitDate)}) from ${fromName || 'another branch'} to ${to.name}.`,
+      type:    'lab_booking_updated',
+      meta:    { bookingId: booking._id },
+    });
+
+    const [enriched] = await withLabInfo(await findLabBookings({ _id: booking._id }), 'lab');
+    res.json({ message: `Your visit is now at ${to.name}`, booking: enriched });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -834,7 +884,7 @@ module.exports = {
   getWallets, uploadPaymentReceipt, uploadServiceFeeReceipt,
   getInstallmentConfig, previewInstallmentPlan, applyForInstallmentPlan,
   getAppointments, bookAppointment, cancelAppointment,
-  getLabBookings, bookLabTest, cancelLabBooking,
+  getLabBookings, bookLabTest, cancelLabBooking, changeLabBranch,
   getCommunityApplications, createCommunityApplication,
   getNotifications, markRead, markAllRead,
   buildPlanApplication, // also used by the TTS controller (agreement preview audio)

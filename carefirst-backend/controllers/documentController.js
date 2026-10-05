@@ -71,6 +71,19 @@ const labRows = async (labUser) => {
   return [['Laboratory', lab?.labName || labUser.name], ['Address', lab?.location || '—'], ['Phone', lab?.phone || labUser.phone || '—']];
 };
 
+// The branch the patient goes to (falls back to the lab's own details)
+const branchRows = async (booking) => {
+  const lab = await LabProfile.findOne({ user: booking.lab._id }).select('labName location phone branches').lean();
+  const branch = lab?.branches?.find(b => String(b._id) === String(booking.branch));
+  return [
+    ['Laboratory', lab?.labName || booking.lab.name],
+    ['Branch', booking.branchName || branch?.name || '—'],
+    ['Address', booking.branchAddress || branch?.address || lab?.location || '—'],
+    ['Phone', branch?.phone || lab?.phone || booking.lab.phone || '—'],
+    ...(branch?.hours ? [['Opening hours', branch.hours]] : []),
+  ];
+};
+
 const sendPdf = (res, slipNumber, bytes) => {
   res.set({
     'Content-Type':        'application/pdf',
@@ -164,16 +177,17 @@ const getLabBookingSlip = async (req, res) => {
           ['Price', pkr(booking.price)],
           ['Payment', payment],
         ] },
-        { heading: 'Laboratory', boldFirst: true, rows: await labRows(booking.lab) },
+        { heading: 'Laboratory', boldFirst: true, rows: await branchRows(booking) },
         { heading: 'Patient', boldFirst: true, rows: patient },
       ],
       notes: [
-        'Visit the lab on the date above during its opening hours — no appointment time is needed.',
+        'Go to the branch above on the date above during its opening hours — no appointment time is needed.',
+        "Went to another branch of the same lab by mistake? Show this slip there: staff can take your visit at their branch if it offers the test.",
         'Bring your CNIC and this slip (printed or on your phone).',
         'Ask the lab if the test needs any preparation (for example fasting).',
         'Your report will appear in My Reports on CareFirst when the lab uploads it.',
       ],
-      verifyNote: "Verification: the lab's CareFirst dashboard shows this slip number on the booking.",
+      verifyNote: "Verification: the lab's CareFirst dashboard (any branch) shows this slip number on the booking.",
     });
     sendPdf(res, booking.slipNumber, bytes);
   } catch (err) {
