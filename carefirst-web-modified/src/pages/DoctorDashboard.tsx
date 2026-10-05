@@ -119,6 +119,9 @@ const DoctorDashboard = () => {
     api.get('/doctor/appointments').then((d: any) => setAppointments(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => setApptsLoaded(true));
   const loadPatients = () =>
     api.get('/doctor/patients').then((d: any) => setMyPatients(Array.isArray(d) ? d : [])).catch(() => {});
+  // Only reports patients shared with this doctor (decision 13)
+  const loadReports = () =>
+    api.get('/doctor/reports').then((d: any) => setReports(Array.isArray(d) ? d : [])).catch(() => {});
 
   // ── Effects ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -161,7 +164,7 @@ const DoctorDashboard = () => {
       const names = (Array.isArray(d) ? d : []).flatMap((lab: any) => (lab.tests || []).map((t: any) => t.name));
       setLabTestNames([...new Set([...names, ...TESTS])].sort() as string[]);
     }).catch(() => setLabTestNames(TESTS));
-    api.get('/doctor/reports').then((d: any) => setReports(Array.isArray(d) ? d : [])).catch(() => {});
+    loadReports();
     api.get('/doctor/notifications').then((d: any) => {
       const arr = Array.isArray(d) ? d : [];
       setNotifications(arr);
@@ -178,6 +181,7 @@ const DoctorDashboard = () => {
       setNotifications(prev => [n, ...prev]);
       setNotifBadge(prev => prev + 1);
       if (n.type?.startsWith('appointment_')) { loadAppointments(); loadPatients(); }
+      if (n.type === 'report_shared') loadReports();
     });
     return () => { socket.off('notification:new'); };
   }, []);
@@ -989,7 +993,7 @@ const DoctorDashboard = () => {
                 <div>
                   <div className="doc-page-title">Lab Reports</div>
                   <div className="doc-page-title-rule"></div>
-                  <div className="doc-page-subtitle">Test reports uploaded by labs for your patients</div>
+                  <div className="doc-page-subtitle">Lab reports your patients chose to share with you</div>
                 </div>
                 <div className="doc-filter-row doc-fade-up doc-fade-up-1">
                   <select className="doc-filter-select" value={reportFilter} onChange={e => setReportFilter(e.target.value)}>
@@ -1004,7 +1008,7 @@ const DoctorDashboard = () => {
                 {filteredReports.length === 0 ? (
                   <div style={{ padding: '32px 24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
                     {displayReports.length === 0
-                      ? 'No reports yet. Reports appear here when a lab uploads results for a patient you prescribed tests for.'
+                      ? 'No reports shared with you yet. Patients share their lab reports with you from My Reports on CareFirst.'
                       : 'No reports match your search criteria.'}
                   </div>
                 ) : (
@@ -1016,7 +1020,7 @@ const DoctorDashboard = () => {
                           <th>Patient</th>
                           <th>Test Name</th>
                           <th>Lab</th>
-                          <th>Date</th>
+                          <th>Shared</th>
                           <th style={{ textAlign: 'right' }}>Download</th>
                         </tr>
                       </thead>
@@ -1028,7 +1032,9 @@ const DoctorDashboard = () => {
                             <td style={{ fontWeight: 600, color: 'var(--text)' }}>{r.patient?.name || '—'}</td>
                             <td>{r.testName || '—'}</td>
                             <td>{r.labName || r.lab?.name || '—'}</td>
-                            <td>{r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
+                            <td style={{ whiteSpace: 'nowrap' }} title={r.createdAt ? `Report from ${new Date(r.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}>
+                              {(r.sharedAt || r.createdAt) ? new Date(r.sharedAt || r.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+                            </td>
                             <td style={{ textAlign: 'right' }}>
                               {r.reportUrl && r.reportUrl !== '#' ? (
                                 <a href={r.reportUrl} target="_blank" rel="noreferrer" className="doc-action-btn" style={{ color: 'var(--red)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Download Report">

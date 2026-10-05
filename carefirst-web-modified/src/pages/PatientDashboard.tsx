@@ -173,6 +173,8 @@ const PatientDashboard = () => {
   const [allLabTests, setAllLabTests]     = useState<any[]>([]);
   const [appointments, setAppointments]   = useState<any[]>([]);
   const [labBookings, setLabBookings]     = useState<any[]>([]);
+  const [shareDoctors, setShareDoctors]   = useState<any[]>([]); // doctors the patient may share reports with
+  const [reportShareMsg, setReportShareMsg] = useState<{ id: string; ok: boolean; text: string } | null>(null);
 
   // ── Booking flows ───────────────────────────────────────────────────────────
   const [apptDoctor, setApptDoctor]   = useState<any>(null);   // doctor being booked
@@ -250,8 +252,11 @@ const PatientDashboard = () => {
     api.get('/patient/community-applications').then((d: any) => setCommunityApps(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => markLoaded('community')), []);
   const loadNotifications = useCallback(() =>
     api.get('/patient/notifications').then((d: any) => setNotifications(Array.isArray(d) ? d : [])).catch(() => {}), []);
-  const loadAppointments = useCallback(() =>
-    api.get('/patient/appointments').then((d: any) => setAppointments(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => markLoaded('appointments')), []);
+  const loadAppointments = useCallback(() => {
+    // booking / cancelling changes which doctors reports can be shared with
+    api.get('/patient/report-doctors').then((d: any) => setShareDoctors(Array.isArray(d) ? d : [])).catch(() => {});
+    return api.get('/patient/appointments').then((d: any) => setAppointments(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => markLoaded('appointments'));
+  }, []);
   const loadLabBookings = useCallback(() =>
     api.get('/patient/lab-bookings').then((d: any) => setLabBookings(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => markLoaded('labBookings')), []);
   const loadPlanConfig = useCallback(() =>
@@ -863,6 +868,60 @@ const PatientDashboard = () => {
       background: 'var(--bg-alt)', border: '1px solid var(--border-md)', borderRadius: 'var(--radius-xs)',
     }}>{text}</pre>
   );
+
+  // Share a report with a doctor / stop sharing (only shared doctors can see it)
+  const shareReportWith = async (r: any, doctorId: string) => {
+    setReportShareMsg(null);
+    try {
+      const d: any = await api.put(`/patient/reports/${r._id}/share`, { doctorId });
+      setReports(prev => prev.map(x => x._id === r._id ? { ...x, sharedWith: d.sharedWith } : x));
+      setReportShareMsg({ id: r._id, ok: true, text: `${d.message} — they can now see this report.` });
+    } catch (err: any) { setReportShareMsg({ id: r._id, ok: false, text: err.message || 'Could not share the report' }); }
+  };
+  const stopSharingReport = async (r: any, doctor: any) => {
+    if (!(await confirmDialog(`Stop sharing your ${r.testName} report with ${drName(doctor.name)}? They will no longer see it.`, { confirmLabel: 'Stop sharing', cancelLabel: 'Keep sharing' }))) return;
+    setReportShareMsg(null);
+    try {
+      const d: any = await api.delete(`/patient/reports/${r._id}/share/${doctor._id}`);
+      setReports(prev => prev.map(x => x._id === r._id ? { ...x, sharedWith: d.sharedWith } : x));
+      setReportShareMsg({ id: r._id, ok: true, text: `${drName(doctor.name)} can no longer see this report.` });
+    } catch (err: any) { setReportShareMsg({ id: r._id, ok: false, text: err.message || 'Could not stop sharing' }); }
+  };
+  // "Shared with: Dr. X ×  [Share with a doctor…]" under each report
+  const shareBar = (r: any) => {
+    const shared = (r.sharedWith || []).filter((s: any) => s.doctor);
+    const sharedIds = new Set(shared.map((s: any) => String(s.doctor._id || s.doctor)));
+    const options = shareDoctors.filter((d: any) => !sharedIds.has(String(d.doctorId)));
+    const msg = reportShareMsg?.id === r._id ? reportShareMsg : null;
+    return (
+      <div className="pat-share-bar">
+        <span className="pat-share-label">
+          <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+          {shared.length ? 'Shared with' : 'Not shared — only you can see this report'}
+        </span>
+        {shared.map((s: any) => (
+          <span key={String(s.doctor._id)} className="pat-share-chip" title={s.sharedAt ? `Shared ${fmtDate(s.sharedAt)}` : ''}>
+            {drName(s.doctor.name)}
+            <button type="button" title="Stop sharing" aria-label={`Stop sharing with ${drName(s.doctor.name)}`} onClick={() => stopSharingReport(r, s.doctor)}>×</button>
+          </span>
+        ))}
+        {options.length > 0 ? (
+          <select className="pat-share-select" value="" onChange={e => e.target.value && shareReportWith(r, e.target.value)}>
+            <option value="">{shared.length ? 'Share with another doctor…' : 'Share with a doctor…'}</option>
+            {options.map((d: any) => <option key={d.doctorId} value={d.doctorId}>{drName(d.name)}{d.specialization ? ` · ${d.specialization}` : ''}</option>)}
+          </select>
+        ) : shareDoctors.length === 0 && (
+          <span className="pat-share-hint">
+            You can share it with a doctor you visit or book. <button type="button" className="pat-link-btn" onClick={() => navigate('findDoctors')}>Book a doctor</button>
+          </span>
+        )}
+        {msg && <span className="pat-share-msg" style={{ color: msg.ok ? '#166534' : '#991b1b' }}>{msg.text}</span>}
+      </div>
+    );
+  };
 
   // Report summary from the lab: English, Urdu (machine-translated or lab-corrected) and Listen
   const summaryBlock = (r: any) => {
@@ -2154,13 +2213,12 @@ const PatientDashboard = () => {
                             </div>
                           </td>
                         </tr>
-                        {(r.summary || r.summaryUrdu || r.autoRead?.status && r.autoRead.status !== 'skipped') && (
-                          <tr>
-                            <td colSpan={6} style={{ background: 'var(--bg-alt)', padding: '10px 18px 14px' }}>
-                              {summaryBlock(r)}
-                            </td>
-                          </tr>
-                        )}
+                        <tr>
+                          <td colSpan={6} style={{ background: 'var(--bg-alt)', padding: '10px 18px 14px' }}>
+                            {(r.summary || r.summaryUrdu || (r.autoRead?.status && r.autoRead.status !== 'skipped')) && summaryBlock(r)}
+                            {shareBar(r)}
+                          </td>
+                        </tr>
                         </React.Fragment>
                       ))}
                     </tbody>

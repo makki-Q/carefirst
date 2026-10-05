@@ -1588,6 +1588,62 @@
   cursor: pointer;
 }
 
+/* Sharing a report with doctors (My Reports) */
+.pat-share-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-md);
+  font-size: 0.78rem;
+}
+
+.pat-share-label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-sub); font-weight: 600; }
+
+.pat-share-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 10px;
+  border-radius: 20px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pat-share-chip button {
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pat-share-chip button:hover { background: rgba(29, 78, 216, 0.12); }
+
+.pat-share-select {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-md);
+  border-radius: 20px;
+  background: var(--surface);
+  font-family: inherit;
+  font-size: 0.76rem;
+  color: var(--text);
+  cursor: pointer;
+  max-width: 260px;
+}
+
+.pat-share-hint { color: var(--text-muted); }
+.pat-share-msg  { font-size: 0.74rem; }
+
 .pat-info-note {
   font-size: 0.8rem;
   color: #92400e;
