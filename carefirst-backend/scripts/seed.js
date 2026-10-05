@@ -462,7 +462,7 @@ const seed = async () => {
   row('Fatima Noor', 'fatima@carefirst.test', 'plan approved, fee screenshot uploaded; appointment cancelled by doctor');
   row('Hamza Ali', 'hamza@carefirst.test', 'active plan: down payment awaiting lab; CT scan sample collected; installment due in 3 days');
   row('Zainab Bibi', 'zainab@carefirst.test', 'active plan: installment #1 awaiting admin; CBC visit today; community slip approved');
-  row('Imran Hussain', 'imran@carefirst.test', 'defaulter — case with the lawyer');
+  row('Imran Hussain', 'imran@carefirst.test', 'defaulter — account restricted to My Wallet; upload the overdue receipt → lab → admin unlocks it');
   row('Rashid Mehmood', 'rashid@carefirst.test', 'community support application pending');
   row('DOCTORS', '', '');
   row('Dr. Sara Malik', 'dr.sara@carefirst.test', 'Cardiology · Mon–Sat 9–1 & 5–8 · 20 min');

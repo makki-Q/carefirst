@@ -14,7 +14,8 @@ const runDefaulterCheck = async () => {
 
   try {
     const now     = new Date();
-    const wallets = await Wallet.find({ status: 'active' })
+    // Escalated plans are still tracked: later installments can fall overdue too
+    const wallets = await Wallet.find({ status: { $in: ['active', 'defaulter'] } })
       .populate('patient', 'name email phone');
 
     for (const wallet of wallets) {
@@ -38,8 +39,8 @@ const runDefaulterCheck = async () => {
       const overdueList   = wallet.installments.filter(i => i.status === 'overdue');
       const totalOverdue  = overdueList.reduce((sum, i) => sum + i.amount, 0);
 
-      // If already escalated, just update the counts
-      const existingCase = await DefaulterCase.findOne({ wallet: wallet._id });
+      // If already escalated, just update the counts (a closed case from an earlier default doesn't count)
+      const existingCase = await DefaulterCase.findOne({ wallet: wallet._id, status: 'active' });
       if (existingCase) {
         existingCase.missedInstallments = overdueList.length;
         existingCase.totalOverdue       = totalOverdue;
@@ -116,7 +117,7 @@ const runDefaulterCheck = async () => {
       const patientNotif = await Notification.create({
         recipient: wallet.patient._id,
         title:     'Account Escalated to Legal',
-        message:   `Your account has been escalated to our legal team due to ${overdueList.length} missed installment(s) totalling PKR ${totalOverdue.toLocaleString()}. Please contact support immediately.`,
+        message:   `Your account has been escalated to our legal team due to ${overdueList.length} missed installment(s) totalling PKR ${totalOverdue.toLocaleString()}. Until they are paid you can only use My Wallet: pay the lab and upload the receipts there — once verified, your account returns to normal.`,
         type:      'defaulter_escalated',
         meta:      { walletId: wallet._id },
       });

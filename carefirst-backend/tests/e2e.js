@@ -1129,8 +1129,98 @@ const testDefaulterEscalation = async () => {
   check('re-running the job does not duplicate the case',
     (await get('/api/admin/defaulter-cases', { token: tokens.admin })).data.length === 1);
 
-  const blocked = await post(`/api/patient/wallets/${wallet._id}/installments/1/receipt`, { token: tokens.patient2, files: { receipt: ['r.png'] } });
-  check('defaulter wallet blocks receipt upload (400)', blocked.status === 400, blocked);
+  // ── The defaulter is restricted to My Wallet (decision 14) ──
+  const me = await get('/api/patient/profile', { token: tokens.patient2 });
+  check('the profile says the account is restricted and what is overdue',
+    me.data.restriction?.overdueCount === 1 && me.data.restriction.overdueTotal === 3000 && me.data.restriction.plans[0].testName === 'Overdue Plan', me.data.restriction);
+  const blockedBooking = await post('/api/patient/appointments', { token: tokens.patient2, body: { doctorId: ids.doctor, date: '2030-01-07', time: '09:00' } });
+  check('a defaulter cannot book a doctor (403)', blockedBooking.status === 403 && blockedBooking.data.restricted === true, blockedBooking);
+  check('… nor a lab visit (403)', (await post('/api/patient/lab-bookings', { token: tokens.patient2, body: { labId: ids.lab, testId: ids.mriTest, visitDate: '2030-01-07' } })).status === 403);
+  check('… nor apply for another installment plan (403)',
+    (await post('/api/patient/installment-plans/preview', { token: tokens.patient2, body: { labId: ids.lab, testId: ids.mriTest } })).status === 403);
+  const uploadsBefore = listUploads().size;
+  const blockedCommunity = await post('/api/patient/community-applications', { token: tokens.patient2, body: { testRequired: 'CBC' }, files: { documents: ['bill.png'] } });
+  check('… nor apply for community support — and the documents are not kept (403)', blockedCommunity.status === 403 && listUploads().size === uploadsBefore, blockedCommunity);
+  check('their reports can still be read', (await get('/api/patient/reports', { token: tokens.patient2 })).status === 200);
+  const usersList = (await get('/api/admin/users?limit=1000', { token: tokens.admin })).data.users;
+  check('admin Manage Users marks the patient as a defaulter',
+    usersList.find(u => u._id === ids.patient2)?.isDefaulter === true && usersList.find(u => u._id === ids.patient)?.isDefaulter === false);
+  const adminList = (await get('/api/admin/defaulter-cases', { token: tokens.admin })).data[0];
+  check("admin's defaulter list has the patient's CNIC, e-mail and the lab",
+    adminList?.patient?.cnic === '35202-7654321-3' && adminList.patient.email === users.patient2.email && adminList.wallet?.labName === users.lab.labName && adminList.status === 'active', adminList);
+
+  // ── Paying the overdue installment: patient → lab → admin, with rejections on the way ──
+  const inst = (token) => `/api/patient/wallets/${wallet._id}/installments/0/receipt`;
+  const up1 = await post(inst(), { token: tokens.patient2, files: { receipt: ['overdue1.png'] } });
+  check('a defaulter can upload the receipt of an overdue installment', up1.status === 200, up1);
+  const labQueue = (await get('/api/lab/receipts', { token: tokens.lab })).data.find(w => w.walletId === wallet._id.toString());
+  check('the lab sees it, marked as an escalated plan', labQueue?.defaulter === true && labQueue.pendingInstallments.length === 1, labQueue);
+  const labReject = (body) => put(`/api/lab/receipts/${wallet._id}/installments/0/reject`, { token: tokens.lab, body });
+  check('the lab must give a reason to reject (400)', (await labReject({})).status === 400);
+  const lr = await labReject({ reason: 'No payment with this reference reached our account.' });
+  let w = await Wallet.findById(wallet._id);
+  check('the lab rejects the receipt — it is cleared with the reason',
+    lr.status === 200 && !w.installments[0].receiptUrl && w.installments[0].rejectionReason === 'No payment with this reference reached our account.' && w.installments[0].rejectedBy === 'lab', w.installments[0]);
+  const p2Notes = (await get('/api/patient/notifications', { token: tokens.patient2 })).data;
+  check('the patient is told why', p2Notes.some(n => n.type === 'receipt_rejected' && n.message.includes('No payment with this reference')));
+  check('another lab cannot reject it (404)', (await put(`/api/lab/receipts/${wallet._id}/installments/0/reject`, { token: tokens.lab2, body: { reason: 'x' } })).status === 404);
+  check('there is no down-payment receipt to reject (400)',
+    (await put(`/api/lab/receipts/${wallet._id}/down-payment/reject`, { token: tokens.lab, body: { reason: 'x' } })).status === 400);
+
+  await post(inst(), { token: tokens.patient2, files: { receipt: ['overdue2.png'] } });
+  w = await Wallet.findById(wallet._id);
+  check('re-uploading clears the rejection', w.installments[0].receiptUrl && !w.installments[0].rejectionReason);
+  await put(`/api/lab/receipts/${wallet._id}/installments/0/approve`, { token: tokens.lab });
+  check('the lab cannot reject a receipt it already confirmed (400)', (await labReject({ reason: 'oops' })).status === 400);
+  const ar = await put(`/api/admin/wallets/${wallet._id}/installments/0/reject`, { token: tokens.admin, body: { reason: 'The screenshot is cut off.' } });
+  w = await Wallet.findById(wallet._id);
+  check("the admin rejects it — the receipt and the lab's confirmation are cleared",
+    ar.status === 200 && !w.installments[0].receiptUrl && !w.installments[0].labApproved && w.installments[0].rejectedBy === 'admin', w.installments[0]);
+  check('the lab is told too', (await get('/api/lab/notifications', { token: tokens.lab })).data.some(n => n.type === 'receipt_rejected' && n.message.includes('cut off')));
+  check('still restricted while it is not verified', (await get('/api/patient/profile', { token: tokens.patient2 })).data.restriction?.overdueCount === 1);
+
+  await post(inst(), { token: tokens.patient2, files: { receipt: ['overdue3.png'] } });
+  await put(`/api/lab/receipts/${wallet._id}/installments/0/approve`, { token: tokens.lab });
+  const verified = await put(`/api/admin/wallets/${wallet._id}/installments/0/verify`, { token: tokens.admin });
+  w = await Wallet.findById(wallet._id);
+  const closed = (await get('/api/admin/defaulter-cases', { token: tokens.admin })).data.find(c => c.wallet?._id === wallet._id.toString());
+  check('once the overdue installment is verified the plan is active again and the case closes as paid',
+    verified.status === 200 && w.status === 'active' && w.installments[0].status === 'paid' && closed?.status === 'resolved' && closed.resolution === 'paid' && closed.resolvedAt, [w.status, closed]);
+  check('the account is back to normal', (await get('/api/patient/profile', { token: tokens.patient2 })).data.restriction === null);
+  check('the patient is told', (await get('/api/patient/notifications', { token: tokens.patient2 })).data.some(n => n.type === 'defaulter_cleared' && n.title === 'Account Restored'));
+  check('the lawyer is told the case is closed', (await get('/api/lawyer/notifications', { token: tokens.lawyer })).data.some(n => n.type === 'defaulter_cleared' && n.title === 'Defaulter Case Closed'));
+  check('the admin cannot reject a verified payment (400)',
+    (await put(`/api/admin/wallets/${wallet._id}/installments/0/reject`, { token: tokens.admin, body: { reason: 'late' } })).status === 400);
+  const preview = await post('/api/patient/installment-plans/preview', { token: tokens.patient2, body: { labId: ids.lab, testId: ids.mriTest } });
+  check('the patient can use everything again (no 403)', preview.status !== 403, preview);
+  await runDefaulterCheck();
+  check('the job does not re-open the paid case', (await get('/api/admin/defaulter-cases', { token: tokens.admin })).data.filter(c => c.status === 'active').length === 0);
+
+  // ── Escalated plans are still tracked; the lawyer can close a case settled outside CareFirst ──
+  const settled = await Wallet.create({
+    patient: ids.patient2, lab: ids.lab, testName: 'Settled Plan', totalAmount: 4000, status: 'active',
+    installments: [
+      { number: 1, dueDate: new Date(Date.now() - 5 * 86400000), amount: 2000 },
+      { number: 2, dueDate: new Date(Date.now() + 20 * 86400000), amount: 2000 },
+    ],
+  });
+  await runDefaulterCheck();
+  await Wallet.updateOne({ _id: settled._id }, { $set: { 'installments.1.dueDate': new Date(Date.now() - 4 * 86400000) } });
+  await runDefaulterCheck();
+  let kase2 = (await get('/api/lawyer/defaulter-cases', { token: tokens.lawyer })).data.find(c => c.wallet?._id === settled._id.toString());
+  check('an installment falling overdue after escalation is added to the open case', kase2?.missedInstallments === 2 && kase2.totalOverdue === 4000, kase2);
+  const close = (body, token = tokens.lawyer) => put(`/api/lawyer/defaulter-cases/${kase2?._id}/close`, { token, body });
+  check('the lawyer must say how it was settled (400)', (await close({ note: 'ok' })).status === 400);
+  const lc = await close({ note: 'Paid in full at the lab on 2 Oct; lab manager confirmed by phone.' });
+  const sw = await Wallet.findById(settled._id);
+  check('the lawyer closes the case — overdue installments recorded as settled, plan active, account normal',
+    lc.status === 200 && lc.data.case.status === 'resolved' && lc.data.case.resolution === 'settled' &&
+    sw.status === 'active' && sw.installments.every(i => i.status === 'paid' && i.settledOffline?.note) &&
+    (await get('/api/patient/profile', { token: tokens.patient2 })).data.restriction === null, [lc.data, sw.status]);
+  check('a closed case cannot be closed again (400)', (await close({ note: 'second time please' })).status === 400);
+  check('the admin is told it was settled', (await get('/api/admin/notifications', { token: tokens.admin })).data.some(n => n.type === 'defaulter_cleared' && n.message.includes('settled')));
+  // these two test plans would otherwise use up patient 2's open-plan limit in later sections
+  await Wallet.updateMany({ _id: { $in: [wallet._id, settled._id] } }, { status: 'completed' });
 
   const readAll = await put('/api/lawyer/notifications/read-all', { token: tokens.lawyer });
   const lawyerNotifs = await get('/api/lawyer/notifications', { token: tokens.lawyer });

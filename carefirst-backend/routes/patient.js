@@ -12,6 +12,7 @@ const {
   getNotifications, markRead, markAllRead,
 } = require('../controllers/patientController');
 const { protect, requireRole, requireActive } = require('../middleware/auth');
+const { notRestricted } = require('../utils/defaulters'); // a defaulter can't book or apply (decision 14)
 const { uploadReceipt, uploadCommunityDoc, uploadCnicPictures } = require('../middleware/upload');
 
 const guard = [protect, requireRole('patient'), requireActive];
@@ -42,23 +43,23 @@ router.post('/wallets/:walletId/service-fee/receipt',
 
 // Installment plan applications
 router.get('/installment-plans/config',   ...guard, getInstallmentConfig);
-router.post('/installment-plans/preview', ...guard, previewInstallmentPlan);
-router.post('/installment-plans',         ...guard, uploadCnicPictures, applyForInstallmentPlan);
+router.post('/installment-plans/preview', ...guard, notRestricted, previewInstallmentPlan);
+router.post('/installment-plans',         ...guard, notRestricted, uploadCnicPictures, applyForInstallmentPlan);
 
 // Doctor appointments (clinic visits)
 router.get('/appointments',             ...guard, getAppointments);
-router.post('/appointments',            ...guard, bookAppointment);
+router.post('/appointments',            ...guard, notRestricted, bookAppointment);
 router.put('/appointments/:id/cancel',  ...guard, cancelAppointment);
 
 // Lab visits
 router.get('/lab-bookings',             ...guard, getLabBookings);
-router.post('/lab-bookings',            ...guard, bookLabTest);
+router.post('/lab-bookings',            ...guard, notRestricted, bookLabTest);
 router.put('/lab-bookings/:id/cancel',  ...guard, cancelLabBooking);
 router.put('/lab-bookings/:id/branch',  ...guard, changeLabBranch);  // go to another branch
 
 // Community support
 router.get('/community-applications',  ...guard, getCommunityApplications);
-router.post('/community-applications', ...guard, uploadCommunityDoc.array('documents', 5), createCommunityApplication);
+router.post('/community-applications', ...guard, notRestricted, uploadCommunityDoc.array('documents', 5), createCommunityApplication);
 
 // Notifications
 router.get('/notifications',            ...guard, getNotifications);

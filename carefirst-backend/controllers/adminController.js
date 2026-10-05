@@ -13,6 +13,7 @@ const { sendNotification }  = require('../socket/notificationSocket');
 const { newSlipNumber, SLIP_PREFIX } = require('../utils/slips');
 const { getPatientProfileMap, withPatientDetails } = require('../utils/patientProfiles');
 const { splitInstallments, buildSchedule, findLabPayment } = require('../utils/installmentPlan');
+const { clearDefaultIfPaid } = require('../utils/defaulters');
 
 const notify = async (recipient, { title, message, type, meta }) => {
   const notif = await Notification.create({ recipient, title, message, type, meta });
@@ -142,11 +143,20 @@ const getUsers = async (req, res) => {
       User.countDocuments(filter),
     ]);
 
-    // Patients carry their CNIC + verification status for the admin users table
-    const patientProfiles = await getPatientProfileMap(users.filter(u => u.role === 'patient').map(u => u._id));
+    // Patients carry their CNIC + verification status for the admin users table, and whether
+    // they are restricted as defaulters (decision 14)
+    const patientIds = users.filter(u => u.role === 'patient').map(u => u._id);
+    const [patientProfiles, defaulterIds] = await Promise.all([
+      getPatientProfileMap(patientIds),
+      Wallet.distinct('patient', { patient: { $in: patientIds }, status: 'defaulter' }),
+    ]);
+    const restricted = new Set(defaulterIds.map(String));
     const enriched = users.map(u => {
       const obj = u.toObject();
-      if (u.role === 'patient') obj.profile = patientProfiles[u._id.toString()] || null;
+      if (u.role === 'patient') {
+        obj.profile = patientProfiles[u._id.toString()] || null;
+        obj.isDefaulter = restricted.has(u._id.toString());
+      }
       return obj;
     });
 
@@ -476,15 +486,17 @@ const verifyInstallment = async (req, res) => {
     payment.adminVerifiedBy = req.user._id;
     if (isInstallment) payment.status = 'paid';
 
-    if (wallet.isFullyPaid()) wallet.status = 'completed';
+    if (wallet.isFullyPaid() && wallet.status === 'active') wallet.status = 'completed';
 
     await wallet.save(); // pre-save hook recalculates remainingBalance
+    // Escalated plan: the last overdue installment verified → plan and account back to normal (decision 14)
+    const closedCase = await clearDefaultIfPaid(wallet, { resolution: 'paid', by: req.user._id });
 
     const notif = await Notification.create({
       recipient: wallet.patient._id,
       title:     'Payment Verified',
       message:   `Your ${label} of PKR ${payment.amount.toLocaleString()} has been verified by admin and marked as paid.` +
-                 (wallet.status === 'completed' ? ' Your installment plan is now fully paid.' : ''),
+                 (wallet.status === 'completed' && !closedCase ? ' Your installment plan is now fully paid.' : ''),
       type:      'receipt_admin_verified',
       meta,
     });
@@ -497,7 +509,51 @@ const verifyInstallment = async (req, res) => {
   }
 };
 
+// ─── PUT /api/admin/wallets/:walletId/installments/:instIndex/reject ─────────
+// ─── PUT /api/admin/wallets/:walletId/down-payment/reject ─────────────────────
+// Body: { reason } — CareFirst could not verify the receipt; it is cleared (with the lab's
+// confirmation) and the patient uploads a new one. Patient and lab are told.
+const rejectLabPayment = async (req, res) => {
+  try {
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : '';
+    if (!reason) return res.status(400).json({ message: 'Please give a reason' });
+    const wallet = await findWallet(req.params.walletId);
+    if (!wallet) return res.status(404).json({ message: 'Wallet not found' });
+
+    const target = findLabPayment(wallet, req.params.instIndex);
+    if (!target) return res.status(404).json({ message: 'Installment index out of range' });
+    const { payment, label, meta } = target;
+    if (!payment.receiptUrl)   return res.status(400).json({ message: 'There is no receipt to reject' });
+    if (payment.adminVerified) return res.status(400).json({ message: 'This payment is already verified' });
+
+    Object.assign(payment, {
+      receiptUrl: undefined, receiptUploadedAt: undefined, labApproved: false, labApprovedAt: undefined,
+      rejectionReason: reason, rejectedAt: new Date(), rejectedBy: 'admin',
+    });
+    await wallet.save();
+
+    await notify(wallet.patient._id, {
+      title:   'Receipt Not Verified',
+      message: `CareFirst could not verify your receipt for the ${label} of ${wallet.testName}. Reason: ${reason} Please upload a new receipt from My Wallet.`,
+      type:    'receipt_rejected',
+      meta,
+    });
+    await notify(wallet.lab._id, {
+      title:   'Receipt Rejected by CareFirst',
+      message: `The receipt for ${wallet.patient.name}'s ${label} (${wallet.testName}) was not verified: ${reason} The patient will upload a new one for you to confirm.`,
+      type:    'receipt_rejected',
+      meta,
+    });
+
+    const [enriched] = await enrichWallets([wallet]);
+    res.json({ message: 'Receipt rejected — the patient was asked to upload a new one', wallet: enriched });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── GET /api/admin/defaulter-cases ──────────────────────────────────────────
+// Defaulters with CNIC + contact, the plan's lab and whether the case is still open
 const getDefaulterCases = async (req, res) => {
   try {
     const cases = await DefaulterCase.find()
@@ -505,7 +561,11 @@ const getDefaulterCases = async (req, res) => {
       .populate('wallet')
       .populate('assignedLawyer', 'name email')
       .sort({ escalatedAt: -1 });
-    res.json(cases);
+    const withDetails = await withPatientDetails(cases);
+    const labIds = withDetails.map(c => c.wallet?.lab).filter(Boolean);
+    const labNames = {};
+    (await LabProfile.find({ user: { $in: labIds } }).select('user labName').lean()).forEach(p => { labNames[p.user.toString()] = p.labName; });
+    res.json(withDetails.map(c => (c.wallet ? { ...c, wallet: { ...c.wallet, labName: labNames[c.wallet.lab?.toString()] || '' } } : c)));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -626,7 +686,7 @@ module.exports = {
   getRegistrations, approveRegistration, rejectRegistration,
   getUsers, suspendUser, activateUser,
   verifyPatientCnic, rejectPatientCnic,
-  getWallets, getWalletById, verifyInstallment,
+  getWallets, getWalletById, verifyInstallment, rejectLabPayment,
   approvePlan, rejectPlan, verifyServiceFee, rejectServiceFee,
   getDefaulterCases,
   getCommunityApplications, approveCommunityApplication, rejectCommunityApplication, getPartnerLabs,

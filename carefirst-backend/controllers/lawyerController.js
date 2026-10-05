@@ -1,6 +1,9 @@
+const mongoose      = require('mongoose');
 const DefaulterCase = require('../models/DefaulterCase');
 const Notification  = require('../models/Notification');
 const LabProfile    = require('../models/LabProfile');
+const Wallet        = require('../models/Wallet');
+const { clearDefaultIfPaid } = require('../utils/defaulters');
 const { withPatientDetails } = require('../utils/patientProfiles');
 
 // Adds wallet.labName (the lab's registered name) to cases with a populated wallet
@@ -45,6 +48,38 @@ const getDefaulterCaseById = async (req, res) => {
   }
 };
 
+// ─── PUT /api/lawyer/defaulter-cases/:id/close ───────────────────────────────
+// Body: { note } — the overdue installments were settled outside CareFirst. They are recorded as
+// settled (with the note), the plan and the patient's account go back to normal (decision 14).
+const closeCase = async (req, res) => {
+  try {
+    const note = typeof req.body.note === 'string' ? req.body.note.trim() : '';
+    if (note.length < 5) return res.status(400).json({ message: 'Please write how the case was settled' });
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Case not found or not assigned to you' });
+    const c = await DefaulterCase.findOne({ _id: req.params.id, assignedLawyer: req.user._id });
+    if (!c) return res.status(404).json({ message: 'Case not found or not assigned to you' });
+    if (c.status !== 'active') return res.status(400).json({ message: 'This case is already closed' });
+
+    const wallet = await Wallet.findById(c.wallet).populate('patient', 'name');
+    if (wallet && wallet.status === 'defaulter') {
+      const at = new Date();
+      wallet.installments.filter(i => i.status === 'overdue').forEach(i => {
+        i.status = 'paid';
+        i.settledOffline = { at, by: req.user._id, note };
+      });
+      await wallet.save();
+      await clearDefaultIfPaid(wallet, { resolution: 'settled', note, by: req.user._id });
+    } else {
+      Object.assign(c, { status: 'resolved', resolvedAt: new Date(), resolution: 'settled', resolutionNote: note, resolvedBy: req.user._id });
+      await c.save();
+    }
+    const updated = await DefaulterCase.findById(c._id);
+    res.json({ message: 'Case closed — the patient\'s account is back to normal', case: updated });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── GET /api/lawyer/notifications ───────────────────────────────────────────
 const getNotifications = async (req, res) => {
   try {
@@ -80,4 +115,4 @@ const markAllRead = async (req, res) => {
   }
 };
 
-module.exports = { getDefaulterCases, getDefaulterCaseById, getNotifications, markRead, markAllRead };
+module.exports = { getDefaulterCases, getDefaulterCaseById, closeCase, getNotifications, markRead, markAllRead };

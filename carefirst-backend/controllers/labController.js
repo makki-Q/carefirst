@@ -476,7 +476,8 @@ const getReports = async (req, res) => {
 // Returns down payments and installments with a patient-uploaded receipt awaiting lab approval
 const getReceiptsPendingApproval = async (req, res) => {
   try {
-    const wallets = await Wallet.find({ lab: req.user._id, status: 'active' })
+    // Escalated plans too: a defaulter pays their overdue installments through the same chain
+    const wallets = await Wallet.find({ lab: req.user._id, status: { $in: ['active', 'defaulter'] } })
       .populate('patient', 'name email phone')
       .sort({ updatedAt: -1 });
 
@@ -485,6 +486,7 @@ const getReceiptsPendingApproval = async (req, res) => {
       walletId:  w._id,
       patient:   w.patient,
       testName:  w.testName,
+      defaulter: w.status === 'defaulter',
       pendingDownPayment: awaitingLab(w.downPayment) ? w.toObject().downPayment : null,
       pendingInstallments: w.installments
         .map((inst, idx) => ({ ...inst.toObject(), index: idx }))
@@ -539,6 +541,41 @@ const approveReceipt = async (req, res) => {
     }
 
     res.json({ message: 'Receipt approved by lab — pending admin verification', wallet });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PUT /api/lab/receipts/:walletId/installments/:instIndex/reject ───────────
+// ─── PUT /api/lab/receipts/:walletId/down-payment/reject ──────────────────────
+// Body: { reason } — the lab did not receive this payment; the receipt is cleared and the patient re-uploads
+const rejectReceipt = async (req, res) => {
+  try {
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : '';
+    if (!reason) return res.status(400).json({ message: 'Please give a reason' });
+    if (!mongoose.isValidObjectId(req.params.walletId)) return res.status(404).json({ message: 'Wallet not found or not linked to your lab' });
+    const wallet = await Wallet.findOne({ _id: req.params.walletId, lab: req.user._id }).populate('patient', 'name email');
+    if (!wallet) return res.status(404).json({ message: 'Wallet not found or not linked to your lab' });
+
+    const target = findLabPayment(wallet, req.params.instIndex);
+    if (!target) return res.status(404).json({ message: 'Installment index out of range' });
+    const { payment, label, meta } = target;
+    if (!payment.receiptUrl) return res.status(400).json({ message: 'There is no receipt to reject' });
+    if (payment.labApproved) return res.status(400).json({ message: 'You already confirmed this receipt' });
+
+    Object.assign(payment, { receiptUrl: undefined, receiptUploadedAt: undefined, rejectionReason: reason, rejectedAt: new Date(), rejectedBy: 'lab' });
+    await wallet.save();
+
+    const notif = await Notification.create({
+      recipient: wallet.patient._id,
+      title:     'Receipt Not Accepted',
+      message:   `${req.user.name} could not confirm your receipt for the ${label} of ${wallet.testName}. Reason: ${reason} Please upload a new receipt from My Wallet.`,
+      type:      'receipt_rejected',
+      meta,
+    });
+    sendNotification(wallet.patient._id.toString(), notif);
+
+    res.json({ message: 'Receipt rejected — the patient was asked to upload a new one', wallet });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -750,7 +787,7 @@ module.exports = {
   getProfile, updateProfile,
   getTests, addTest, updateTest, deleteTest,
   uploadReport, getReports, updateReportSummary, readReportAgain,
-  getReceiptsPendingApproval, approveReceipt,
+  getReceiptsPendingApproval, approveReceipt, rejectReceipt,
   getNeedyPatients, markTestConducted, setCommunitySupport, getEarnings,
   getLabPatients,
   getBookings, markSampleCollected, completeBooking, transferBooking,

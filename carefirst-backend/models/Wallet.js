@@ -23,6 +23,18 @@ const installmentSchema = new mongoose.Schema({
   adminVerifiedAt: { type: Date },
   adminVerifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 
+  // The lab or admin turned the receipt down (it is cleared; the patient uploads a new one)
+  rejectionReason: { type: String },
+  rejectedAt:      { type: Date },
+  rejectedBy:      { type: String, enum: ['lab', 'admin'] },
+
+  // Overdue installment the assigned lawyer recorded as settled outside CareFirst (decision 14)
+  settledOffline: {
+    at:   { type: Date },
+    by:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    note: { type: String },
+  },
+
   // "Due soon" reminders already sent (days before due date, see config/installments.js)
   remindersSent: [{ type: Number }],
 });
@@ -50,6 +62,9 @@ const walletSchema = new mongoose.Schema(
       adminVerified:     { type: Boolean, default: false },
       adminVerifiedAt:   { type: Date },
       adminVerifiedBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      rejectionReason:   { type: String },
+      rejectedAt:        { type: Date },
+      rejectedBy:        { type: String, enum: ['lab', 'admin'] },
     },
 
     // Paid to CareFirst — admin verifies directly (no lab step)

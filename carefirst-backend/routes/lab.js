@@ -4,7 +4,7 @@ const {
   getProfile, updateProfile,
   getTests, addTest, updateTest, deleteTest,
   uploadReport, getReports, updateReportSummary, readReportAgain,
-  getReceiptsPendingApproval, approveReceipt,
+  getReceiptsPendingApproval, approveReceipt, rejectReceipt,
   getNeedyPatients, markTestConducted, setCommunitySupport, getEarnings,
   getLabPatients,
   getBookings, markSampleCollected, completeBooking, transferBooking,
@@ -42,6 +42,8 @@ router.post('/reports/:id/read-again', ...guard, readReportAgain);  // re-run th
 router.get('/receipts',                                                   ...guard, getReceiptsPendingApproval);
 router.put('/receipts/:walletId/installments/:instIndex/approve',         ...guard, approveReceipt);
 router.put('/receipts/:walletId/down-payment/approve',                    ...guard, approveReceipt);
+router.put('/receipts/:walletId/installments/:instIndex/reject',          ...guard, rejectReceipt);
+router.put('/receipts/:walletId/down-payment/reject',                     ...guard, rejectReceipt);
 
 // Needy patients (community support)
 router.get('/needy-patients',                      ...guard, getNeedyPatients);

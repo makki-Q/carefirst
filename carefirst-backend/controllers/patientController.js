@@ -20,6 +20,7 @@ const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
 const { CNIC_PICTURES }    = require('../middleware/upload');
 const { branchesOffering, offersTest, same } = require('../utils/labBranches');
 const { getPlatformSettings } = require('../utils/platformSettings');
+const { restrictionFor }      = require('../utils/defaulters');
 const { generateInstallmentAgreement, generateInstallmentAgreementUrdu } = require('../utils/legalAgreementTemplate');
 const {
   OPEN_PLAN_STATUSES, labPaymentDetails, hasPaymentDetails, planAmounts, findLabPayment,
@@ -167,8 +168,11 @@ const buildPlanApplication = async (user, body) => {
 // ─── GET /api/patient/profile ─────────────────────────────────────────────────
 const getProfile = async (req, res) => {
   try {
-    const profile = await PatientProfile.findOne({ user: req.user._id });
-    res.json({ user: req.user, profile });
+    const [profile, restriction] = await Promise.all([
+      PatientProfile.findOne({ user: req.user._id }),
+      restrictionFor(req.user._id), // null unless a plan is escalated (decision 14)
+    ]);
+    res.json({ user: req.user, profile, restriction });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -481,11 +485,9 @@ const uploadPaymentReceipt = async (req, res) => {
 
     const wallet = await Wallet.findOne({ _id: req.params.walletId, patient: req.user._id });
     if (!wallet) return reject(404, 'Wallet not found');
-    if (wallet.status === 'defaulter') {
-      return reject(400, 'This plan has been escalated to the legal team. Please contact CareFirst support.');
-    }
+    // An escalated plan can still be paid — that is how a defaulter clears their account (decision 14)
     if (wallet.status === 'completed') return reject(400, 'This plan is already fully paid');
-    if (wallet.status !== 'active')    return reject(400, 'This plan is not active yet');
+    if (!['active', 'defaulter'].includes(wallet.status)) return reject(400, 'This plan is not active yet');
 
     const target = findLabPayment(wallet, req.params.instIndex);
     if (!target) return reject(404, 'Installment not found');
@@ -493,9 +495,12 @@ const uploadPaymentReceipt = async (req, res) => {
     if (payment.status === 'paid' || payment.adminVerified) return reject(400, `This ${label} is already paid`);
     if (payment.labApproved) return reject(400, 'The lab has already confirmed this receipt');
 
-    const isReplacement       = Boolean(payment.receiptUrl);
+    const isReplacement       = Boolean(payment.receiptUrl || payment.rejectionReason);
     payment.receiptUrl        = fileUrl('receipts', req.file.filename);
     payment.receiptUploadedAt = new Date();
+    payment.rejectionReason   = undefined;
+    payment.rejectedAt        = undefined;
+    payment.rejectedBy        = undefined;
     await wallet.save();
 
     await notifyUser(wallet.lab, {

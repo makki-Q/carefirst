@@ -11,6 +11,10 @@ const defaulterCaseSchema = new mongoose.Schema(
     status:             { type: String, enum: ['active', 'resolved'], default: 'active' },
     escalatedAt:        { type: Date, default: Date.now },
     resolvedAt:         { type: Date },
+    // How it closed (decision 14): 'paid' = every overdue installment verified; 'settled' = the lawyer closed it
+    resolution:         { type: String, enum: ['paid', 'settled'] },
+    resolutionNote:     { type: String },
+    resolvedBy:         { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }
 );
