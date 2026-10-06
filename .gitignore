@@ -30,3 +30,10 @@ desktop.ini
 ~$*
 .vscode/
 .idea/
+
+# Personal / local only — not part of the project
+LOGINS.md
+brag-output/
+# Agent skills installed with `npx skills` (each person installs their own)
+.agents/
+skills-lock.json
