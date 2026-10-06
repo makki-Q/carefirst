@@ -1,0 +1,15 @@
+/* Dashboards: the page and the sidebar menu still scroll, but without a visible
+   vertical scrollbar. Wide tables keep their horizontal scrollbar. */
+html:has(.patient-dashboard-wrapper, .doctor-dashboard-wrapper, .admin-dashboard-wrapper, .lab-dashboard-wrapper, .lawyer-dashboard-wrapper),
+.pat-sidebar-nav,
+.doc-sidebar-nav,
+.dash-sidebar-nav {
+  scrollbar-width: none;
+}
+
+html:has(.patient-dashboard-wrapper, .doctor-dashboard-wrapper, .admin-dashboard-wrapper, .lab-dashboard-wrapper, .lawyer-dashboard-wrapper)::-webkit-scrollbar,
+.pat-sidebar-nav::-webkit-scrollbar,
+.doc-sidebar-nav::-webkit-scrollbar,
+.dash-sidebar-nav::-webkit-scrollbar {
+  display: none;
+}

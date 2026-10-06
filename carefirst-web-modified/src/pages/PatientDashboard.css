@@ -84,23 +84,6 @@
   border-bottom: 1px solid var(--border);
 }
 
-.pat-logo-mark {
-  width: 28px;
-  height: 28px;
-  background: var(--red);
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-}
-
-.pat-logo-name {
-  font-family: 'DM Serif Display', serif;
-  font-size: 1.15rem;
-  color: var(--text);
-  letter-spacing: -0.01em;
-}
-
 .pat-sidebar-patient {
   display: flex;
   align-items: center;

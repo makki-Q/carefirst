@@ -77,22 +77,6 @@
   border-bottom: 1px solid var(--glass-border-subtle);
   display: flex; align-items: center; gap: 10px;
 }
-.doc-logo-mark {
-  width: 30px; height: 30px;
-  background: var(--text);
-  border-radius: 9px;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.doc-logo-mark svg { display: block; }
-.doc-logo-name {
-  font-family: 'DM Serif Display', serif;
-  font-size: 1.15rem;
-  font-weight: 400;
-  letter-spacing: -0.01em;
-  color: var(--text);
-}
-
 .doc-sidebar-doctor {
   padding: 20px 24px;
   border-bottom: 1px solid var(--glass-border-subtle);

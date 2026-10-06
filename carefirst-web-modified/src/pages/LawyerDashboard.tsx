@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './LawyerDashboard.css';
+import './HideScrollbars.css';
+import BrandLogo from '../components/BrandLogo';
 import { api, getSession, clearSession } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { ListenButton, UrduText } from '../components/Urdu';
@@ -201,12 +203,7 @@ const LawyerDashboard = () => {
         {/* ─── SIDEBAR ─────────────────────────────────────── */}
         <aside className={`dash-sidebar ${!sidebarOpen ? 'collapsed' : ''}`}>
           <div className="dash-sidebar-logo">
-            <div className="dash-logo-mark">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-            </div>
-            <span className="dash-logo-name">carefirst</span>
+            <BrandLogo />
           </div>
 
           <div className="dash-sidebar-user">

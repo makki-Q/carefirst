@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './DoctorDashboard.css';
+import './HideScrollbars.css';
+import BrandLogo from '../components/BrandLogo';
 import { api, getSession, clearSession, downloadSlip } from '../lib/api';
 import { alertDialog } from '../components/Dialog';
 import { getSocket } from '../lib/socket';
@@ -376,12 +378,7 @@ const DoctorDashboard = () => {
         {/* ─── SIDEBAR ────────────────────────────────────────────────────── */}
         <aside className={`doc-sidebar ${!sidebarOpen ? 'collapsed' : ''}`} id="sidebar">
           <div className="doc-sidebar-logo">
-            <div className="doc-logo-mark">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-              </svg>
-            </div>
-            <span className="doc-logo-name">carefirst</span>
+            <BrandLogo />
           </div>
 
           <div className="doc-sidebar-doctor">

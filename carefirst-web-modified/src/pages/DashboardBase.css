@@ -39,23 +39,6 @@
   border-bottom: 1px solid var(--border);
 }
 
-.dash-logo-mark {
-  width: 28px;
-  height: 28px;
-  background: var(--accent);
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-}
-
-.dash-logo-name {
-  font-family: 'DM Serif Display', serif;
-  font-size: 1.15rem;
-  color: var(--text);
-  letter-spacing: -0.01em;
-}
-
 .dash-sidebar-user {
   display: flex;
   align-items: center;

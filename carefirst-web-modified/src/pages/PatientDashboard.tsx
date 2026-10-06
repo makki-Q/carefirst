@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import './PatientDashboard.css';
+import './HideScrollbars.css';
+import BrandLogo from '../components/BrandLogo';
 import { confirmDialog, alertDialog } from '../components/Dialog';
 import { AgreementPaper } from '../components/AgreementPaper';
 import { api, getSession, saveSession, clearSession, formatCnic, downloadSlip } from '../lib/api';
@@ -1108,12 +1110,7 @@ const PatientDashboard = () => {
         {/* ─── SIDEBAR ─────────────────────────────────────────── */}
         <aside className={`pat-sidebar ${!sidebarOpen ? 'collapsed' : ''}`}>
           <div className="pat-sidebar-logo">
-            <div className="pat-logo-mark">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-              </svg>
-            </div>
-            <span className="pat-logo-name">carefirst</span>
+            <BrandLogo />
           </div>
 
           <div className="pat-sidebar-patient" style={{ cursor: 'pointer' }} onClick={() => navigate('profile')}>
