@@ -31,6 +31,18 @@ const splitInstallments = (amount, count) => {
 };
 
 // Down payment = DOWN_PAYMENT_PERCENT of the price; the rest goes into installments
+// Tests saved before the 6-installment limit are capped once at startup (decision 15)
+const capInstallmentCounts = async () => {
+  const LabProfile = require('../models/LabProfile');
+  const { MAX_INSTALLMENTS } = require('../config/installments');
+  const r = await LabProfile.updateMany(
+    { 'tests.installmentCount': { $gt: MAX_INSTALLMENTS } },
+    { $set: { 'tests.$[t].installmentCount': MAX_INSTALLMENTS } },
+    { arrayFilters: [{ 't.installmentCount': { $gt: MAX_INSTALLMENTS } }] },
+  );
+  return r.modifiedCount;
+};
+
 const planAmounts = (totalAmount, count) => {
   const downPayment = Math.round(totalAmount * DOWN_PAYMENT_PERCENT / 100);
   return { downPayment, installments: splitInstallments(totalAmount - downPayment, count) };
@@ -68,6 +80,7 @@ const findLabPayment = (wallet, instIndex) => {
 };
 
 module.exports = {
+  capInstallmentCounts,
   OPEN_PLAN_STATUSES, pktDay,
   labPaymentDetails, hasPaymentDetails,
   splitInstallments, planAmounts, buildSchedule,

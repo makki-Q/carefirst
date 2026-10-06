@@ -77,6 +77,11 @@ const branchIdsFrom = (profile, value) => {
   return { ids: ids.length === profile.branches.length ? [] : ids };
 };
 
+// 2–6 installments: the agreement's stamp paper has six schedule rows (decision 15)
+const { MIN_INSTALLMENTS, MAX_INSTALLMENTS } = require('../config/installments');
+const validCount = (n) => Number.isInteger(Number(n)) && Number(n) >= MIN_INSTALLMENTS && Number(n) <= MAX_INSTALLMENTS;
+const COUNT_MESSAGE = `A plan can have ${MIN_INSTALLMENTS} to ${MAX_INSTALLMENTS} installments`;
+
 // ─── POST /api/lab/tests ──────────────────────────────────────────────────────
 const addTest = async (req, res) => {
   try {
@@ -85,6 +90,7 @@ const addTest = async (req, res) => {
       return res.status(400).json({ message: 'name, category, and price are required' });
     }
 
+    if (installmentEnabled && !validCount(installmentCount)) return res.status(400).json({ message: COUNT_MESSAGE });
     const profile = await LabProfile.findOne({ user: req.user._id });
     const { ids, error } = branchIdsFrom(profile, req.body.branches);
     if (error) return res.status(400).json({ message: error });
@@ -112,6 +118,9 @@ const updateTest = async (req, res) => {
     if (!test) return res.status(404).json({ message: 'Test not found' });
 
     const { installmentEnabled, installmentCount, installmentTenureDays } = req.body;
+    if (installmentCount !== undefined && (installmentEnabled ?? test.installmentEnabled) && !validCount(installmentCount)) {
+      return res.status(400).json({ message: COUNT_MESSAGE });
+    }
     if (name                !== undefined) test.name                 = name;
     if (category            !== undefined) test.category             = category;
     if (price               !== undefined) test.price                = Number(price);

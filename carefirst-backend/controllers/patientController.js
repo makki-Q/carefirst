@@ -21,7 +21,7 @@ const { CNIC_PICTURES }    = require('../middleware/upload');
 const { branchesOffering, offersTest, same } = require('../utils/labBranches');
 const { getPlatformSettings } = require('../utils/platformSettings');
 const { restrictionFor }      = require('../utils/defaulters');
-const { generateInstallmentAgreement, generateInstallmentAgreementUrdu } = require('../utils/legalAgreementTemplate');
+const { agreementData, agreementTextEn, agreementTextUr, paperFields, withAgreementPaper } = require('../utils/agreementPaper');
 const {
   OPEN_PLAN_STATUSES, labPaymentDetails, hasPaymentDetails, planAmounts, findLabPayment,
 } = require('../utils/installmentPlan');
@@ -70,7 +70,7 @@ const withLabPayment = async (wallets) => {
   return wallets.map(w => ({ ...w, labPayment: map[w.lab?._id?.toString()] || labPaymentDetails(null) }));
 };
 
-const enrichWallets = async (wallets) => withLabPayment(await withLabInfo(wallets, 'lab'));
+const enrichWallets = async (wallets) => withAgreementPaper(await withLabPayment(await withLabInfo(wallets, 'lab')));
 
 const PHONE_FORMAT = /^\+?\d{10,13}$/;
 
@@ -145,24 +145,15 @@ const buildPlanApplication = async (user, body) => {
     guarantor,
   };
 
-  const agreementInput = {
-    patient:     user,
-    patientCnic: profile.cnic,
-    patientAddress,
-    guarantor,
-    labName:     terms.labName,
-    testName:    terms.testName,
-    totalAmount,
-    downPayment,
-    installments,
-    tenureDays:  terms.installmentTenureDays,
-    serviceFee:  SERVICE_FEE,
-    graceDays:   GRACE_DAYS,
-  };
-  const agreementText     = generateInstallmentAgreement(agreementInput);
-  const agreementTextUrdu = generateInstallmentAgreementUrdu(agreementInput);
+  // The stamp paper with this plan's details (decision 15); the English text is what the patient accepts
+  const data = agreementData({
+    patient: user, patientCnic: profile.cnic, patientAddress, guarantor, labProfile, labUser,
+    test, totalAmount, downPayment, installments, tenureDays: terms.installmentTenureDays,
+  });
+  const agreementText     = agreementTextEn(data);
+  const agreementTextUrdu = agreementTextUr(data);
 
-  return { terms, agreementText, agreementTextUrdu };
+  return { terms, agreementData: data, agreementText, agreementTextUrdu };
 };
 
 // ─── GET /api/patient/profile ─────────────────────────────────────────────────
@@ -392,9 +383,9 @@ const getInstallmentConfig = async (req, res) => {
 // Returns the plan terms and the agreement text the patient must accept
 const previewInstallmentPlan = async (req, res) => {
   try {
-    const { error, terms, agreementText, agreementTextUrdu } = await buildPlanApplication(req.user, req.body);
+    const { error, terms, agreementData: data, agreementText, agreementTextUrdu } = await buildPlanApplication(req.user, req.body);
     if (error) return res.status(error.status).json({ message: error.message });
-    res.json({ ...terms, agreementText, agreementTextUrdu });
+    res.json({ ...terms, agreementText, agreementTextUrdu, agreementPaper: paperFields(data) });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -424,7 +415,7 @@ const applyForInstallmentPlan = async (req, res) => {
 
     if (body.acceptAgreement !== true) return reject(400, 'You must read and accept the agreement to apply');
 
-    const { error, terms, agreementText, agreementTextUrdu } = await buildPlanApplication(req.user, body);
+    const { error, terms, agreementData: data, agreementText, agreementTextUrdu } = await buildPlanApplication(req.user, body);
     if (error) return reject(error.status, error.message);
     if (body.agreementText !== agreementText) {
       return reject(409, 'The plan terms have changed. Please review the agreement again.');
@@ -449,7 +440,7 @@ const applyForInstallmentPlan = async (req, res) => {
       patientAddress:        terms.patientAddress,
       guarantor:             terms.guarantor,
       cnicPictures,
-      agreement:             { text: agreementText, textUrdu: agreementTextUrdu, acceptedAt: new Date() },
+      agreement:             { data, text: agreementText, textUrdu: agreementTextUrdu, acceptedAt: new Date() },
       status:                'pending_approval',
     });
 

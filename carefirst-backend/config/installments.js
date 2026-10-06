@@ -15,6 +15,8 @@ module.exports = {
   DOWN_PAYMENT_PERCENT: number(process.env.DOWN_PAYMENT_PERCENT, 20, 100),
 
   MAX_OPEN_PLANS: 2,      // pending applications count too
+  MIN_INSTALLMENTS: 2,
+  MAX_INSTALLMENTS: 6,    // the agreement's stamp paper has 6 schedule rows (decision 15)
   GRACE_DAYS:     3,      // days after a due date before escalation
   REMINDER_DAYS:  [3, 1], // "due soon" reminders, days before the due date
 

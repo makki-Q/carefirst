@@ -105,6 +105,7 @@ const walletSchema = new mongoose.Schema(
     // Legal agreement exactly as the patient read and accepted it
     // (textUrdu: the Urdu version shown / read aloud next to it; English is binding)
     agreement: {
+      data:       { type: mongoose.Schema.Types.Mixed }, // the details written on the stamp paper (decision 15)
       text:       { type: String },
       textUrdu:   { type: String },
       acceptedAt: { type: Date },

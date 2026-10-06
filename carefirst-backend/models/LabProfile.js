@@ -6,7 +6,7 @@ const testSchema = new mongoose.Schema({
   price:    { type: Number, required: true, min: 0 },
   isActive: { type: Boolean, default: true },
   installmentEnabled:   { type: Boolean, default: false },
-  installmentCount:     { type: Number, min: 1, default: 2 },
+  installmentCount:     { type: Number, min: 1, max: 6, default: 2 }, // max: rows on the agreement paper
   installmentTenureDays:{ type: Number, enum: [15, 20, 25, 30], default: 30 },
   // Branches that offer this test (LabProfile.branches[]._id); empty = every branch
   branches: [{ type: mongoose.Schema.Types.ObjectId }],

@@ -4,6 +4,7 @@ const Notification  = require('../models/Notification');
 const LabProfile    = require('../models/LabProfile');
 const Wallet        = require('../models/Wallet');
 const { clearDefaultIfPaid } = require('../utils/defaulters');
+const { withAgreementPaper } = require('../utils/agreementPaper');
 const { withPatientDetails } = require('../utils/patientProfiles');
 
 // Adds wallet.labName (the lab's registered name) to cases with a populated wallet
@@ -12,9 +13,11 @@ const withLabNames = async (cases) => {
   const names = {};
   (await LabProfile.find({ user: { $in: labIds } }).select('user labName').lean())
     .forEach(p => { names[p.user.toString()] = p.labName; });
+  const papers = await withAgreementPaper(cases.map(c => c.wallet).filter(Boolean)); // the filled stamp paper
+  const byId = Object.fromEntries(papers.map(w => [w._id.toString(), w]));
   return cases.map(c => {
     const labId = (c.wallet?.lab?._id || c.wallet?.lab)?.toString();
-    return c.wallet ? { ...c, wallet: { ...c.wallet, labName: names[labId] || '' } } : c;
+    return c.wallet ? { ...c, wallet: { ...byId[c.wallet._id.toString()], labName: names[labId] || '' } } : c;
   });
 };
 

@@ -27,9 +27,8 @@ const Notification         = require('../models/Notification');
 const { fileUrl } = require('../utils/fileUrl');
 const { planAmounts, buildSchedule } = require('../utils/installmentPlan');
 const { pktDate, addDays, weekdayOf, pktInstant } = require('../utils/schedule');
-const {
-  generateInstallmentAgreement, generateInstallmentAgreementUrdu, generateLegalAgreement,
-} = require('../utils/legalAgreementTemplate');
+const { generateLegalAgreement } = require('../utils/legalAgreementTemplate');
+const { agreementData, agreementTextEn, agreementTextUr } = require('../utils/agreementPaper');
 const { SERVICE_FEE, GRACE_DAYS } = require('../config/installments');
 const { AUDIO_DIR } = require('../config/azure');
 const { CNIC_DIR } = require('../middleware/upload');
@@ -156,11 +155,10 @@ const makePlan = async ({ patientKey, labKey, testName, guarantor, state, approv
   const total = Math.round(test.price);
   const { downPayment, installments } = planAmounts(total, test.installmentCount);
 
-  const input = {
-    patient, patientCnic: profile.cnic, patientAddress: profile.address, guarantor, labName: labProfile.labName, testName: test.name,
-    totalAmount: total, downPayment, installments, tenureDays: test.installmentTenureDays,
-    serviceFee: SERVICE_FEE, graceDays: GRACE_DAYS,
-  };
+  const data = agreementData({
+    patient, patientCnic: profile.cnic, patientAddress: profile.address, guarantor, labProfile, labUser: users[labKey],
+    test, totalAmount: total, downPayment, installments, tenureDays: test.installmentTenureDays,
+  });
   const wallet = new Wallet({
     patient: patient._id, lab: users[labKey]._id, labTest: test._id, testName: test.name,
     totalAmount: total, installmentCount: installments.length, installmentTenureDays: test.installmentTenureDays,
@@ -172,7 +170,7 @@ const makePlan = async ({ patientKey, labKey, testName, guarantor, state, approv
       guarantorFront: await cnicCard(guarantor.name, guarantor.cnic, 'front'),
       guarantorBack:  await cnicCard(guarantor.name, guarantor.cnic, 'back', guarantor.address),
     },
-    agreement: { text: generateInstallmentAgreement(input), textUrdu: generateInstallmentAgreementUrdu(input), acceptedAt: daysAgo(approvedDaysAgo + 1) },
+    agreement: { data, text: agreementTextEn(data), textUrdu: agreementTextUr(data), acceptedAt: daysAgo(approvedDaysAgo + 1) },
     status: 'pending_approval',
   });
 

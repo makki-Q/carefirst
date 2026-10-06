@@ -750,9 +750,18 @@ const testPlanApplication = async () => {
   check('preview: 20% down payment and whole-rupee installments with remainder last',
     preview.status === 200 && preview.data.downPayment === 5000 &&
     JSON.stringify(preview.data.installments) === '[6666,6666,6668]' && preview.data.installmentTenureDays === 30, preview.data);
-  check('agreement names patient CNIC and address, guarantor, lab, service fee and the CNIC pictures',
-    ['35202-1234567-9', 'House 12, Model Town, Lahore', 'Kamran Khan', '35202-5555555-5', 'E2E Diagnostics', 'PKR 500', 'PKR 6,668', 'CNIC\npictures uploaded']
-      .every(s => preview.data.agreementText?.includes(s)), preview.data.agreementText);
+  // The agreement is the lab stamp paper with the blanks filled (decision 15)
+  check('the agreement text is the stamp paper with patient, lab, guarantor (witness), amounts and the printed terms',
+    ['MEDICAL LAB TEST PAYMENT INSTALLMENT AGREEMENT', '35202-1234567-9', 'House 12, Model Town, Lahore', 'E2E Diagnostics',
+      '1. Name: Kamran Khan (Guarantor, Brother)', '35202-5555555-5', 'Down Payment (PKR): 5,000', 'Installment 3: due Day 90 after activation, PKR 6,668',
+      'The reports will be issued only after full payment is received.']
+      .every(x => preview.data.agreementText?.includes(x)), preview.data.agreementText);
+  const paperField = (k) => preview.data.agreementPaper?.find(x => x.key === k);
+  check('… and every blank comes with its text and place on the paper',
+    paperField('patientCnic')?.text === '35202-1234567-9' && paperField('patientCnic').x > 600 && paperField('witnessName')?.text.startsWith('Kamran Khan') &&
+    paperField('amount3')?.text === '6,668' && !paperField('amount4') && !paperField('paid1') && !paperField('patientSignDate'), preview.data.agreementPaper);
+  check('a lab cannot offer more than 6 installments — the paper has 6 rows (400)',
+    (await put(`/api/lab/tests/${ids.mriTest}`, { token: tokens.lab, body: { installmentCount: 7 } })).status === 400);
 
   const notAccepted = await applyPlan(tokens.patient, { ...planBody(), agreementText: preview.data.agreementText });
   check('applying without accepting the agreement is rejected (400)', notAccepted.status === 400, notAccepted);
@@ -1302,7 +1311,20 @@ const testUrdu = async () => {
 
   // Agreement audio
   const ag = await speak(tokens.patient, { source: 'agreement', id: ids.plan });
-  check('patient hears the Urdu agreement', ag.status === 200 && mock.lastSsml.includes('اقساط کے منصوبے کا معاہدہ') && mock.lastSsml.includes('<break'), mock.lastSsml.slice(0, 200));
+  check('patient hears the Urdu agreement with the details — the CNIC read digit by digit',
+    ag.status === 200 && mock.lastSsml.includes('میڈیکل لیب ٹیسٹ کی ادائیگی کے قسطوں کا معاہدہ') && mock.lastSsml.includes('3 5 2 0 2، 1 2 3 4 5 6 7، 9') &&
+    mock.lastSsml.includes('6,668 روپے') && mock.lastSsml.includes('<break'), mock.lastSsml.slice(0, 300));
+  const planNow = (await get('/api/patient/wallets', { token: tokens.patient })).data.find(w => w._id === ids.plan);
+  const firstDue = planNow?.agreementPaper?.find(x => x.key === 'firstDue')?.text;
+  check('once the plan is active the paper shows the real due dates and the acceptance',
+    planNow?.activatedAt && /^\d{1,2} \w{3,4} \d{4}$/.test(firstDue) && planNow.agreementPaper.some(x => x.key === 'accepted' && x.text.startsWith('Agreed electronically on CareFirst')) &&
+    planNow.agreementUrdu.includes('پہلی قسط کی تاریخ'), [planNow?.activatedAt, firstDue]);
+  const agreementPdf = await get(`/api/documents/agreements/${ids.plan}`, { token: tokens.patient });
+  check('the patient downloads the filled stamp paper as a PDF', agreementPdf.status === 200 && agreementPdf.type.includes('application/pdf'), [agreementPdf.status, agreementPdf.type]);
+  check("… so can the plan's lab", (await get(`/api/documents/agreements/${ids.plan}`, { token: tokens.lab })).status === 200);
+  check('… but not another patient or lab (404)',
+    (await get(`/api/documents/agreements/${ids.plan}`, { token: tokens.patient2 })).status === 404 &&
+    (await get(`/api/documents/agreements/${ids.plan}`, { token: tokens.lab2 })).status === 404);
   check('admin can hear it', (await speak(tokens.admin, { source: 'agreement', id: ids.plan })).status === 200);
   check("another patient cannot (404)", (await speak(tokens.patient2, { source: 'agreement', id: ids.plan })).status === 404);
   check('a lawyer without the case cannot (404)', (await speak(tokens.lawyer, { source: 'agreement', id: ids.plan })).status === 404);
@@ -1312,8 +1334,8 @@ const testUrdu = async () => {
   // Before applying: audio of the agreement preview, rebuilt on the server from the plan inputs
   const previewBody = { source: 'agreement-preview', labId: ids.lab, testId: ids.mriTest, patientAddress: 'Chiniot', guarantor: { ...guarantor, cnic: '35202-7777777-7' } };
   const prev = await speak(tokens.patient2, previewBody);
-  check('patient can hear the Urdu agreement before applying',
-    prev.status === 200 && mock.lastSsml.includes('35202-7777777-7') && mock.lastSsml.includes('35202-7654321-3'), [prev.status, prev.data]);
+  check('patient can hear the Urdu agreement before applying (both CNICs, digit by digit)',
+    prev.status === 200 && mock.lastSsml.includes('3 5 2 0 2، 7 7 7 7 7 7 7، 7') && mock.lastSsml.includes('3 5 2 0 2، 7 6 5 4 3 2 1، 3'), [prev.status, prev.data]);
   check('preview audio follows the same validation (400)',
     (await speak(tokens.patient2, { ...previewBody, guarantor: { ...guarantor, name: 'x'.repeat(81) } })).status === 400);
   check('only patients can request preview audio (404)', (await speak(tokens.doctor, previewBody)).status === 404);

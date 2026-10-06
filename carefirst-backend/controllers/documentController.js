@@ -11,6 +11,7 @@ const PatientProfile       = require('../models/PatientProfile');
 const DoctorProfile        = require('../models/DoctorProfile');
 const LabProfile           = require('../models/LabProfile');
 const { buildSlipPdf, fmtDateTime } = require('../utils/slipPdf');
+const { buildAgreementPdf, liveFor, bookingsFor } = require('../utils/agreementPaper');
 const { formatTime12, PATIENT_CANCEL_HOURS } = require('../utils/schedule');
 
 const notFound = (res) => res.status(404).json({ message: 'Not found' });
@@ -48,6 +49,32 @@ const getCnicPicture = async (req, res) => {
 
     res.set('Cache-Control', 'private, no-store');
     res.sendFile(file);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── GET /api/documents/agreements/:walletId ─────────────────────────────────
+// The filled stamp paper as a PDF (decision 15): the patient, the plan's lab, admins and the assigned lawyer
+const getAgreementPdf = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.walletId)) return notFound(res);
+    const wallet = await Wallet.findById(req.params.walletId).select('patient lab agreement planApprovedAt activatedAt installments');
+    if (!wallet?.agreement?.data) return notFound(res);
+    const user = req.user;
+    const allowed =
+      user.role === 'admin' ||
+      (user.role === 'patient' && same(wallet.patient, user._id)) ||
+      (user.role === 'lab' && same(wallet.lab, user._id)) ||
+      (user.role === 'lawyer' && await DefaulterCase.exists({ wallet: wallet._id, assignedLawyer: user._id }));
+    if (!allowed) return notFound(res);
+
+    const booking = (await bookingsFor([wallet._id]))[wallet._id.toString()];
+    const pdf = await buildAgreementPdf(wallet.agreement.data, liveFor(wallet, booking));
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `attachment; filename="CareFirst-agreement-${wallet._id.toString().slice(-6).toUpperCase()}.pdf"`);
+    res.set('Cache-Control', 'private, no-store');
+    res.send(pdf);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -247,4 +274,4 @@ const getCommunitySlip = async (req, res) => {
   }
 };
 
-module.exports = { getCnicPicture, getAppointmentSlip, getLabBookingSlip, getCommunitySlip };
+module.exports = { getCnicPicture, getAgreementPdf, getAppointmentSlip, getLabBookingSlip, getCommunitySlip };

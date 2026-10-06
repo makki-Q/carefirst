@@ -11,6 +11,7 @@ const connectDB              = require('./config/db');
 const { initSocket }         = require('./socket/notificationSocket');
 const { startDefaulterJob }  = require('./jobs/defaulterJob');
 const { backfillSlipNumbers } = require('./utils/slips');
+const { capInstallmentCounts } = require('./utils/installmentPlan');
 const { backfillLabBranches } = require('./utils/labBranches');
 
 const authRoutes   = require('./routes/auth');
@@ -89,6 +90,9 @@ connectDB().then(() => {
       .catch(err => console.error('[Branches] backfill failed:', err.message))
       .then(() => backfillSlipNumbers())
       .then(n => n && console.log(`[Slips] Gave ${n} earlier booking(s) a slip number`))
-      .catch(err => console.error('[Slips] backfill failed:', err.message));
+      .catch(err => console.error('[Slips] backfill failed:', err.message))
+      .then(() => capInstallmentCounts())
+      .then(n => n && console.log(`[Plans] Capped installments at 6 on ${n} lab(s)`))
+      .catch(err => console.error('[Plans] cap failed:', err.message));
   });
 });

@@ -5,19 +5,26 @@ const DefaulterCase = require('../models/DefaulterCase');
 const { urduAudioFile, speechConfigured, translatorConfigured } = require('../utils/azure');
 const { VOICES, DEFAULT_VOICE } = require('../config/azure');
 const { buildPlanApplication } = require('./patientController');
+const { agreementSpeech, liveFor, bookingsFor } = require('../utils/agreementPaper');
 
 const notFound = (res) => res.status(404).json({ message: 'Not found' });
 const same = (a, b) => Boolean(a && b && a.toString() === b.toString());
 
 // Urdu text of an agreement the user may see, or null
 const agreementText = async (user, id) => {
-  const wallet = await Wallet.findById(id).select('patient agreement');
+  const wallet = await Wallet.findById(id).select('patient agreement planApprovedAt activatedAt installments');
   if (!wallet) return null;
   const allowed =
     user.role === 'admin' ||
     (user.role === 'patient' && same(wallet.patient, user._id)) ||
     (user.role === 'lawyer' && await DefaulterCase.exists({ wallet: wallet._id, assignedLawyer: user._id }));
-  return allowed ? { text: wallet.agreement?.textUrdu || '' } : null;
+  if (!allowed) return null;
+  // Stamp-paper agreements are read with the current details (real due dates, paid installments)
+  if (wallet.agreement?.data) {
+    const booking = (await bookingsFor([wallet._id]))[wallet._id.toString()];
+    return { text: agreementSpeech(wallet.agreement.data, liveFor(wallet, booking)) };
+  }
+  return { text: wallet.agreement?.textUrdu || '' };
 };
 
 // Urdu summary of a report the user may see, or null
@@ -36,9 +43,9 @@ const reportText = async (user, id) => {
 // server from the same validated inputs as the preview (body: labId, testId, patientAddress, guarantor)
 const previewAgreementText = async (user, body) => {
   if (user.role !== 'patient') return null;
-  const { error, agreementTextUrdu } = await buildPlanApplication(user, body);
+  const { error, agreementData } = await buildPlanApplication(user, body);
   if (error) return { error };
-  return { text: agreementTextUrdu };
+  return { text: agreementSpeech(agreementData) };
 };
 
 // ─── GET /api/tts/status ──────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ const { newSlipNumber, SLIP_PREFIX } = require('../utils/slips');
 const { getPatientProfileMap, withPatientDetails } = require('../utils/patientProfiles');
 const { splitInstallments, buildSchedule, findLabPayment } = require('../utils/installmentPlan');
 const { clearDefaultIfPaid } = require('../utils/defaulters');
+const { withAgreementPaper } = require('../utils/agreementPaper');
 
 const notify = async (recipient, { title, message, type, meta }) => {
   const notif = await Notification.create({ recipient, title, message, type, meta });
@@ -31,10 +32,10 @@ const enrichWallets = async (wallets) => {
   const profiles = await LabProfile.find({ user: { $in: labIds } }).select('user labName');
   const labNames = {};
   profiles.forEach(lp => { labNames[lp.user.toString()] = lp.labName; });
-  return (await withPatientDetails(wallets)).map(w => ({
+  return withAgreementPaper((await withPatientDetails(wallets)).map(w => ({
     ...w,
     labName: labNames[w.lab?._id?.toString()] || w.lab?.name || '—',
-  }));
+  })));
 };
 
 const pkr = (n) => `PKR ${(n || 0).toLocaleString()}`;
