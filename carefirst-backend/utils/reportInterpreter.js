@@ -5,10 +5,11 @@
 
 // ─── Column detection ─────────────────────────────────────────────────────────
 const HEADER = {
-  test:   /^(test(s)?( name)?|investigation(s)?|parameter( name)?|examination|description|analyte|component)$/i,
+  test:   /^(test(s|\(s\))?( name)?|investigation(s)?|parameter( name)?|examination|description|analyte|component)$/i,
   result: /^(result(s)?|value|observed value|your value|patient value)$/i,
-  range:  /(normal|reference|ref\.?|biological).*(value|range|interval|limit)s?|^(normal|reference) ?(value|range)s?$|^ranges?$/i,
-  unit:   /^units?$/i,
+  // also a bare "NORMAL" over the ranges (Shaukat Khanum: TEST(s) | NORMAL | UNIT(s) | <date>)
+  range:  /(normal|reference|ref\.?|biological).*(value|range|interval|limit)s?|^(normal|reference) ?(value|range)s?$|^ranges?$|^normal$/i,
+  unit:   /^unit(s|\(s\))?$/i,
   flag:   /^(flag|status|remarks?)$/i,
 };
 
@@ -16,6 +17,7 @@ const clean = (s) => String(s || '')
   .replace(/:(un)?selected:/g, ' ')        // checkbox marks the OCR adds
   .replace(/«/g, '<').replace(/»/g, '>')
   .replace(/(\d),(\d{1,2})(?!\d)/g, '$1.$2') // decimal comma: "0,70" → "0.70" (thousands keep 3 digits)
+  .replace(/(\d\s*[-–]\s*)\.\s*(\d)/g, '$10.$2') // OCR'd leading decimal: "0.02 - . 5" → "0.02 - 0.5"
   .replace(/\s+/g, ' ').replace(/[:]+$/, '').trim();
 
 // Rows of a table as arrays of cell text, plus which rows are column headers

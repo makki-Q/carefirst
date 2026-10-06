@@ -41,6 +41,33 @@ test('CBC with a sample number as the result heading', () => {
   assert.strictEqual(find(r, 'WBC Count (TLC)').status, 'high');
 });
 
+test('"TEST(s) | NORMAL | UNIT(s) | <date>" header, range before the result, short codes', () => {
+  const r = interpretReport({
+    content: 'Age/Sex : 35 Year(s)/Female',
+    tables: [table([
+      ['', '', '', '001HEM19000000'],
+      ['TEST(s)', 'NORMAL', 'UNIT(s)', '25-JUL-2019 14:32:30'],
+      ['HGB', '12 - 15', 'g/dL', '12.7'],
+      ['PLT', '150 - 450', 'x10.e 3/μl', '78'],
+      ['%MONO', '2 - 10', '%', '11.9'],
+      ['%BASO', '<1', '%', '0.5'],
+      ['#NEUT', '2 - 8', 'x10.e 3/μl', '3.02'],
+      ['#EOS', '0.02 - . 5', 'x10.e 3/ul', '0.1'],
+    ], 2)],
+  });
+  assert.strictEqual(r.kind, 'table');
+  assert.strictEqual(find(r, 'HGB').status, 'normal');
+  assert.strictEqual(find(r, 'PLT').status, 'low');
+  assert.strictEqual(find(r, 'PLT').unit, 'x10.e 3/μl');
+  assert.strictEqual(find(r, '%MONO').status, 'high');
+  assert.strictEqual(find(r, '%BASO').status, 'normal');
+  assert.strictEqual(find(r, '#NEUT').status, 'normal');
+  assert.strictEqual(find(r, '#EOS').status, 'normal'); // OCR'd "0.02 - . 5"
+  const s = summarizeReport(r);
+  assert.ok(s.ur.includes('پلیٹ لیٹس 78'));
+  assert.ok(s.ur.includes('مونوسائٹس 11.9'));
+});
+
 test("the lab's own High / Low column wins", () => {
   const r = interpretReport({ content: '', tables: [table([
     ['Investigation', 'Result', '', 'Reference Value', 'Unit'],

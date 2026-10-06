@@ -6,17 +6,20 @@ const MAX_LISTED = 6;
 
 // Common test names in Urdu; anything not listed keeps its English name
 const URDU_NAMES = [
-  [/^(hb|h(a)?emoglobin|haemoglobin)\b/i, 'ہیموگلوبن'],
+  [/^(hb|hgb|h(a)?emoglobin|haemoglobin)\b/i, 'ہیموگلوبن'],
   [/^(total )?rbc|red blood cell/i, 'خون کے سرخ خلیے (RBC)'],
   [/^(total )?wbc|tlc|white blood cell|leucocyte|leukocyte count/i, 'خون کے سفید خلیے (WBC)'],
-  [/platelet/i, 'پلیٹ لیٹس'],
+  [/platelet|^plt\b/i, 'پلیٹ لیٹس'],
   [/^(hct|h(a)?ematocrit|pcv)\b/i, 'ہیماٹوکرٹ'],
-  [/absolute neutrophil/i, 'نیوٹروفلز کی تعداد'],
-  [/absolute lymphocyte/i, 'لمفوسائٹس کی تعداد'],
-  [/neutrophil/i, 'نیوٹروفلز'],
-  [/lymphocyte/i, 'لمفوسائٹس'],
-  [/monocyte/i, 'مونوسائٹس'],
-  [/eosinophil/i, 'ایوسینوفلز'],
+  // "#NEUT" = absolute count, "%NEUT" = percentage (Shaukat Khanum style codes)
+  [/absolute neutrophil|^#\s*neut/i, 'نیوٹروفلز کی تعداد'],
+  [/absolute lymphocyte|^#\s*lymp/i, 'لمفوسائٹس کی تعداد'],
+  [/absolute monocyte|^#\s*mono/i, 'مونوسائٹس کی تعداد'],
+  [/absolute eosinophil|^#\s*eos/i, 'ایوسینوفلز کی تعداد'],
+  [/neutrophil|^%?\s*neut\b/i, 'نیوٹروفلز'],
+  [/lymphocyte|^%?\s*lymp\b/i, 'لمفوسائٹس'],
+  [/monocyte|^%?\s*mono\b/i, 'مونوسائٹس'],
+  [/eosinophil|^%?\s*eos\b/i, 'ایوسینوفلز'],
   [/^e\.?s\.?r\.?\b/i, 'ای ایس آر'],
   [/^ldl/i, 'ایل ڈی ایل (خراب) کولیسٹرول'],
   [/^hdl/i, 'ایچ ڈی ایل (اچھا) کولیسٹرول'],
