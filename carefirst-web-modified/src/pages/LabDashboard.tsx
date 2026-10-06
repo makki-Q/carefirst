@@ -1152,7 +1152,7 @@ const LabDashboard = () => {
                     <div className="dash-form-row" style={{ marginBottom: 16 }}>
                       <div className="dash-form-group" style={{ maxWidth: 180 }}>
                         <label className="dash-form-label">Number of Installments</label>
-                        <input className="dash-form-input" type="number" min="2" max="12" placeholder="e.g. 3" value={addForm.installmentCount} onChange={e => setAddForm(f => ({ ...f, installmentCount: e.target.value }))} />
+                        <input className="dash-form-input" type="number" min="2" max="6" placeholder="e.g. 3" value={addForm.installmentCount} onChange={e => setAddForm(f => ({ ...f, installmentCount: e.target.value }))} />
                       </div>
                       <div className="dash-form-group" style={{ maxWidth: 200 }}>
                         <label className="dash-form-label">Tenure per Installment</label>
@@ -1234,7 +1234,7 @@ const LabDashboard = () => {
                               {editForm.installmentEnabled && (
                                 <>
                                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', color: 'var(--text-sub)' }}>
-                                    <input className="dash-form-input" style={{ width: 70, height: 36 }} type="number" min="2" max="12" value={editForm.installmentCount} onChange={e => setEditForm(f => ({ ...f, installmentCount: e.target.value }))} />
+                                    <input className="dash-form-input" style={{ width: 70, height: 36 }} type="number" min="2" max="6" value={editForm.installmentCount} onChange={e => setEditForm(f => ({ ...f, installmentCount: e.target.value }))} />
                                     installments, every
                                   </label>
                                   <select className="dash-filter-select" value={editForm.installmentTenureDays} onChange={e => setEditForm(f => ({ ...f, installmentTenureDays: e.target.value }))}>

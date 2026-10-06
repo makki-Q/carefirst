@@ -3,6 +3,7 @@ import './AdminDashboard.css';
 import { api, getSession, clearSession, downloadSlip } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { confirmDialog, alertDialog } from '../components/Dialog';
+import { AgreementPaper } from '../components/AgreementPaper';
 import { CnicPictureGallery } from '../components/CnicPictures';
 
 const ROLE_FILTERS = ['All', 'Patients', 'CNIC Review', 'Doctors', 'Labs', 'Lawyers'];
@@ -1198,9 +1199,11 @@ const AdminDashboard = () => {
                                   <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: 6 }}>
                                     Accepted by the patient on {w.agreement?.acceptedAt ? new Date(w.agreement.acceptedAt).toLocaleString('en-GB') : '—'}
                                   </div>
-                                  <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '0.72rem', lineHeight: 1.5, maxHeight: 320, overflow: 'auto', margin: 0 }}>
-                                    {w.agreement?.text || 'No agreement stored.'}
-                                  </pre>
+                                  {w.agreementPaper?.length
+                                    ? <div style={{ maxWidth: 640 }}><AgreementPaper fields={w.agreementPaper} walletId={w._id} /></div>
+                                    : <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '0.72rem', lineHeight: 1.5, maxHeight: 320, overflow: 'auto', margin: 0 }}>
+                                        {w.agreement?.text || 'No agreement stored.'}
+                                      </pre>}
                                 </td>
                               </tr>
                             )}

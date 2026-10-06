@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import './PatientDashboard.css';
 import { confirmDialog, alertDialog } from '../components/Dialog';
+import { AgreementPaper } from '../components/AgreementPaper';
 import { api, getSession, saveSession, clearSession, formatCnic, downloadSlip } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import MapPicker, { currentPosition } from '../components/MapPicker';
@@ -1035,7 +1036,7 @@ const PatientDashboard = () => {
   };
 
   // Agreement with an English / Urdu switch; Listen reads the Urdu
-  const agreementView = (textEn: string, textUr: string | undefined, request: any) => (
+  const agreementView = (textEn: string, textUr: string | undefined, request: any, paper?: any[], walletId?: string) => (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         {pickChip('en', agreementLang === 'en', false, () => setAgreementLang('en'), 'English')}
@@ -1048,7 +1049,7 @@ const PatientDashboard = () => {
             <UrduText text={textUr} />
             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 8 }}>The English text is the binding version.</div>
           </div>
-        : agreementBox(textEn)}
+        : paper?.length ? <AgreementPaper fields={paper} walletId={walletId} /> : agreementBox(textEn)}
     </div>
   );
 
@@ -2152,7 +2153,8 @@ const PatientDashboard = () => {
                       <div className="pat-card pat-fade-up" style={{ padding: '22px 24px' }}>
                         <div className="pat-card-title" style={{ marginBottom: 14 }}>Installment Plan Agreement</div>
                         {agreementView(terms.agreementText, terms.agreementTextUrdu,
-                          { source: 'agreement-preview', labId: lab.labId, testId: test._id, patientAddress: planAddress, guarantor: planRequestBody().guarantor })}
+                          { source: 'agreement-preview', labId: lab.labId, testId: test._id, patientAddress: planAddress, guarantor: planRequestBody().guarantor },
+                          terms.agreementPaper)}
                         <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, margin: '16px 0', fontSize: '0.82rem', color: 'var(--text)', cursor: 'pointer' }}>
                           <input type="checkbox" checked={agreementAccepted} onChange={e => setAgreementAccepted(e.target.checked)} disabled={planBusy} style={{ marginTop: 3 }} />
                           <span>I have read this agreement, my guarantor has agreed to it, and I accept its terms.</span>
@@ -2616,7 +2618,7 @@ const PatientDashboard = () => {
                       </div>
                       {showAgreement && (
                         <div style={{ marginTop: 14 }}>
-                          {agreementView(wallet.agreement.text, wallet.agreement.textUrdu, { source: 'agreement', id: wallet._id })}
+                          {agreementView(wallet.agreement.text, wallet.agreementUrdu || wallet.agreement.textUrdu, { source: 'agreement', id: wallet._id }, wallet.agreementPaper, wallet._id)}
                           <div className="pat-card-title" style={{ margin: '18px 0 10px' }}>CNIC pictures you sent</div>
                           <CnicPictureGallery walletId={wallet._id} pictures={wallet.cnicPictures} patientName="You" guarantorName={wallet.guarantor?.name || 'Guarantor'} />
                         </div>

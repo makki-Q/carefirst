@@ -4,6 +4,7 @@ import { api, getSession, clearSession } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { ListenButton, UrduText } from '../components/Urdu';
 import { CnicPictureGallery } from '../components/CnicPictures';
+import { AgreementPaper } from '../components/AgreementPaper';
 import { confirmDialog, alertDialog } from '../components/Dialog';
 
 interface Installment {
@@ -40,6 +41,7 @@ interface Defaulter {
   agreementDate: string;
   agreementText?: string; // exact text the patient accepted (plans created through the app)
   agreementTextUrdu?: string;
+  agreementPaper?: any[];   // the filled stamp paper (decision 15)
   walletId?: string;
   cnicPictures?: Record<string, string>; // patient + guarantor CNIC pictures sent with the application
   installments: Installment[];
@@ -155,7 +157,8 @@ const LawyerDashboard = () => {
       defaultedOn:    c.escalatedAt ? new Date(c.escalatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—',
       agreementDate:  wallet.agreement?.acceptedAt ? new Date(wallet.agreement.acceptedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—',
       agreementText:  wallet.agreement?.text,
-      agreementTextUrdu: wallet.agreement?.textUrdu,
+      agreementTextUrdu: wallet.agreementUrdu || wallet.agreement?.textUrdu,
+      agreementPaper: wallet.agreementPaper,
       walletId:       wallet._id,
       cnicPictures:   wallet.cnicPictures,
       installments:   (wallet.installments || []).map((inst: any, i: number) => ({
@@ -521,9 +524,11 @@ const LawyerDashboard = () => {
                       <div className="law-agreement-body">
                         {agreementUrdu && selectedCase.agreementTextUrdu
                           ? <UrduText text={selectedCase.agreementTextUrdu} />
-                          : <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '0.74rem', lineHeight: 1.55, margin: 0 }}>
-                              {selectedCase.agreementText}
-                            </pre>}
+                          : selectedCase.agreementPaper?.length
+                            ? <AgreementPaper fields={selectedCase.agreementPaper} walletId={selectedCase.walletId} />
+                            : <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '0.74rem', lineHeight: 1.55, margin: 0 }}>
+                                {selectedCase.agreementText}
+                              </pre>}
                       </div>
                     ) : (
                     <div className="law-agreement-body">
