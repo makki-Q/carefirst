@@ -38,4 +38,7 @@ module.exports = {
   // Generated audio is cached here — private (not under the public /uploads)
   AUDIO_DIR: trim(process.env.AUDIO_CACHE_DIR) || path.join(__dirname, '..', 'storage', 'audio'),
   REQUEST_TIMEOUT_MS: 20000,
+  SPEECH_TIMEOUT_MS:  60000, // per piece of text
+  SPEECH_PIECE_CHARS: 1200,  // a long text is spoken in pieces of about this size, side by side
+  SPEECH_PARALLEL:    4,
 };

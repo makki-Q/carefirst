@@ -35,7 +35,9 @@ const num = (n) => (Number(n) || 0).toLocaleString('en-US');
 const visitDate = (s) => (s ? new Date(`${s}T12:00:00+05:00`) : null);
 
 // ── The details ─────────────────────────────────────────────────────────────────────────────────
-const agreementData = ({ patient, patientCnic, patientAddress, guarantor, labProfile, labUser, test, totalAmount, downPayment, installments, tenureDays }) => ({
+// reviewedOn: "YYYY-MM-DD" (PKT) — the day the patient reviews the agreement; it is the date on the paper
+const agreementData = ({ patient, patientCnic, patientAddress, guarantor, labProfile, labUser, test, totalAmount, downPayment, installments, tenureDays, reviewedOn }) => ({
+  reviewedOn,
   lab: {
     name:           labProfile.labName,
     address:        labProfile.location || '',
@@ -71,7 +73,8 @@ const values = (data, live = {}, lang = 'en') => {
   const even = amounts.every(a => a === amounts[0]);
   const none = ur ? 'درج نہیں' : '—';
   return {
-    date:        live.acceptedAt ? (ur ? dateUr(live.acceptedAt) : dateEn(live.acceptedAt)) : (ur ? 'قبولیت کی تاریخ' : 'Date of acceptance'),
+    date:        data.reviewedOn ? (ur ? dateUr(visitDate(data.reviewedOn)) : dateEn(visitDate(data.reviewedOn)))
+      : live.acceptedAt ? (ur ? dateUr(live.acceptedAt) : dateEn(live.acceptedAt)) : (ur ? 'قبولیت کی تاریخ' : 'Date of acceptance'),
     lab:         data.lab,
     labContact:  data.lab.contact || none,
     labReg:      data.lab.registrationNo || (ur ? 'نہیں' : 'N/A'),

@@ -13,7 +13,7 @@ const LabBooking           = require('../models/LabBooking');
 const { sendNotification } = require('../socket/notificationSocket');
 const {
   BOOKING_WINDOW_DAYS, PATIENT_CANCEL_HOURS, DEFAULT_CONSULTATION_MINUTES,
-  isValidDate, isValidTime, isWithinBookingWindow, slotTimes, weekdayOf, pktInstant, formatTime12, pktDate,
+  isValidDate, isValidTime, isWithinBookingWindow, slotTimes, weekdayOf, pktInstant, formatTime12, pktDate, addDays,
 } = require('../utils/schedule');
 const { normalizeCnic }    = require('../utils/cnic');
 const { fileUrl, removeUploadedFiles } = require('../utils/fileUrl');
@@ -76,7 +76,8 @@ const PHONE_FORMAT = /^\+?\d{10,13}$/;
 
 // Validates an installment-plan application and works out its terms.
 // Returns { error: { status, message } } or { terms, agreementText }.
-const buildPlanApplication = async (user, body) => {
+// reviewedOn: the date written on the agreement (today in Pakistan unless given)
+const buildPlanApplication = async (user, body, { reviewedOn = pktDate(new Date()) } = {}) => {
   const fail = (status, message) => ({ error: { status, message } });
 
   // An unverified CNIC is fine: the admin checks the CNIC pictures sent with the
@@ -148,7 +149,7 @@ const buildPlanApplication = async (user, body) => {
   // The stamp paper with this plan's details (decision 15); the English text is what the patient accepts
   const data = agreementData({
     patient: user, patientCnic: profile.cnic, patientAddress, guarantor, labProfile, labUser,
-    test, totalAmount, downPayment, installments, tenureDays: terms.installmentTenureDays,
+    test, totalAmount, downPayment, installments, tenureDays: terms.installmentTenureDays, reviewedOn,
   });
   const agreementText     = agreementTextEn(data);
   const agreementTextUrdu = agreementTextUr(data);
@@ -415,7 +416,13 @@ const applyForInstallmentPlan = async (req, res) => {
 
     if (body.acceptAgreement !== true) return reject(400, 'You must read and accept the agreement to apply');
 
-    const { error, terms, agreementData: data, agreementText, agreementTextUrdu } = await buildPlanApplication(req.user, body);
+    let built = await buildPlanApplication(req.user, body);
+    // Reviewed just before midnight (PKT) and accepted after it: the paper the patient read has yesterday's date
+    if (!built.error && body.agreementText !== built.agreementText) {
+      const yesterday = await buildPlanApplication(req.user, body, { reviewedOn: addDays(pktDate(new Date()), -1) });
+      if (!yesterday.error && body.agreementText === yesterday.agreementText) built = yesterday;
+    }
+    const { error, terms, agreementData: data, agreementText, agreementTextUrdu } = built;
     if (error) return reject(error.status, error.message);
     if (body.agreementText !== agreementText) {
       return reject(409, 'The plan terms have changed. Please review the agreement again.');

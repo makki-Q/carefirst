@@ -158,6 +158,7 @@ const makePlan = async ({ patientKey, labKey, testName, guarantor, state, approv
   const data = agreementData({
     patient, patientCnic: profile.cnic, patientAddress: profile.address, guarantor, labProfile, labUser: users[labKey],
     test, totalAmount: total, downPayment, installments, tenureDays: test.installmentTenureDays,
+    reviewedOn: pktDate(daysAgo(approvedDaysAgo + 1)),
   });
   const wallet = new Wallet({
     patient: patient._id, lab: users[labKey]._id, labTest: test._id, testName: test.name,

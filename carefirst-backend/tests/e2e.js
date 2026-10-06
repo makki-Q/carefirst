@@ -89,7 +89,7 @@ const listUploads = () => new Set(
 const http = require('http');
 const MOCK_PORT = 5098;
 const MOCK      = `http://127.0.0.1:${MOCK_PORT}`;
-const mock = { osrmDown: false, osrmCalls: 0, translatorDown: false, translations: 0, speechDown: false, speechCalls: 0, lastSsml: '',
+const mock = { osrmDown: false, osrmCalls: 0, translatorDown: false, translations: 0, speechDown: false, speechCalls: 0, lastSsml: '', ssmlLog: [],
   docIntelResult: null, docIntelCalls: 0, docIntelOps: {} }; // docIntelResult null → the reading fails
 let mockServer;
 const AUDIO_DIR = path.join(require('os').tmpdir(), `carefirst-e2e-audio-${process.pid}`);
@@ -137,6 +137,7 @@ const handleMock = async (req, res) => {
     if (mock.speechDown) return send(500, { error: 'down' });
     mock.speechCalls++;
     mock.lastSsml = body;
+    mock.ssmlLog.push(body); // a long text is spoken in several pieces
     return send(200, Buffer.from(`ID3fake-mp3-${mock.speechCalls}`), 'audio/mpeg');
   }
 
@@ -760,6 +761,8 @@ const testPlanApplication = async () => {
   check('… and every blank comes with its text and place on the paper',
     paperField('patientCnic')?.text === '35202-1234567-9' && paperField('patientCnic').x > 600 && paperField('witnessName')?.text.startsWith('Kamran Khan') &&
     paperField('amount3')?.text === '6,668' && !paperField('amount4') && !paperField('paid1') && !paperField('patientSignDate'), preview.data.agreementPaper);
+  const reviewDay = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Karachi' });
+  check('the paper is dated the day the patient reviews it', paperField('date')?.text === reviewDay && preview.data.agreementText.includes(`made on ${reviewDay} between`), paperField('date'));
   check('a lab cannot offer more than 6 installments — the paper has 6 rows (400)',
     (await put(`/api/lab/tests/${ids.mriTest}`, { token: tokens.lab, body: { installmentCount: 7 } })).status === 400);
 
@@ -1310,10 +1313,12 @@ const testUrdu = async () => {
   mock.translatorDown = false;
 
   // Agreement audio
+  mock.ssmlLog = [];
   const ag = await speak(tokens.patient, { source: 'agreement', id: ids.plan });
+  const agSsml = mock.ssmlLog.join(' ');
   check('patient hears the Urdu agreement with the details — the CNIC read digit by digit',
-    ag.status === 200 && mock.lastSsml.includes('میڈیکل لیب ٹیسٹ کی ادائیگی کے قسطوں کا معاہدہ') && mock.lastSsml.includes('3 5 2 0 2، 1 2 3 4 5 6 7، 9') &&
-    mock.lastSsml.includes('6,668 روپے') && mock.lastSsml.includes('<break'), mock.lastSsml.slice(0, 300));
+    ag.status === 200 && mock.ssmlLog.length > 1 && agSsml.includes('میڈیکل لیب ٹیسٹ کی ادائیگی کے قسطوں کا معاہدہ') && agSsml.includes('3 5 2 0 2، 1 2 3 4 5 6 7، 9') &&
+    agSsml.includes('6,668 روپے') && agSsml.includes('<break'), [mock.ssmlLog.length, agSsml.slice(0, 300)]);
   const planNow = (await get('/api/patient/wallets', { token: tokens.patient })).data.find(w => w._id === ids.plan);
   const firstDue = planNow?.agreementPaper?.find(x => x.key === 'firstDue')?.text;
   check('once the plan is active the paper shows the real due dates and the acceptance',
@@ -1333,9 +1338,11 @@ const testUrdu = async () => {
 
   // Before applying: audio of the agreement preview, rebuilt on the server from the plan inputs
   const previewBody = { source: 'agreement-preview', labId: ids.lab, testId: ids.mriTest, patientAddress: 'Chiniot', guarantor: { ...guarantor, cnic: '35202-7777777-7' } };
+  mock.ssmlLog = [];
   const prev = await speak(tokens.patient2, previewBody);
+  const prevSsml = mock.ssmlLog.join(' ');
   check('patient can hear the Urdu agreement before applying (both CNICs, digit by digit)',
-    prev.status === 200 && mock.lastSsml.includes('3 5 2 0 2، 7 7 7 7 7 7 7، 7') && mock.lastSsml.includes('3 5 2 0 2، 7 6 5 4 3 2 1، 3'), [prev.status, prev.data]);
+    prev.status === 200 && prevSsml.includes('3 5 2 0 2، 7 7 7 7 7 7 7، 7') && prevSsml.includes('3 5 2 0 2، 7 6 5 4 3 2 1، 3'), [prev.status, prev.data]);
   check('preview audio follows the same validation (400)',
     (await speak(tokens.patient2, { ...previewBody, guarantor: { ...guarantor, name: 'x'.repeat(81) } })).status === 400);
   check('only patients can request preview audio (404)', (await speak(tokens.doctor, previewBody)).status === 404);

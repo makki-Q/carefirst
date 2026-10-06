@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const fs     = require('fs');
 const path   = require('path');
-const { TRANSLATOR, SPEECH, VOICES, AUDIO_DIR, REQUEST_TIMEOUT_MS } = require('../config/azure');
+const { TRANSLATOR, SPEECH, VOICES, AUDIO_DIR, REQUEST_TIMEOUT_MS, SPEECH_TIMEOUT_MS, SPEECH_PIECE_CHARS, SPEECH_PARALLEL } = require('../config/azure');
 
 const translatorConfigured = () => Boolean(TRANSLATOR.key && TRANSLATOR.region);
 const speechConfigured     = () => Boolean(SPEECH.key && SPEECH.region);
@@ -42,13 +42,39 @@ const urduAudioFile = async (text, voiceKey) => {
   const file = path.join(AUDIO_DIR, `${hash}.mp3`);
   if (fs.existsSync(file)) return file;
 
-  // Line breaks become short pauses so headings and list items are read separately
-  const body = escapeXml(text).split(/\n+/).map(l => l.trim()).filter(Boolean).join(' <break time="400ms"/> ');
-  const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ur-PK"><voice name="${voice}">${body}</voice></speak>`;
+  // Long texts (the agreement) take Azure too long in one request: they are spoken in pieces of
+  // whole lines, a few at a time, and the MP3s (same format) are joined into one file
+  const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
+  const pieces = [];
+  for (const line of lines) {
+    const last = pieces[pieces.length - 1];
+    if (last && last.join('\n').length + line.length < SPEECH_PIECE_CHARS) last.push(line);
+    else pieces.push([line]);
+  }
+  const audio = new Array(pieces.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < pieces.length) {
+      const i = next++;
+      audio[i] = await speakPiece(pieces[i], voice);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SPEECH_PARALLEL, pieces.length) }, worker));
 
-  let res;
+  fs.mkdirSync(AUDIO_DIR, { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, Buffer.concat(audio));
+  fs.renameSync(tmp, file);
+  return file;
+};
+
+// One piece of text → MP3 bytes. Line breaks become short pauses so headings and list items are read separately.
+const speakPiece = async (lines, voice) => {
+  const body = lines.map(escapeXml).join(' <break time="400ms"/> ');
+  const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ur-PK"><voice name="${voice}">${body}</voice></speak>`;
+  const failed = () => Object.assign(new Error('The speech service could not create the audio. Please try again.'), { status: 502 });
   try {
-    res = await fetch(`${SPEECH.endpoint}/cognitiveservices/v1`, {
+    const res = await fetch(`${SPEECH.endpoint}/cognitiveservices/v1`, {
       method:  'POST',
       headers: {
         'Ocp-Apim-Subscription-Key': SPEECH.key,
@@ -57,21 +83,19 @@ const urduAudioFile = async (text, voiceKey) => {
         'User-Agent':                'CareFirst',
       },
       body:   ssml,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(SPEECH_TIMEOUT_MS), // also covers reading the audio
     });
+    if (!res.ok) {
+      console.error(`[Azure] Speech responded ${res.status}`);
+      throw failed();
+    }
+    return Buffer.from(await res.arrayBuffer());
   } catch (err) {
-    throw Object.assign(new Error('Could not reach the speech service. Please try again.'), { status: 502 });
+    if (err.status) throw err;
+    console.error(`[Azure] Speech failed: ${err.message}`);
+    throw Object.assign(new Error(err.name === 'TimeoutError' || err.name === 'AbortError'
+      ? 'The speech service took too long. Please try again.' : 'Could not reach the speech service. Please try again.'), { status: 502 });
   }
-  if (!res.ok) {
-    console.error(`[Azure] Speech responded ${res.status}`);
-    throw Object.assign(new Error('The speech service could not create the audio. Please try again.'), { status: 502 });
-  }
-
-  fs.mkdirSync(AUDIO_DIR, { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, Buffer.from(await res.arrayBuffer()));
-  fs.renameSync(tmp, file);
-  return file;
 };
 
 module.exports = { translatorConfigured, speechConfigured, translateToUrdu, urduAudioFile };
