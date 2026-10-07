@@ -590,6 +590,61 @@ const rejectReceipt = async (req, res) => {
   }
 };
 
+// ─── GET /api/lab/installment-plans ──────────────────────────────────────────
+// Every activated plan with this lab (active, escalated or completed) with its schedule,
+// what has been paid and what is next. Plans under review / waiting for the fee are not shown.
+const paymentState = (p, isInstallment) => {
+  if (isInstallment ? p.status === 'paid' : p.adminVerified) return p.settledOffline?.at ? 'settled' : 'verified';
+  if (p.labApproved)     return 'lab_confirmed';  // waiting for CareFirst to verify
+  if (p.receiptUrl)      return 'receipt_uploaded'; // waiting for the lab to confirm
+  if (isInstallment && p.status === 'overdue') return 'overdue';
+  return 'due';
+};
+
+const getInstallmentPlans = async (req, res) => {
+  try {
+    const wallets = await Wallet.find({ lab: req.user._id, status: { $in: ['active', 'defaulter', 'completed'] } })
+      .populate('patient', 'name email phone')
+      .sort({ activatedAt: -1, updatedAt: -1 });
+    const visits = await LabBooking.find({ wallet: { $in: wallets.map(w => w._id) }, status: { $ne: 'cancelled' } })
+      .select('wallet visitDate status slipNumber branchName');
+    const visitFor = new Map(visits.map(b => [String(b.wallet), b]));
+
+    const plans = wallets.map(w => {
+      const dp = w.downPayment || {};
+      const schedule = w.installments.map((inst, index) => ({
+        index, number: inst.number, dueDate: inst.dueDate, amount: inst.amount,
+        state: paymentState(inst, true), receiptUrl: inst.receiptUrl || null,
+      }));
+      const next = schedule.find(s => !['verified', 'settled'].includes(s.state)) || null;
+      const visit = visitFor.get(String(w._id));
+      return {
+        walletId:    w._id,
+        status:      w.status, // active | defaulter | completed
+        patient:     w.patient,
+        patientCnic: w.patientCnic || null,
+        testName:    w.testName,
+        totalAmount: w.totalAmount,
+        collected:   w.totalAmount - (w.remainingBalance ?? w.totalAmount), // verified down payment + paid installments
+        remaining:   w.remainingBalance ?? w.totalAmount,
+        installmentCount:      w.installments.length,
+        installmentTenureDays: w.installmentTenureDays,
+        paidCount:    schedule.filter(s => ['verified', 'settled'].includes(s.state)).length,
+        overdueCount: schedule.filter(s => s.state === 'overdue').length,
+        downPayment:  { amount: dp.amount || 0, state: paymentState(dp, false), receiptUrl: dp.receiptUrl || null },
+        schedule,
+        nextDue:      next,
+        activatedAt:  w.activatedAt,
+        hasAgreementPdf: Boolean(w.agreement?.data),
+        visit: visit ? { visitDate: visit.visitDate, status: visit.status, slipNumber: visit.slipNumber, branchName: visit.branchName } : null,
+      };
+    });
+    res.json(plans);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // ─── GET /api/lab/needy-patients ─────────────────────────────────────────────
 const getNeedyPatients = async (req, res) => {
   try {
@@ -796,7 +851,7 @@ module.exports = {
   getProfile, updateProfile,
   getTests, addTest, updateTest, deleteTest,
   uploadReport, getReports, updateReportSummary, readReportAgain,
-  getReceiptsPendingApproval, approveReceipt, rejectReceipt,
+  getReceiptsPendingApproval, approveReceipt, rejectReceipt, getInstallmentPlans,
   getNeedyPatients, markTestConducted, setCommunitySupport, getEarnings,
   getLabPatients,
   getBookings, markSampleCollected, completeBooking, transferBooking,

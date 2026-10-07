@@ -4,7 +4,7 @@ const {
   getProfile, updateProfile,
   getTests, addTest, updateTest, deleteTest,
   uploadReport, getReports, updateReportSummary, readReportAgain,
-  getReceiptsPendingApproval, approveReceipt, rejectReceipt,
+  getReceiptsPendingApproval, approveReceipt, rejectReceipt, getInstallmentPlans,
   getNeedyPatients, markTestConducted, setCommunitySupport, getEarnings,
   getLabPatients,
   getBookings, markSampleCollected, completeBooking, transferBooking,
@@ -44,6 +44,9 @@ router.put('/receipts/:walletId/installments/:instIndex/approve',         ...gua
 router.put('/receipts/:walletId/down-payment/approve',                    ...guard, approveReceipt);
 router.put('/receipts/:walletId/installments/:instIndex/reject',          ...guard, rejectReceipt);
 router.put('/receipts/:walletId/down-payment/reject',                     ...guard, rejectReceipt);
+
+// Installment plans activated with this lab (schedule + what has been paid)
+router.get('/installment-plans', ...guard, getInstallmentPlans);
 
 // Needy patients (community support)
 router.get('/needy-patients',                      ...guard, getNeedyPatients);

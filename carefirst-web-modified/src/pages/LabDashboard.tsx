@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './LabDashboard.css';
 import './HideScrollbars.css';
 import BrandLogo from '../components/BrandLogo';
-import { api, getSession, clearSession, downloadSlip } from '../lib/api';
+import { api, getSession, clearSession, downloadSlip, downloadFile } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { confirmDialog, alertDialog } from '../components/Dialog';
 import LabBranches from '../components/LabBranches';
@@ -49,6 +49,15 @@ const LabDashboard = () => {
 
   const loadBookings = () =>
     api.get('/lab/bookings').then((d: any) => setBookings(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => setBookingsLoaded(true));
+
+  // Installment plans activated with this lab (schedule + what has been paid)
+  const [plans, setPlans]             = useState<any[]>([]);
+  const [plansLoaded, setPlansLoaded] = useState(false);
+  const [planSearch, setPlanSearch]   = useState('');
+  const [planFilter, setPlanFilter]   = useState<'open' | 'active' | 'defaulter' | 'completed' | 'all'>('open');
+  const [openPlan, setOpenPlan]       = useState(''); // walletId whose schedule is shown
+  const loadPlans = () =>
+    api.get('/lab/installment-plans').then((d: any) => setPlans(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => setPlansLoaded(true));
 
   // Payment details — patients pay the down payment and installments here
   const [payForm, setPayForm]     = useState({ bankName: '', accountNumber: '', jazzCash: '', easyPaisa: '' });
@@ -115,6 +124,7 @@ const LabDashboard = () => {
     api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
     loadEarnings();
     loadBookings();
+    loadPlans();
     api.get('/lab/patients').then((d: any) => setLabPatients(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/lab/notifications').then((d: any) => {
       const arr = Array.isArray(d) ? d : [];
@@ -134,6 +144,7 @@ const LabDashboard = () => {
       if (n.type === 'receipt_uploaded' || n.type === 'receipt_rejected') {
         api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
       }
+      if (n.type === 'plan_activated' || n.type?.startsWith('receipt_') || n.type?.startsWith('defaulter_')) loadPlans();
       if (n.type === 'plan_activated' || n.type === 'lab_booking_created') {
         api.get('/lab/patients').then((d: any) => setLabPatients(Array.isArray(d) ? d : [])).catch(() => {});
       }
@@ -324,6 +335,7 @@ const LabDashboard = () => {
     try {
       await api.put(`/lab/receipts/${walletId}/${path}/reject`, { reason: receiptRejectReason.trim() });
       setRejectingReceipt(''); setReceiptRejectReason('');
+      loadPlans();
       api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
     } catch (err: any) { alertDialog(err.message || 'Could not reject the receipt'); }
   };
@@ -334,6 +346,7 @@ const LabDashboard = () => {
       await api.put(`/lab/receipts/${walletId}/${path}/approve`, {});
       api.get('/lab/receipts').then((d: any) => setReceipts(Array.isArray(d) ? d : [])).catch(() => {});
       loadEarnings();
+      loadPlans();
     } catch (err: any) { alertDialog(err.message || 'Could not confirm the receipt'); }
   };
 
@@ -417,7 +430,11 @@ const LabDashboard = () => {
     }
   };
 
-  const navigate = (page: string) => { setCurrentPage(page); if (window.innerWidth <= 900) setSidebarOpen(false); };
+  const navigate = (page: string) => {
+    setCurrentPage(page);
+    if (page === 'plans') loadPlans();
+    if (window.innerWidth <= 900) setSidebarOpen(false);
+  };
 
   const labName     = labProfile?.profile?.labName || (sessionUser as any)?.name || 'Lab Dashboard';
   const labLocation = labProfile?.profile?.location || '';
@@ -473,6 +490,7 @@ const LabDashboard = () => {
     branches:     'Branches',
     revenue:      'Revenue',
     needyPatients:'Needy Patients',
+    plans:        'Installment Plans',
     receipts:     'Receipts',
   };
 
@@ -530,6 +548,11 @@ const LabDashboard = () => {
             </button>
 
             <div className="dash-nav-label">Finance</div>
+
+            <button className={`dash-nav-item ${currentPage === 'plans' ? 'active' : ''}`} onClick={() => navigate('plans')}>
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+              Installment Plans
+            </button>
 
             <button className={`dash-nav-item ${currentPage === 'receipts' ? 'active' : ''}`} onClick={() => navigate('receipts')}>
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -1440,6 +1463,192 @@ const LabDashboard = () => {
             </section>
 
             {/* ══ RECEIPTS ══════════════════════════════════════ */}
+            {/* ═══ INSTALLMENT PLANS ═══ */}
+            <section className={`dash-page-section ${currentPage === 'plans' ? 'active' : ''}`}>
+              <div className="dash-page-header dash-fu">
+                <div className="dash-page-title">Installment Plans</div>
+                <div className="dash-page-rule"></div>
+                <div className="dash-page-subtitle">Patients paying your lab in installments — they pay you directly; CareFirst records each payment</div>
+              </div>
+
+              {(() => {
+                const pkr = (n: number) => `PKR ${Number(n || 0).toLocaleString()}`;
+                const dateOf = (d: any) => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Karachi' }) : '—';
+                const PLAN_STATUS: Record<string, { label: string; cls: string; title: string }> = {
+                  active:    { label: 'Active',    cls: 'dash-green', title: 'The patient is paying on schedule' },
+                  defaulter: { label: 'Escalated', cls: 'dash-red',   title: "An installment is overdue — the case is with CareFirst's lawyer until it is paid" },
+                  completed: { label: 'Completed', cls: 'dash-blue',  title: 'Down payment and every installment paid' },
+                };
+                const PAY_STATE: Record<string, { label: string; cls: string; title: string }> = {
+                  verified:         { label: 'Paid ✓',             cls: 'dash-green', title: 'You confirmed it and CareFirst verified it' },
+                  settled:          { label: 'Settled',            cls: 'dash-gray',  title: 'Settled outside CareFirst when the lawyer closed the case' },
+                  lab_confirmed:    { label: 'CareFirst checking', cls: 'dash-blue',  title: 'You confirmed it — CareFirst verifies it next' },
+                  receipt_uploaded: { label: 'Receipt to confirm', cls: 'dash-amber', title: 'The patient uploaded a receipt — confirm it on the Receipts page' },
+                  overdue:          { label: 'Overdue',            cls: 'dash-red',   title: 'Past the due date with no receipt' },
+                  due:              { label: 'Due',                cls: 'dash-gray',  title: 'Not paid yet' },
+                };
+                const badge = (s: { label: string; cls: string; title: string }) =>
+                  <span className={`dash-badge ${s.cls}`} title={s.title}><span className="dash-badge-dot"></span>{s.label}</span>;
+
+                const open = plans.filter((p: any) => p.status !== 'completed');
+                const escalated = open.filter((p: any) => p.status === 'defaulter').length;
+                const q = planSearch.trim().toLowerCase();
+                const shown = plans.filter((p: any) =>
+                  (planFilter === 'all' || (planFilter === 'open' ? p.status !== 'completed' : p.status === planFilter)) &&
+                  (!q || [p.patient?.name, p.patient?.phone, p.patientCnic, p.testName].some((v: any) => String(v || '').toLowerCase().includes(q))));
+
+                return (
+                  <>
+                    <div className="dash-stats-grid dash-fu dash-fu-1">
+                      {[
+                        { label: 'Open Plans', value: String(open.length), trend: `${plans.length - open.length} completed`, icon: <><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></> },
+                        { label: 'Received So Far', value: pkr(plans.reduce((s: number, p: any) => s + p.collected, 0)), trend: 'Down payments + installments verified', icon: <polyline points="20 6 9 17 4 12"/> },
+                        { label: 'Still to Receive', value: pkr(open.reduce((s: number, p: any) => s + p.remaining, 0)), trend: 'On the open plans', icon: <><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></> },
+                        { label: 'Overdue Installments', value: String(open.reduce((s: number, p: any) => s + p.overdueCount, 0)), trend: `${escalated} plan${escalated === 1 ? '' : 's'} escalated`, icon: <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></> },
+                      ].map((s, i) => (
+                        <div className="dash-stat-card" key={i}>
+                          <div className="dash-stat-top">
+                            <div>
+                              <div className="dash-stat-label">{s.label}</div>
+                              <div className="dash-stat-value">{s.value}</div>
+                            </div>
+                            <div className="dash-stat-icon"><svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24">{s.icon}</svg></div>
+                          </div>
+                          <div className="dash-stat-trend" style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}><span>{s.trend}</span></div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="dash-card dash-fu dash-fu-2">
+                      <div className="dash-toolbar">
+                        <div className="dash-search">
+                          <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                          <input type="text" placeholder="Search patient, phone, CNIC or test…" value={planSearch} onChange={e => setPlanSearch(e.target.value)} />
+                        </div>
+                        <div className="dash-toolbar-right">
+                          <label className="dash-toolbar-field">
+                            <span>Show</span>
+                            <select className="dash-filter-select" value={planFilter} onChange={e => setPlanFilter(e.target.value as any)}>
+                              <option value="open">Open plans</option>
+                              <option value="active">Active</option>
+                              <option value="defaulter">Escalated</option>
+                              <option value="completed">Completed</option>
+                              <option value="all">All plans</option>
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+                      <div className="dash-table-wrap">
+                        <table>
+                          <thead>
+                            <tr><th>Patient</th><th>Test</th><th>Plan</th><th>Paid</th><th>Next Due</th><th>Status</th><th style={{ textAlign: 'right' }}>Action</th></tr>
+                          </thead>
+                          <tbody>
+                            {!plansLoaded ? (
+                              <tr><td colSpan={7} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                            ) : shown.length === 0 ? (
+                              <tr><td colSpan={7} style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                                {plans.length === 0
+                                  ? 'No installment plans yet. A plan shows here once CareFirst activates it for one of your tests.'
+                                  : q ? 'No plan matches your search.' : 'No plans in this view.'}
+                              </td></tr>
+                            ) : shown.map((p: any) => {
+                              const st = PLAN_STATUS[p.status] || { label: p.status, cls: 'dash-gray', title: '' };
+                              const pct = p.totalAmount ? Math.round((p.collected / p.totalAmount) * 100) : 0;
+                              const isOpen = openPlan === String(p.walletId);
+                              return (
+                                <React.Fragment key={p.walletId}>
+                                  <tr>
+                                    <td style={{ fontWeight: 600, color: 'var(--text)' }}>
+                                      {p.patient?.name || '—'}
+                                      {(p.patient?.phone || p.patientCnic) && (
+                                        <div className="dash-mono" style={{ fontSize: '0.68rem', fontWeight: 400, color: 'var(--text-muted)', marginTop: 2 }}>
+                                          {[p.patient?.phone, p.patientCnic].filter(Boolean).join(' · ')}
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td>
+                                      {p.testName}
+                                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                        {p.visit ? `Visit ${dayLabel(p.visit.visitDate)}${p.visit.status === 'completed' ? ' · done' : ''}` : 'No visit booked yet'}
+                                      </div>
+                                    </td>
+                                    <td>
+                                      {pkr(p.totalAmount)}
+                                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }} title={`${pkr(p.downPayment.amount)} down payment, then ${p.installmentCount} installments every ${p.installmentTenureDays} days`}>
+                                        {Number(p.downPayment.amount).toLocaleString()} down · {p.installmentCount} × {p.installmentTenureDays} days
+                                      </div>
+                                    </td>
+                                    <td style={{ minWidth: 110 }} title={`${pkr(p.collected)} of ${pkr(p.totalAmount)} received · ${pkr(p.remaining)} still to receive`}>
+                                      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap' }}>{pkr(p.collected)}</div>
+                                      <div className="dash-progress-wrap" style={{ margin: '6px 0 4px' }}><div className="dash-progress-fill" style={{ width: `${pct}%` }}></div></div>
+                                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{p.paidCount} of {p.installmentCount} installments</div>
+                                    </td>
+                                    <td>
+                                      {p.status === 'completed' || !p.nextDue ? <span style={{ color: 'var(--text-muted)' }}>—</span> : (
+                                        <>
+                                          <div style={{ whiteSpace: 'nowrap', fontWeight: 600, color: p.nextDue.state === 'overdue' ? '#991b1b' : 'var(--text)' }}>{dateOf(p.nextDue.dueDate)}</div>
+                                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2, whiteSpace: 'nowrap' }}>#{p.nextDue.number} · {pkr(p.nextDue.amount)}</div>
+                                        </>
+                                      )}
+                                    </td>
+                                    <td>
+                                      {badge(st)}
+                                      {p.overdueCount > 0 && <div style={{ fontSize: '0.7rem', color: '#991b1b', marginTop: 4, whiteSpace: 'nowrap' }}>{p.overdueCount} overdue</div>}
+                                    </td>
+                                    <td style={{ textAlign: 'right' }}>
+                                      <div className="dash-row-actions">
+                                        <button className="dash-btn-ghost" style={{ padding: '5px 10px', fontSize: '0.75rem' }} aria-expanded={isOpen}
+                                          onClick={() => setOpenPlan(isOpen ? '' : String(p.walletId))}>{isOpen ? 'Hide schedule' : 'Schedule'}</button>
+                                        {p.hasAgreementPdf && (
+                                          <button className="dash-btn-ghost" style={{ padding: '5px 10px', fontSize: '0.75rem' }} title="The installment agreement the patient accepted (PDF)"
+                                            onClick={() => downloadFile(`/documents/agreements/${p.walletId}`, 'CareFirst-agreement.pdf').catch((e: any) => alertDialog(e.message || 'Could not download the agreement'))}>Agreement</button>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                  {isOpen && (
+                                    <tr>
+                                      <td colSpan={7} style={{ background: 'var(--glass-bg)', padding: '14px 20px' }}>
+                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 8 }}>
+                                          Activated {dateOf(p.activatedAt)}
+                                          {p.visit?.slipNumber && <> · visit slip <span className="dash-mono">{p.visit.slipNumber}</span>{p.visit.branchName ? ` at ${shortBranch(p.visit.branchName)}` : ''}</>}
+                                          {p.patient?.email && <> · {p.patient.email}</>}
+                                        </div>
+                                        <table style={{ width: 'auto', minWidth: 'min(560px, 100%)' }}>
+                                          <thead><tr><th>Payment</th><th>Due</th><th>Amount</th><th>State</th></tr></thead>
+                                          <tbody>
+                                            {[{ key: 'dp', label: 'Down payment', dueDate: null, amount: p.downPayment.amount, state: p.downPayment.state },
+                                              ...p.schedule.map((s: any) => ({ key: s.index, label: `Installment #${s.number}`, dueDate: s.dueDate, amount: s.amount, state: s.state })),
+                                            ].map((row: any) => (
+                                              <tr key={row.key}>
+                                                <td>{row.label}</td>
+                                                <td style={{ whiteSpace: 'nowrap' }}>{row.dueDate ? dateOf(row.dueDate) : 'At the start'}</td>
+                                                <td style={{ whiteSpace: 'nowrap' }}>{pkr(row.amount)}</td>
+                                                <td>
+                                                  {row.state === 'receipt_uploaded'
+                                                    ? <button type="button" onClick={() => navigate('receipts')} style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer' }}>{badge(PAY_STATE.receipt_uploaded)}</button>
+                                                    : badge(PAY_STATE[row.state] || PAY_STATE.due)}
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
+            </section>
+
             <section className={`dash-page-section ${currentPage === 'receipts' ? 'active' : ''}`}>
               <div className="dash-page-header dash-fu">
                 <div className="dash-page-title">Receipts</div>

@@ -894,6 +894,9 @@ const testPlanReview = async () => {
   check('patient re-uploads; rejection reason clears',
     reup.status === 200 && reup.data.wallet.serviceFee.receiptUrl && !reup.data.wallet.serviceFee.rejectionReason, reup);
 
+  const hidden = await get('/api/lab/installment-plans', { token: tokens.lab });
+  check('lab plan list does not show a plan before it is activated', hidden.status === 200 && !hidden.data.some(p => p.walletId === ids.plan), hidden.data);
+
   const verify = await put(`/api/admin/wallets/${ids.plan}/service-fee/verify`, { token: tokens.admin });
   const w = verify.data.wallet;
   check('admin verifies the fee → plan active with 3 installments',
@@ -906,6 +909,16 @@ const testPlanReview = async () => {
 
   const labNotifs = await get('/api/lab/notifications', { token: tokens.lab });
   check('lab is notified of the new plan', labNotifs.data.some(n => n.type === 'plan_activated' && n.meta?.walletId === ids.plan), labNotifs.data);
+
+  const labPlans = await get('/api/lab/installment-plans', { token: tokens.lab });
+  const lp = labPlans.data.find?.(p => p.walletId === ids.plan);
+  check('lab sees the activated plan with its schedule',
+    labPlans.status === 200 && lp?.status === 'active' && lp.patient?.name && lp.totalAmount === 25000 && lp.collected === 0 &&
+    lp.remaining === 25000 && lp.installmentCount === 3 && lp.paidCount === 0 && lp.downPayment.amount === 5000 &&
+    lp.downPayment.state === 'due' && lp.nextDue?.number === 1 && lp.nextDue.amount === 6666 && lp.schedule.length === 3 &&
+    lp.schedule.every(x => x.state === 'due'), lp);
+  const asPatient = await get('/api/lab/installment-plans', { token: tokens.patient });
+  check('patients cannot use the lab plan list (403)', asPatient.status === 403, asPatient);
 
   const pNotifs2 = await get('/api/patient/notifications', { token: tokens.patient });
   check('patient is told the plan is active', pNotifs2.data.some(n => n.type === 'plan_activated'), pNotifs2.data);
@@ -933,8 +946,12 @@ const testDownPaymentAndCompletion = async () => {
   const early = await put(`/api/admin/wallets/${ids.plan}/down-payment/verify`, { token: tokens.admin });
   check('admin cannot verify the down payment before the lab (400)', early.status === 400, early);
 
+  const labPlan = async () => (await get('/api/lab/installment-plans', { token: tokens.lab })).data.find(p => p.walletId === ids.plan);
+  check('lab plan list shows the down payment receipt to confirm', (await labPlan())?.downPayment.state === 'receipt_uploaded');
+
   const labOk = await put(`/api/lab/receipts/${ids.plan}/down-payment/approve`, { token: tokens.lab });
   check('lab confirms the down payment', labOk.status === 200 && labOk.data.wallet.downPayment.labApproved, labOk);
+  check('lab plan list: confirmed, CareFirst checking', (await labPlan())?.downPayment.state === 'lab_confirmed');
 
   const replace = await post(`/api/patient/wallets/${ids.plan}/down-payment/receipt`, { token: tokens.patient, files: { receipt: ['down2.png'] } });
   check('down payment receipt cannot be replaced after lab confirms (400)', replace.status === 400, replace);
@@ -943,6 +960,8 @@ const testDownPaymentAndCompletion = async () => {
   check('admin verifies the down payment → balance drops by 5,000',
     verify.status === 200 && verify.data.wallet.downPayment.adminVerified && verify.data.wallet.remainingBalance === 20000 &&
     verify.data.wallet.status === 'active', verify);
+  const afterDown = await labPlan();
+  check('lab plan list: down payment verified, PKR 5,000 received', afterDown?.downPayment.state === 'verified' && afterDown.collected === 5000 && afterDown.remaining === 20000, afterDown);
 
   for (let i = 0; i < 3; i++) {
     await post(`/api/patient/wallets/${ids.plan}/installments/${i}/receipt`, { token: tokens.patient, files: { receipt: [`inst${i}.png`] } });
@@ -952,6 +971,11 @@ const testDownPaymentAndCompletion = async () => {
     else check('last installment paid → plan completed with zero balance',
       r.status === 200 && r.data.wallet.status === 'completed' && r.data.wallet.remainingBalance === 0, r);
   }
+
+  const done = await labPlan();
+  check('lab plan list: completed, everything received, nothing due',
+    done?.status === 'completed' && done.paidCount === 3 && done.collected === 25000 && done.remaining === 0 && done.nextDue === null &&
+    done.schedule.every(x => x.state === 'verified'), done);
 
   const pNotifs = await get('/api/patient/notifications', { token: tokens.patient });
   check('patient is told the plan is fully paid', pNotifs.data.some(n => n.message.includes('fully paid')), pNotifs.data);
@@ -1062,6 +1086,8 @@ const testTrueCost = async () => {
   await put(`/api/admin/registrations/${reg.data.user?.id}/approve`, { token: tokens.admin });
   ids.lab2 = reg.data.user?.id;
   tokens.lab2 = (await post('/api/auth/login', { body: { email: 'far.e2e@example.com', password: 'secret123' } })).data.token;
+  const otherLab = await get('/api/lab/installment-plans', { token: tokens.lab2 });
+  check("another lab does not see the first lab's installment plans", otherLab.status === 200 && !otherLab.data.some(p => p.walletId === ids.plan), otherLab.data);
   await post('/api/lab/tests', { token: tokens.lab2, body: { name: 'CBC', category: 'Blood', price: 900 } });
 
   const labPin = { lat: 31.7167, lng: 72.9785 };
